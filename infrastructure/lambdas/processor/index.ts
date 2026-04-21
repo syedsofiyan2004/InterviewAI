@@ -224,6 +224,7 @@ function normalizeTranscript(text: string): string {
 }
 
 async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<string> {
+  const { extractJson } = await import('../shared/utils');
   const prompt = `
     Analyze the following Job Description (JD) and build a structured, dynamic evaluation rubric.
     
@@ -269,7 +270,6 @@ async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<st
 }
 
 function getModelId(selection?: string): string {
-  // Default to Sonnet for production-grade precision
   const modelKey = selection || 'claude-3-5-sonnet';
   
   const mapping: Record<string, string | undefined> = {
@@ -279,17 +279,30 @@ function getModelId(selection?: string): string {
   };
 
   const profileArn = mapping[modelKey];
-  if (profileArn) return profileArn;
+  const allowFallback = process.env.ALLOW_BEDROCK_BASE_MODEL_FALLBACK === 'true';
+  
+  // High-Resolution Diagnostics (CloudWatch Metadata Only)
+  console.info('[Bedrock Resolution]', {
+    requestedKey: modelKey,
+    routingProfileArnExists: !!profileArn,
+    fallbackEnabled: allowFallback,
+    isDevelopment: process.env.NODE_ENV === 'dev'
+  });
 
-  // Optional gated fallback
-  const allowFallback = process.env.ALLOW_BEDROCK_BASE_MODEL_FALLBACK === 'true' || true; // Default true for now
+  if (profileArn) {
+    console.info('[Bedrock Resolved] Using Profile ARN:', profileArn);
+    return profileArn;
+  }
+
   if (allowFallback) {
     const fallbackMapping: Record<string, string> = {
       'claude-3-5-sonnet': 'anthropic.claude-3-5-sonnet-20241022-v2:0',
       'claude-3-haiku': 'anthropic.claude-3-haiku-20240307-v1:0',
       'nova-pro': 'amazon.nova-pro-v1:0',
     };
-    return fallbackMapping[modelKey] || 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+    const fallbackId = fallbackMapping[modelKey] || 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+    console.warn('[Bedrock Resolved] Silently Falling Back to Base ID:', fallbackId);
+    return fallbackId;
   }
 
   throw new Error(`MODEL_PROFILE_NOT_CONFIGURED: ${modelKey}`);

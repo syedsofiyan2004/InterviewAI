@@ -178,8 +178,9 @@ export default function NewInterview() {
               <select
                 id="model_id"
                 name="model_id"
-                className="w-full bg-[#1a1a1a]/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none"
-                defaultValue={formData.model_id}
+                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all appearance-none"
+                value={formData.model_id}
+                onChange={e => setFormData({ ...formData, model_id: e.target.value })}
               >
                 <option value="claude-3-5-sonnet">Claude 3.7 Sonnet (Advanced Intelligence)</option>
                 <option value="claude-3-haiku">Claude Opus 4.6 (Premium Reasoning)</option>

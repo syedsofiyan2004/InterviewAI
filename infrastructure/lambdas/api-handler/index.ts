@@ -294,50 +294,63 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
 
       const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
       const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+      
+      const mismatchModelId = process.env.BEDROCK_HAIKU_PROFILE_ARN;
+      console.info('[JD Alignment] Resolving Bedrock Profile:', { exists: !!mismatchModelId, id: mismatchModelId });
+      
+      if (!mismatchModelId && process.env.ALLOW_BEDROCK_BASE_MODEL_FALLBACK !== 'true') {
+        throw new Error('MODEL_PROFILE_NOT_CONFIGURED: BEDROCK_HAIKU_PROFILE_ARN (JD Alignment)');
+      }
+
+      const finalModelId = mismatchModelId || 'anthropic.claude-3-haiku-20240307-v1:0';
+      if (!mismatchModelId) console.warn('[JD Alignment] WARNING: Falling back to Base ID:', finalModelId);
+
+      const { extractJson } = await import('../shared/utils');
+      
       const bedrockResp = await client.send(new InvokeModelCommand({
-        modelId: process.env.BEDROCK_HAIKU_PROFILE_ARN || 'anthropic.claude-3-haiku-20240307-v1:0',
+        modelId: finalModelId,
         contentType: 'application/json',
         accept: 'application/json',
         body: JSON.stringify({
           anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 200,
-          messages: [{ role: 'user', content: [{ type: 'text', text: inferPrompt }] }]
+          max_tokens: 500,
+          messages: [{ 
+            role: 'user', 
+            content: [{ 
+              type: 'text', 
+              text: inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.' 
+            }] 
+          }]
         })
       }));
 
       const resData = JSON.parse(new TextDecoder().decode(bedrockResp.body));
       const rawText = resData.content?.[0]?.text || '';
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       
-      if (jsonMatch) {
-        const result = JSON.parse(jsonMatch[0]);
+      // Robust extraction
+      const xmlMatch = rawText.match(/<jd_check>([\s\S]*?)<\/jd_check>/i);
+      const jsonStr = xmlMatch ? xmlMatch[1] : extractJson(rawText);
+      
+      if (jsonStr) {
+        const result = JSON.parse(jsonStr);
         inferredRole = result.inferred_role;
         isMismatched = !result.aligned;
         const alignmentReason = result.reason || '';
-        console.log(`Alignment Result: ${result.aligned ? 'MATCH' : 'MISMATCH'} - ${alignmentReason}`);
+        console.log(`[Bedrock Alignment Success] ${result.aligned ? 'MATCH' : 'MISMATCH'} - ${alignmentReason}`);
 
-        // Final persistence for JD
-        await ddbDocClient.send(new UpdateCommand({
-          TableName: TABLE_NAME,
-          Key: { interview_id: id },
-          UpdateExpression: `SET #attr = :key, #st = :status, inferred_role = :ir, is_mismatched = :im, alignment_reason = :ar, updated_at = :now`,
-          ExpressionAttributeNames: { 
-            '#attr': attrName,
-            '#st': 'status' 
-          },
-          ExpressionAttributeValues: {
-            ':key': s3_key,
-            ':status': finalStatus,
-            ':ir': inferredRole || null,
-            ':im': isMismatched || false,
-            ':ar': alignmentReason || null,
-            ':now': Date.now(),
-          },
-        }));
-        return successResponse({ status: finalStatus, inferred_role: inferredRole, is_mismatched: isMismatched });
+        // Update the item with the alignment data
+        item.inferred_role = inferredRole;
+        item.is_mismatched = isMismatched;
+      } else {
+        console.warn('[Bedrock Alignment] No extractable JSON found in response:', rawText);
       }
-    } catch (err) {
-      console.error('JD Alignment Inference Failed:', err);
+    } catch (err: any) {
+      console.error('[CRITICAL] JD Alignment Inference SILENTLY Failed (Non-Blocking):', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack
+      });
+      // Fallback: We proceed without the mismatch flag to ensure the process isn't blocked
     }
   }
 
