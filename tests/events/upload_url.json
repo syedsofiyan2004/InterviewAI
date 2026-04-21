@@ -1,0 +1,8 @@
+{
+  "httpMethod": "POST",
+  "resource": "/interviews/{id}/upload-url",
+  "pathParameters": {
+    "id": "REPLACE_WITH_UUID"
+  },
+  "body": "{\"file_type\": \"transcript\"}"
+}

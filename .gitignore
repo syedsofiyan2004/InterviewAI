@@ -1,0 +1,40 @@
+# Node.js
+node_modules/
+dist/
+lib/
+*.d.ts
+*.js
+!jest.config.js
+!infrastructure/bin/*.ts
+!infrastructure/lib/*.ts
+.next/
+out/
+build/
+
+# CDK
+cdk.out/
+.cdk.staging/
+.aws-sam/
+
+# Environment
+.env
+.env.local
+.env.production
+.env.template
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hygiene
+.git/
+**/.git/
+!/.git/
