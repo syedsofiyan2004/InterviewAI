@@ -1,0 +1,16 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+.env
+.env.local
+.env.*
+!.env.example
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# Hygiene
+.git
+**/ .git

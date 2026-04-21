@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+:root {
+  /* Light Mode Tokens */
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(222 47% 11%);
+  
+  --surface: hsl(210 40% 98%);
+  --surface-elevated: hsl(0 0% 100%);
+  --border: hsl(214 32% 91%);
+  
+  --text-primary: hsl(222 47% 11%);
+  --text-secondary: hsl(215 16% 47%);
+  --text-muted: hsl(215 20% 65%);
+  
+  --accent: hsl(250 84% 54%);
+  --accent-foreground: hsl(210 40% 98%);
+  
+  --success: hsl(142 76% 36%);
+  --warning: hsl(38 92% 50%);
+  --danger: hsl(0 84% 60%);
+  
+  --input-bg: hsl(0 0% 100%);
+  --ring: hsla(250, 84%, 54%, 0.2);
+}
+
+.dark {
+  /* Dark Mode Tokens - Premium & Restrained */
+  --background: hsl(222 47% 6%);
+  --foreground: hsl(210 40% 98%);
+  
+  --surface: hsl(222 47% 11%);
+  --surface-elevated: hsl(222 47% 14%);
+  --border: hsl(217 33% 17%);
+  
+  --text-primary: hsl(210 40% 98%);
+  --text-secondary: hsl(215 20% 75%);
+  --text-muted: hsl(215 16% 47%);
+  
+  --accent: hsl(250 84% 65%);
+  --accent-foreground: hsl(222 47% 6%);
+  
+  --success: hsl(142 70% 45%);
+  --warning: hsl(48 96% 53%);
+  --danger: hsl(0 72% 51%);
+  
+  --input-bg: hsl(222 47% 11%);
+  --ring: hsla(250, 84%, 65%, 0.3);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card {
+    background-color: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  }
+}
+
