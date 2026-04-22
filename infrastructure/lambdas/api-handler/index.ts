@@ -105,7 +105,7 @@ async function createInterview(event: APIGatewayProxyEvent) {
     created_at: now,
     updated_at: now,
     metadata: result.data,
-    model_id: result.data.model_id || 'claude-3-haiku',
+    model_id: result.data.model_id || 'claude-3-sonnet',
   };
 
   await ddbDocClient.send(new PutCommand({
@@ -271,9 +271,11 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
     }
 
     try {
-      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3_key }));
-      const body = await response.Body?.transformToString() || '';
+      const { getFileBuffer } = await import('../shared/aws.js');
+      const { extractTextFromBuffer, extractJson } = await import('../shared/utils.js');
+      
+      const jdBuffer = await getFileBuffer(BUCKET_NAME, s3_key);
+      const jdText = await extractTextFromBuffer(jdBuffer, s3_key);
       
       // 3. Perform Semantic Alignment Check
       const enteredRole = item.metadata?.position || 'N/A';
@@ -289,38 +291,40 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
         Return ONLY a JSON object: { "aligned": boolean, "inferred_role": "professional title", "reason": "1-sentence justification" }
         
         Requirement (Title): "${enteredRole}"
-        JD Content: ${body.substring(0, 3500)}
+        JD Content (READING CLEAN TEXT):
+        ${jdText.substring(0, 4000)}
       `;
 
       const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
       const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
       
-      const mismatchModelId = process.env.BEDROCK_HAIKU_PROFILE_ARN;
-      console.info('[JD Alignment] Resolving Bedrock Profile:', { exists: !!mismatchModelId, id: mismatchModelId });
-      
-      if (!mismatchModelId && process.env.ALLOW_BEDROCK_BASE_MODEL_FALLBACK !== 'true') {
-        throw new Error('MODEL_PROFILE_NOT_CONFIGURED: BEDROCK_HAIKU_PROFILE_ARN (JD Alignment)');
-      }
+      // Resolve Model for Gate Check (Respect User Selection)
+      const selectedModel = item.model_id || 'claude-3-sonnet';
+      const mapping: Record<string, string | undefined> = {
+        'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+        'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
+      };
 
-      const finalModelId = mismatchModelId || 'anthropic.claude-3-haiku-20240307-v1:0';
-      if (!mismatchModelId) console.warn('[JD Alignment] WARNING: Falling back to Base ID:', finalModelId);
-
-      const { extractJson } = await import('../shared/utils');
+      const finalModelId = mapping[selectedModel] || 
+        (selectedModel === 'nova-pro' ? 'amazon.nova-pro-v1:0' : 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0');
       
+      console.info(`[JD Alignment] Using User-Selected Model (${selectedModel}):`, finalModelId);
+
       const bedrockResp = await client.send(new InvokeModelCommand({
         modelId: finalModelId,
         contentType: 'application/json',
         accept: 'application/json',
         body: JSON.stringify({
           anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 500,
+          max_tokens: 600,
           messages: [{ 
             role: 'user', 
             content: [{ 
               type: 'text', 
               text: inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.' 
             }] 
-          }]
+          }],
+          temperature: 0
         })
       }));
 

@@ -12,11 +12,45 @@ import {
   UpdateCommand 
 } from '@aws-sdk/lib-dynamodb';
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { z } from 'zod';
 import { 
-  DetailedEvaluationResultSchema,
   DetailedEvaluationResult,
   InterviewStatus
-} from '../../schema';
+} from '../../schema/index.js';
+
+/**
+ * [Surgical Fix] Internal 10-Point Schema
+ * Defined locally to defeat AWS path caching for shared directories.
+ */
+const LocalEvaluationSchema = z.object({
+  overall_score: z.number().min(0).max(10),
+  recommendation: z.enum(['Strong Hire', 'Hire', 'Maybe', 'No Hire', 'Strong No Hire']),
+  confidence: z.number().min(0).max(100),
+  coverage_percent: z.number().min(0).max(100),
+  dimension_breakdown: z.array(z.object({
+    dimension: z.string(),
+    score: z.number().min(0).max(10),
+    reason: z.string(),
+    evidence_found: z.boolean(),
+  })),
+  strengths: z.array(z.string()).max(10),
+  areas_for_review: z.array(z.string()).max(10),
+  evidence_items: z.array(z.object({
+    quote: z.string(),
+    context: z.string(),
+    dimension: z.string(),
+  })).max(10),
+  executive_summary: z.string(),
+  final_recommendation_note: z.string(),
+  technical_depth: z.number().min(0).max(10).optional(),
+  jd_fit_score: z.number().min(0).max(100).optional(),
+  experience_level: z.string().optional(),
+  fit_gap_analysis: z.array(z.object({
+    requirement: z.string(),
+    fit: z.enum(['Strong', 'Partial', 'Gap']),
+    evidence: z.string(),
+  })).max(12).optional(),
+});
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
@@ -93,13 +127,16 @@ async function runEvaluationPipeline(id: string) {
   console.log('Step 1: Extracting Job Description text...');
   let jd: string;
   try {
+    const { extractTextFromBuffer } = await import('../shared/utils.js');
     const jdBuffer = await getFileBuffer(BUCKET_NAME, item.jd_s3_key);
-    jd = await extractTextFromBuffer(jdBuffer, item.jd_s3_key);
+    const rawJd = await extractTextFromBuffer(jdBuffer, item.jd_s3_key);
+    
+    // Clean-Room Normalization: Remove PDF binary junk and noise
+    jd = normalizeTranscript(rawJd);
     
     if (!jd || jd.trim().length === 0) {
       throw new Error('JD_EXTRACTION_EMPTY');
     }
-    console.log(`JD extracted successfully. Length: ${jd.length} chars. Extension: ${item.jd_s3_key.split('.').pop()}`);
   } catch (err: any) {
     console.error('JD extraction failed:', err);
     throw new Error(err.message || 'JD_EXTRACTION_FAILED');
@@ -109,6 +146,7 @@ async function runEvaluationPipeline(id: string) {
   console.log('Step 2: Extracting Transcript text...');
   let transcriptRaw: string;
   try {
+    const { extractTextFromBuffer } = await import('../shared/utils.js');
     const transcriptBuffer = await getFileBuffer(BUCKET_NAME, item.transcript_s3_key);
     transcriptRaw = await extractTextFromBuffer(transcriptBuffer, item.transcript_s3_key);
     if (!transcriptRaw || transcriptRaw.trim().length === 0) {
@@ -120,22 +158,16 @@ async function runEvaluationPipeline(id: string) {
 
   const transcript = normalizeTranscript(transcriptRaw);
 
-  // 4. Step: Parse JD & Build Rubric (with hardening)
+  // 4. Step: Parse JD & Build Rubric
   console.log('Step 3: Parsing JD and building rubric...');
   const rubric = await withRetry(() => parseJDAndBuildRubric(jd, item.model_id), 3, 'JD_BEDROCK_PARSE_FAILED');
 
-  // 5. Step: Extract Evidence & Score (with Retry)
+  // 5. Step: Extract Evidence & Score
   console.log('Step 4: Extracting evidence and scoring...');
   const evaluation = await withRetry(() => extractEvidenceAndScore(transcript, rubric, item.model_id), 3, 'AI_MALFORMED_OUTPUT');
 
-  // 6. Validation
-  console.log('Step 5: Validating structured output...');
-  let validatedResult;
-  try {
-    validatedResult = DetailedEvaluationResultSchema.parse(evaluation);
-  } catch (err) {
-    throw new Error('JD_RESULT_VALIDATION_FAILED');
-  }
+  // Data is already validated inside evaluateTranscript() using LocalEvaluationSchema
+  const validatedResult = evaluation;
 
   // 7. Persist Full Result to S3
   const resultS3Key = `processed/${id}/result.json`;
@@ -181,34 +213,6 @@ async function runEvaluationPipeline(id: string) {
   }
 }
 
-async function extractTextFromBuffer(buffer: Buffer, key: string): Promise<string> {
-  const extension = key.split('.').pop()?.toLowerCase();
-  
-  if (!extension || extension === 'txt') {
-    return buffer.toString('utf-8');
-  }
-
-  if (extension === 'pdf') {
-    try {
-      const data = await pdf(buffer);
-      return data.text;
-    } catch (err) {
-      throw new Error('PDF_PARSE_FAILED');
-    }
-  }
-
-  if (extension === 'docx') {
-    try {
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value;
-    } catch (err) {
-      throw new Error('DOCX_PARSE_FAILED');
-    }
-  }
-
-  throw new Error('JD_EXTRACTION_UNSUPPORTED_FORMAT');
-}
-
 function normalizeTranscript(text: string): string {
   if (!text) return '';
   return text
@@ -224,84 +228,96 @@ function normalizeTranscript(text: string): string {
 }
 
 async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<string> {
-  const { extractJson } = await import('../shared/utils');
-  const prompt = `
-    Analyze the following Job Description (JD) and build a structured, dynamic evaluation rubric.
-    
-    CRITICAL ANALYSIS RULES:
-    1. Identify "Mandatory Non-Negotiables": These are specific skills, scale/experience levels, or certifications that are deal-breakers.
-    2. Identify "Seniority Indicators": For Senior/Lead roles, focus the rubric on Strategy, Architectural Decisions, and Team/Scale impact over simple technical syntax.
-    3. Assign "Decision Weights": High-risk dimensions (like "Scale Management" for an Architect) should have higher weights to ensure gaps there trigger a rejection.
+  const { extractJson } = await import('../shared/utils.js');
+  
+  const buildRubric = async () => {
+    const prompt = `
+      Analyze the following Job Description (JD) and build a structured, dynamic evaluation rubric.
+      
+      CRITICAL ANALYSIS RULES:
+      1. Identify "Mandatory Non-Negotiables": These are specific skills, scale/experience levels, or certifications that are deal-breakers.
+      2. Identify "Seniority Indicators": For Senior/Lead roles, focus the rubric on Strategy, Architectural Decisions, and Team/Scale impact over simple technical syntax.
+      3. Assign "Decision Weights": High-risk dimensions (like "Scale Management" for an Architect) should have higher weights to ensure gaps there trigger a rejection.
 
-    Output ONLY a valid raw JSON object. 
-    NO PREAMBLE. NO CONVERSATIONAL TEXT. NO MARKDOWN FENCES. FORBIDDEN: "Here is the JSON..." or similar text.
+      Output ONLY a valid raw JSON object. 
+      NO MARKDOWN FENCES. NO CONVERSATIONAL TEXT.
+      
+      Schema:
+      {
+        "dimensions": [
+          { "name": "string", "description": "string", "weight": number /* 1-10 */, "is_critical_deal_breaker": boolean }
+        ]
+      }
+      
+      IMPORTANT: Wrap your final JSON output ONLY inside <rubric_json> tags.
+      
+      JD:
+      ${jd}
+    `;
+
+    const response = await invokeBedrock(prompt, getModelId(selection));
     
-    Schema:
-    {
-      "dimensions": [
-        { "name": "string", "description": "string", "weight": number, "is_critical_deal_breaker": boolean }
-      ]
+    // Surgical Tag Extraction (Defeats AI Preamble)
+    const match = response.match(/<rubric_json>([\s\S]*?)<\/rubric_json>/);
+    const jsonStr = match ? match[1].trim() : extractJson(response);
+    
+    if (!jsonStr) throw new Error('AI_EMPTY_RESPONSE');
+
+    // Precise Validation for Rubric
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (!parsed.dimensions || !Array.isArray(parsed.dimensions)) throw new Error('Missing dimensions array');
+      return jsonStr;
+    } catch (valErr: any) {
+      console.warn('[JD Rubric Parsing Fail]', valErr.message);
+      throw new Error('AI_MALFORMED_OUTPUT');
     }
-    
-    JD:
-    ${jd}
-  `;
+  };
 
   try {
-     const response = await invokeBedrock(prompt, getModelId(selection));
-     const jsonStr = extractJson(response);
-     // Validate it can be parsed as JSON, but return the string as the rubric
-     JSON.parse(jsonStr); 
-     return jsonStr;
+    // Catch-All Resilience: Retry any failure (Access, Model, or Malformed)
+    return await withRetry(buildRubric, 2, 'CATCH_ALL_FAILURE');
   } catch (err: any) {
-     console.error('JD Rubric Stage Error:', err);
-     
-     // Propagate specific configuration or permission errors directly
-     const msg = err.message || '';
-     if (msg.includes('MODEL_PROFILE_NOT_CONFIGURED')) throw err;
-     if (err.name === 'AccessDeniedException') throw new Error('BEDROCK_ACCESS_DENIED');
-     if (err.name === 'ResourceNotFoundException') throw new Error('BEDROCK_MODEL_NOT_AVAILABLE');
-     if (err.name === 'ValidationException') throw new Error('BEDROCK_MODEL_PERMISSION_ERROR');
-     if (err instanceof SyntaxError) throw new Error('AI_MALFORMED_OUTPUT');
-     
-     // Surface the actual error message instead of the generic name "Error"
-     throw new Error(`JD_BEDROCK_PARSE_FAILED: ${err.message || err.name || 'UnknownError'}`);
+    console.error('JD Rubric Stage Critical Failure:', err);
+    throw new Error(`JD_RESULT_VALIDATION_FAILED: ${err.message || 'UnknownError'}`);
   }
 }
 
 function getModelId(selection?: string): string {
-  const modelKey = selection || 'claude-3-5-sonnet';
+  // 1. Legacy Check & Auto-Migration
+  const legacyKeys = ['claude-3-haiku', 'claude-3-5-sonnet', 'claude-opus-4-6'];
+  let modelKey = selection || 'claude-3-sonnet';
+  
+  if (selection && legacyKeys.includes(selection)) {
+    console.info(`[Legacy Migration] Promoting ${selection} -> claude-3-sonnet`);
+    modelKey = 'claude-3-sonnet';
+  }
   
   const mapping: Record<string, string | undefined> = {
-    'claude-3-5-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
-    'claude-3-haiku': process.env.BEDROCK_HAIKU_PROFILE_ARN,
+    'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
     'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
   };
 
   const profileArn = mapping[modelKey];
   const allowFallback = process.env.ALLOW_BEDROCK_BASE_MODEL_FALLBACK === 'true';
   
-  // High-Resolution Diagnostics (CloudWatch Metadata Only)
   console.info('[Bedrock Resolution]', {
     requestedKey: modelKey,
     routingProfileArnExists: !!profileArn,
-    fallbackEnabled: allowFallback,
-    isDevelopment: process.env.NODE_ENV === 'dev'
+    fallbackEnabled: allowFallback
   });
 
   if (profileArn) {
-    console.info('[Bedrock Resolved] Using Profile ARN:', profileArn);
     return profileArn;
   }
 
   if (allowFallback) {
     const fallbackMapping: Record<string, string> = {
-      'claude-3-5-sonnet': 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-      'claude-3-haiku': 'anthropic.claude-3-haiku-20240307-v1:0',
+      'claude-3-sonnet': 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
       'nova-pro': 'amazon.nova-pro-v1:0',
     };
-    const fallbackId = fallbackMapping[modelKey] || 'anthropic.claude-3-5-sonnet-20241022-v2:0';
-    console.warn('[Bedrock Resolved] Silently Falling Back to Base ID:', fallbackId);
+    const fallbackId = fallbackMapping[modelKey] || 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0';
+    console.warn('[Bedrock Resolved] Region-Locked Fallback to APAC Profile:', fallbackId);
     return fallbackId;
   }
 
@@ -339,18 +355,18 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     JSON Schema:
     <evaluation_json>
     {
-      "overall_score": 0-100,
+      "overall_score": 0.0-10.0,
       "recommendation": "Strong Hire" | "Hire" | "Maybe" | "No Hire" | "Strong No Hire",
-      "confidence": 0-1,
+      "confidence": 0-100,
       "coverage_percent": 0-100,
       "dimension_breakdown": [
-        { "dimension": "string", "score": 0-100, "reason": "concise explanation", "evidence_found": boolean }
+        { "dimension": "string", "score": 0.0-10.0, "reason": "concise explanation", "evidence_found": boolean }
       ],
-      "strengths": ["string"],
-      "areas_for_review": ["string"], // Identify critical gaps specifically
+      "strengths": ["string"], // Provide 5-8 high-impact strengths
+      "areas_for_review": ["string"], // Provide 5-8 surgical gaps/risks
       "evidence_items": [
         { "quote": "string", "context": "string", "dimension": "string" }
-      ],
+      ], // Provide 5-8 verbatim evidence nuggets
       "executive_summary": "SCEPTICAL executive assessment starting with risks",
       "final_recommendation_note": "A final verdict from a Bar-Raiser's perspective",
       "technical_depth": 0-10,
@@ -372,14 +388,23 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
   const response = await invokeBedrock(prompt, getModelId(selection));
   const jsonStr = extractJson(response);
   try {
-    return JSON.parse(jsonStr);
-  } catch (err: any) {
-    console.error('AI JSON Parse Failure. Raw Response snippet:', response.substring(0, 500));
-    console.error('Cleaned JSON snippet:', jsonStr.substring(0, 500));
-    console.error('Parse Error:', err.message);
+    const rawResult = JSON.parse(jsonStr);
     
+    // Strict schema validation (Baked local version to defeat caching)
+    const validation = LocalEvaluationSchema.safeParse(rawResult);
+    
+    if (!validation.success) {
+      const errorMsg = validation.error.issues.map((i: any) => `${i.path.join('.')}: ${i.message}`).join(', ');
+      console.error('[FINAL EVALUATION VALIDATION FAILED]', errorMsg);
+      throw new Error(`FINAL_RESULT_VALIDATION_FAILED: ${errorMsg}`);
+    }
+    
+    return validation.data;
+  } catch (err: any) {
+    if (err.message?.includes('VALIDATION_FAILED')) throw err;
     if (err.message?.includes('MODEL_PROFILE_NOT_CONFIGURED')) throw err;
-    throw new Error('AI_MALFORMED_OUTPUT');
+    console.error('Evaluation Stage Error:', err);
+    throw new Error(`FINAL_RESULT_VALIDATION_FAILED: ${err.message || 'UnknownError'}`);
   }
 }
 
@@ -390,8 +415,11 @@ async function withRetry<T>(fn: () => Promise<T>, attempts: number = 2, retryErr
       return await fn();
     } catch (err: any) {
       lastErr = err;
-      // Retry if it's a specific "retryable" AI error or the first attempt
-      if ((err.message === retryErrorMsg || err.message === 'AI_MALFORMED_OUTPUT') && i < attempts - 1) {
+      // Retry if it matches the requested error OR if it's a 'CATCH_ALL' resilience request
+      const isCatchAll = retryErrorMsg === 'CATCH_ALL_FAILURE';
+      const isExplicitMatch = err.message === retryErrorMsg || err.message === 'AI_MALFORMED_OUTPUT';
+      
+      if ((isCatchAll || isExplicitMatch) && i < attempts - 1) {
         console.warn(`Retry attempt ${i + 1} for: ${err.message}`);
         continue;
       }
@@ -540,9 +568,9 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
     currentPage.drawText(lbl, { x: x + 12, y: metricY - 20, size: 7, font: boldFont, color: COLOR_MUTED });
     currentPage.drawText(val, { x: x + 12, y: metricY - 48, size: 18, font: boldFont, color: COLOR_PRIMARY });
   };
-  drawMetric('OVERALL RATING', `${normScore}/10`, 30);
+  drawMetric('OVERALL RATING', `${results.overall_score}/10`, 30);
   drawMetric('JD ALIGNMENT', `${results.jd_fit_score}%`, 165);
-  drawMetric('TECHNICAL DEPTH', `${(results.technical_depth || 0) > 10 ? (results.technical_depth! / 10).toFixed(1) : results.technical_depth}/10`, 300);
+  drawMetric('TECHNICAL DEPTH', `${results.technical_depth || 0}/10`, 300);
   drawMetric('VERDICT', results.recommendation.toUpperCase(), 435);
   y -= 100;
 
@@ -553,9 +581,9 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
   drawSectionHeader('Competency Analysis');
   results.dimension_breakdown.forEach(dim => {
     ensureSpace(60);
-    const dScore = dim.score > 10 ? dim.score / 10 : dim.score;
+    const dScore = dim.score;
     currentPage.drawText(dim.dimension.toUpperCase(), { x: MARGIN_X, y, size: 8, font: boldFont });
-    currentPage.drawText(`${dScore}/10`, { x: DRAW_WIDTH + MARGIN_X - 25, y, size: 8, font: boldFont, color: dScore >= 7 ? COLOR_SUCCESS : COLOR_PRIMARY });
+    currentPage.drawText(`${dScore}/10`, { x: DRAW_WIDTH + MARGIN_X - 25, y, size: 8, font: boldFont, color: dScore >= 7.5 ? COLOR_SUCCESS : COLOR_PRIMARY });
     y -= 12;
     drawProgressBar(currentPage, dScore, 10, MARGIN_X, y, DRAW_WIDTH);
     y -= 18;
@@ -585,7 +613,7 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
   ensureSpace(120);
   currentPage.drawRectangle({ x: MARGIN_X, y: y - 100, width: DRAW_WIDTH, height: 110, color: rgb(0.98, 0.99, 1), borderColor: COLOR_PRIMARY, borderWidth: 1 });
   currentPage.drawText('FINAL RECOMMENDATION:', { x: MARGIN_X + 20, y: y - 25, size: 9, font: boldFont, color: COLOR_MUTED });
-  currentPage.drawText(results.recommendation.toUpperCase(), { x: MARGIN_X + 150, y: y - 25, size: 12, font: boldFont, color: isHire ? COLOR_SUCCESS : COLOR_DANGER });
+  currentPage.drawText(results.recommendation.toUpperCase(), { x: MARGIN_X + 150, y: y - 25, size: 12, font: boldFont, color: results.overall_score >= 7 ? COLOR_SUCCESS : COLOR_DANGER });
   y -= 45;
   drawFlowText(results.final_recommendation_note, 9, font, 15, COLOR_TEXT, 20);
 

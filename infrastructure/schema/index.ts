@@ -75,23 +75,23 @@ export const ErrorResponseSchema = z.object({
 });
 
 export const DetailedEvaluationResultSchema = z.object({
-  overall_score: z.number().min(0).max(100),
+  overall_score: z.number().min(0).max(10),
   recommendation: z.enum(['Strong Hire', 'Hire', 'Maybe', 'No Hire', 'Strong No Hire']),
-  confidence: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(100),
   coverage_percent: z.number().min(0).max(100),
   dimension_breakdown: z.array(z.object({
     dimension: z.string(),
-    score: z.number().min(0).max(100),
+    score: z.number().min(0).max(10),
     reason: z.string(),
     evidence_found: z.boolean(),
   })),
-  strengths: z.array(z.string()).max(5),
-  areas_for_review: z.array(z.string()).max(5),
+  strengths: z.array(z.string()).max(10),
+  areas_for_review: z.array(z.string()).max(10),
   evidence_items: z.array(z.object({
     quote: z.string(),
     context: z.string(),
     dimension: z.string(),
-  })).max(5),
+  })).max(10),
   executive_summary: z.string(),
   final_recommendation_note: z.string(),
   technical_depth: z.number().min(0).max(10).optional(),

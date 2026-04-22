@@ -35,17 +35,16 @@ function InterviewDetailsContent() {
 
   const getFriendlyError = (err: string) => {
     if (err.includes('AI_MALFORMED_OUTPUT')) return "The AI had trouble formatting the result. This often happens if the transcript is very messy. Please try clicking 'Retry Analysis'.";
+    if (err.includes('JD_RESULT_VALIDATION_FAILED')) return "Job Description Rubric Validation Failed. The AI logic was unable to build a valid evaluation framework from your document. Please verify the JD content.";
+    if (err.includes('FINAL_RESULT_VALIDATION_FAILED')) return "Final Evaluation Result Validation Failed. The AI analysis returned a contract mismatch. Please retry or contact support if the issue persists.";
     if (err.includes('JD_EXTRACTION_FAILED')) return "We couldn't read the Job Description. Please ensure it is a valid PDF or Word document.";
     if (err.includes('TRANSCRIPT_EXTRACTION_FAILED')) return "We couldn't read the Interview Transcript. Please ensure the file is not corrupted.";
-    if (err.includes('NOT_FOUND')) return "We couldn't find this interview record. It may have been deleted.";
     return err;
   };
 
   const formatScore = (score: number | undefined) => {
     if (score === undefined || score === null) return '0.0';
-    // If score is > 10, it's a legacy /100 score, so we divide by 10.
-    const normalized = score > 10 ? score / 10 : score;
-    return normalized.toFixed(1);
+    return score.toFixed(1);
   };
 
   const fetchInterview = useCallback(async () => {
@@ -360,7 +359,7 @@ function InterviewDetailsContent() {
                       <h4 className="font-bold text-text-primary text-sm tracking-tight">{dim.dimension}</h4>
                       <span className={cn(
                         "text-sm font-black tracking-tighter",
-                        (dim.score > 10 ? dim.score / 10 : dim.score) >= 8 ? "text-success" : (dim.score > 10 ? dim.score / 10 : dim.score) >= 6 ? "text-accent" : "text-danger"
+                        dim.score >= 7.5 ? "text-success" : dim.score >= 5.5 ? "text-accent" : "text-danger"
                       )}>{formatScore(dim.score)}/10</span>
                     </div>
                     <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{dim.reason}</p>
