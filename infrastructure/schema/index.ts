@@ -19,13 +19,13 @@ export const CreateInterviewSchema = z.object({
 });
 
 export const UploadUrlSchema = z.object({
-  file_type: z.enum(['transcript', 'jd']),
+  file_type: z.enum(['transcript', 'jd', 'resume']),
   file_name: z.string().min(1),
   content_type: z.string().regex(/^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/plain)$/),
 });
 
 export const ConfirmUploadSchema = z.object({
-  file_type: z.enum(['transcript', 'jd']),
+  file_type: z.enum(['transcript', 'jd', 'resume']),
   s3_key: z.string().min(1),
 });
 
@@ -38,6 +38,7 @@ export const InterviewRecordSchema = z.object({
   metadata: CreateInterviewSchema,
   transcript_s3_key: z.string().optional(),
   jd_s3_key: z.string().optional(),
+  resume_s3_key: z.string().optional(),
   result_s3_key: z.string().optional(),
   report_s3_key: z.string().optional(),
   model_id: z.string().optional(),

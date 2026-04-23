@@ -158,13 +158,28 @@ async function runEvaluationPipeline(id: string) {
 
   const transcript = normalizeTranscript(transcriptRaw);
 
+  // 3.5 Load and Extract Resume (OPTIONAL)
+  let resume: string | undefined = undefined;
+  if (item.resume_s3_key) {
+    console.log('Step 2.5: Extracting Resume text (Optional)...');
+    try {
+      const { extractTextFromBuffer } = await import('../shared/utils.js');
+      const resumeBuffer = await getFileBuffer(BUCKET_NAME, item.resume_s3_key);
+      const rawResume = await extractTextFromBuffer(resumeBuffer, item.resume_s3_key);
+      resume = normalizeTranscript(rawResume);
+      console.log('Resume extraction successful.');
+    } catch (err: any) {
+      console.warn('Optional resume extraction failed (continuing):', err);
+    }
+  }
+
   // 4. Step: Parse JD & Build Rubric
   console.log('Step 3: Parsing JD and building rubric...');
   const rubric = await withRetry(() => parseJDAndBuildRubric(jd, item.model_id), 3, 'JD_BEDROCK_PARSE_FAILED');
 
   // 5. Step: Extract Evidence & Score
   console.log('Step 4: Extracting evidence and scoring...');
-  const evaluation = await withRetry(() => extractEvidenceAndScore(transcript, rubric, item.model_id), 3, 'AI_MALFORMED_OUTPUT');
+  const evaluation = await withRetry(() => extractEvidenceAndScore(transcript, rubric, item.model_id, resume), 3, 'AI_MALFORMED_OUTPUT');
 
   // Data is already validated inside evaluateTranscript() using LocalEvaluationSchema
   const validatedResult = evaluation;
@@ -324,7 +339,7 @@ function getModelId(selection?: string): string {
   throw new Error(`MODEL_PROFILE_NOT_CONFIGURED: ${modelKey}`);
 }
 
-async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string): Promise<any> {
+async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string, resume?: string): Promise<any> {
   const prompt = `
     Evaluate the interview transcript against the rubric with a SCEPTICAL executive lens.
     
@@ -334,6 +349,7 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     1. EXECUTION VS. THEORY: Significant penalty if candidate fails to provide specific historical execution evidence for critical skills.
     2. VAGUE = GAP: High-level answers without verifiable detail must be marked as GAPs.
     3. DEAL-BREAKER PENALTY: Critical deal-breakers identified as GAPs force a No-Hire verdict and a sub-40 score.
+    4. RESUME VERIFICATION: ${resume ? 'Use the provided RESUME to verify the candidate\'s claims in the TRANSCRIPT. Check for consistency in years of experience, specific projects, and technical depth.' : 'No resume provided for verification.'}
 
     SCORING CALIBRATION:
     - 8.5 - 10.0: "Strong Hire" (Excellent execution across ALL non-negotiables)
@@ -380,6 +396,8 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     
     RUBRIC:
     ${rubric}
+
+    ${resume ? `CANDIDATE RESUME:\n${resume}\n\n` : ''}
 
     TRANSCRIPT:
     ${transcript}
@@ -616,6 +634,15 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
   currentPage.drawText(results.recommendation.toUpperCase(), { x: MARGIN_X + 150, y: y - 25, size: 12, font: boldFont, color: results.overall_score >= 7 ? COLOR_SUCCESS : COLOR_DANGER });
   y -= 45;
   drawFlowText(results.final_recommendation_note, 9, font, 15, COLOR_TEXT, 20);
+
+  // Resume inclusion note
+  if (interviewParams.resume_s3_key) {
+    ensureSpace(40);
+    y -= 40;
+    currentPage.drawText('Note: Evaluation included verification against candidate resume.', {
+      x: MARGIN_X, y, size: 7, font, color: COLOR_MUTED
+    });
+  }
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);

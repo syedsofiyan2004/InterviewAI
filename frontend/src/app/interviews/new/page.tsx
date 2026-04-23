@@ -45,6 +45,7 @@ export default function NewInterview() {
   const [uploads, setUploads] = useState({
     transcript: { file: null as File | null, status: 'IDLE' as 'IDLE' | 'UPLOADING' | 'DONE' | 'ERROR' },
     jd: { file: null as File | null, status: 'IDLE' as 'IDLE' | 'UPLOADING' | 'DONE' | 'ERROR' },
+    resume: { file: null as File | null, status: 'IDLE' as 'IDLE' | 'UPLOADING' | 'DONE' | 'ERROR' },
   });
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -72,7 +73,7 @@ export default function NewInterview() {
     }
   };
 
-  const handleFileUpload = async (type: 'transcript' | 'jd', file: File) => {
+  const handleFileUpload = async (type: 'transcript' | 'jd' | 'resume', file: File) => {
     if (!interviewId) return;
     
     setUploads(prev => ({ ...prev, [type]: { ...prev[type], status: 'UPLOADING' } }));
@@ -199,7 +200,7 @@ export default function NewInterview() {
 
       {step === 'UPLOAD' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <UploadCard 
               title="Interview Transcript" 
               description="PDF, DOCX or TXT of the conversation"
@@ -211,6 +212,13 @@ export default function NewInterview() {
               description="Primary requirements and expectations"
               status={uploads.jd.status}
               onUpload={file => handleFileUpload('jd', file)}
+            />
+            <UploadCard 
+              title="Candidate Resume" 
+              description="Optional: For deep experience verification"
+              status={uploads.resume.status}
+              onUpload={file => handleFileUpload('resume', file)}
+              isOptional
             />
           </div>
 
@@ -271,9 +279,14 @@ function ProgressStep({ active, done, label }: { active: boolean, done: boolean,
   );
 }
 
-function UploadCard({ title, description, status, onUpload }: { title: string, description: string, status: string, onUpload: (f: File) => void }) {
+function UploadCard({ title, description, status, onUpload, isOptional }: { title: string, description: string, status: string, onUpload: (f: File) => void, isOptional?: boolean }) {
   return (
-    <div className="card p-6 flex flex-col justify-between items-center text-center space-y-4">
+    <div className={`card p-6 flex flex-col justify-between items-center text-center space-y-4 ${isOptional && status === 'IDLE' ? 'border-dashed' : ''}`}>
+      <div className="w-full flex justify-end">
+        {isOptional && status === 'IDLE' && (
+          <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest px-2 py-0.5 bg-surface rounded-full border border-border">Optional</span>
+        )}
+      </div>
       <div className={`p-3 rounded-full ${
         status === 'DONE' ? "bg-green-50 text-green-600 dark:bg-green-900/10" : "bg-surface text-text-muted"
       }`}>

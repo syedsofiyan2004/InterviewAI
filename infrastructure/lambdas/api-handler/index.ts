@@ -162,8 +162,10 @@ async function getInterview(id?: string) {
     metadata: item.metadata,
     transcript_uploaded: !!item.transcript_s3_key,
     jd_uploaded: !!item.jd_s3_key,
+    resume_uploaded: !!item.resume_s3_key,
     jd_s3_key: item.jd_s3_key,
     transcript_s3_key: item.transcript_s3_key,
+    resume_s3_key: item.resume_s3_key,
     model_id: item.model_id,
     inferred_role: item.inferred_role,
     is_mismatched: item.is_mismatched,
@@ -242,11 +244,20 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
 
   // 3. Map file type and determine status
-  const attrName = file_type === 'transcript' ? 'transcript_s3_key' : 'jd_s3_key';
-  const otherAttr = file_type === 'transcript' ? 'jd_s3_key' : 'transcript_s3_key';
+  const attrMap: Record<string, string> = {
+    'transcript': 'transcript_s3_key',
+    'jd': 'jd_s3_key',
+    'resume': 'resume_s3_key'
+  };
   
-  const hasOtherFile = !!item[otherAttr];
-  const finalStatus = hasOtherFile ? 'FILES_UPLOADED' : item.status;
+  const attrName = attrMap[file_type];
+  
+  // Determine if we should move to FILES_UPLOADED
+  // (Only transcript and JD are strictly required for evaluation)
+  const transcriptKey = file_type === 'transcript' ? s3_key : item.transcript_s3_key;
+  const jdKey = file_type === 'jd' ? s3_key : item.jd_s3_key;
+  
+  const finalStatus = (transcriptKey && jdKey) ? 'FILES_UPLOADED' : item.status;
 
   // --- NEW: Dynamic Role Alignment Inference ---
   let inferredRole = item.inferred_role;
