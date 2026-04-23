@@ -38,3 +38,4 @@ Thumbs.db
 .git/
 **/.git/
 !/.git/
+/.claude

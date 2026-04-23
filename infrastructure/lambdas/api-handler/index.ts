@@ -481,7 +481,9 @@ async function deleteInterview(id?: string) {
   const keysToDelete = [
     item.transcript_s3_key,
     item.jd_s3_key,
-    item.result_s3_key
+    item.resume_s3_key,
+    item.result_s3_key,
+    item.report_s3_key,
   ].filter(Boolean);
 
   // 3. Delete from S3 (Fail-safe: ignore "Not Found" errors)
