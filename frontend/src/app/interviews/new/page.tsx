@@ -12,8 +12,14 @@ import {
   AlertCircle
 } from 'lucide-react';
 import Link from 'next/link';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 
-type Step = 'CREATE' | 'UPLOAD' | 'ANALYZE';
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+type Step = 'CREATE' | 'UPLOAD';
 
 export default function NewInterview() {
   const router = useRouter();
@@ -101,17 +107,6 @@ export default function NewInterview() {
     }
   };
 
-  const handleAnalyze = async () => {
-    if (!interviewId) return;
-    setLoading(true);
-    try {
-      await api.analyzeInterview(interviewId);
-      router.push(`/interviews/view?id=${interviewId}`);
-    } catch (err) {
-      alert('Failed to trigger analysis');
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -125,13 +120,11 @@ export default function NewInterview() {
         <p className="text-text-secondary">Follow the steps to prepare and trigger an automated AI assessment.</p>
       </div>
 
-      {/* Progress Indicator */}
-      <div className="flex items-center gap-4 py-4">
-        <ProgressStep active={step === 'CREATE'} done={!!interviewId} label="Draft" />
-        <div className="h-px flex-1 bg-border" />
-        <ProgressStep active={step === 'UPLOAD'} done={uploads.transcript.status === 'DONE' && uploads.jd.status === 'DONE'} label="Uploads" />
-        <div className="h-px flex-1 bg-border" />
-        <ProgressStep active={step === 'ANALYZE'} done={false} label="Analysis" />
+      {/* Progress Steps */}
+      <div className="flex items-center justify-center gap-4 py-8 max-w-sm mx-auto">
+        <ProgressStep step={1} active={step === 'CREATE'} done={!!interviewId} label="Details" />
+        <div className={cn("h-px flex-1 transition-colors duration-500", !!interviewId ? "bg-success" : "bg-border")} />
+        <ProgressStep step={2} active={step === 'UPLOAD'} done={uploads.transcript.status === 'DONE' && uploads.jd.status === 'DONE'} label="Documents" />
       </div>
 
       {error && (
@@ -145,7 +138,7 @@ export default function NewInterview() {
         <form onSubmit={handleCreate} className="card p-8 space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Candidate Name</label>
+              <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
               <input 
                 required
                 className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
@@ -155,7 +148,7 @@ export default function NewInterview() {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Position</label>
+              <label className="block text-xs font-semibold text-text-muted mb-2">Position</label>
               <input 
                 required
                 className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
@@ -165,7 +158,7 @@ export default function NewInterview() {
               />
             </div>
              <div>
-              <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Interview Date</label>
+              <label className="block text-xs font-semibold text-text-muted mb-2">Interview Date</label>
               <input 
                 type="date"
                 required
@@ -175,7 +168,7 @@ export default function NewInterview() {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Assessment Model</label>
+              <label className="block text-xs font-semibold text-text-muted mb-2">Assessment Model</label>
               <select
                 id="model_id"
                 name="model_id"
@@ -193,7 +186,7 @@ export default function NewInterview() {
             disabled={loading}
             className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Create Interview Record'}
+            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Continue to document upload'}
           </button>
         </form>
       )}
@@ -205,20 +198,22 @@ export default function NewInterview() {
               title="Interview Transcript" 
               description="PDF, DOCX or TXT of the conversation"
               status={uploads.transcript.status}
+              fileName={uploads.transcript.file?.name}
               onUpload={file => handleFileUpload('transcript', file)}
             />
             <UploadCard 
               title="Job Description" 
               description="Primary requirements and expectations"
               status={uploads.jd.status}
+              fileName={uploads.jd.file?.name}
               onUpload={file => handleFileUpload('jd', file)}
             />
             <UploadCard 
               title="Candidate Resume" 
               description="Optional: For deep experience verification"
               status={uploads.resume.status}
+              fileName={uploads.resume.file?.name}
               onUpload={file => handleFileUpload('resume', file)}
-              isOptional
             />
           </div>
 
@@ -228,79 +223,88 @@ export default function NewInterview() {
               disabled={uploads.transcript.status !== 'DONE' || uploads.jd.status !== 'DONE'}
               className="w-full py-3 bg-accent text-accent-foreground font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-30 flex items-center justify-center gap-2"
             >
-              Finish and Go to Readiness Gate
+              Submit for analysis
             </button>
           </div>
         </div>
       )}
 
-      {step === 'ANALYZE' && (
-        <div className="card p-12 text-center space-y-6">
-          <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2">
-            <FileText size={32} />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-xl font-bold text-text-primary">Ready for AI Evaluation</h3>
-            <p className="text-text-secondary max-w-sm mx-auto">
-              Both documents have been securely processed. Amazon Bedrock is ready to assess the interview against your local rubric.
-            </p>
-          </div>
-          <button 
-            onClick={handleAnalyze}
-            disabled={loading}
-            className="px-8 py-3 bg-accent text-accent-foreground font-bold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 mx-auto disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Trigger AI Analysis'}
-          </button>
-          <button 
-            onClick={() => setStep('UPLOAD')}
-            className="block mx-auto text-sm text-text-muted hover:text-text-primary"
-          >
-            Back to Uploads
-          </button>
-        </div>
+    </div>
+  );
+}
+
+function ProgressStep({ step, active, done, label }: { step?: number, active: boolean, done: boolean, label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className={cn(
+        "w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-all duration-300",
+        done ? "bg-success border-success text-white" :
+        active ? "bg-accent border-accent text-accent-foreground shadow-lg shadow-accent/20" :
+        "bg-surface border-border text-text-muted"
+      )}>
+        {done ? <CheckCircle2 size={20} /> : step || (active ? "!" : "?")}
+      </div>
+      <span className={cn(
+        "text-xs font-semibold whitespace-nowrap",
+        active || done ? "text-text-primary" : "text-text-muted"
+      )}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function UploadCard({ title, description, status, fileName, onUpload }: { title: string, description: string, status: string, fileName?: string, onUpload: (f: File) => void }) {
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') setIsDragging(true);
+    else if (e.type === 'dragleave') setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      onUpload(e.dataTransfer.files[0]);
+    }
+  };
+
+  return (
+    <div 
+      onDragEnter={handleDrag}
+      onDragLeave={handleDrag}
+      onDragOver={handleDrag}
+      onDrop={handleDrop}
+      className={cn(
+        "card p-6 flex flex-col justify-between items-center text-center space-y-4 transition-all duration-300",
+        status === 'IDLE' ? (isDragging ? 'bg-accent/5 border-accent ring-2 ring-accent/20' : 'bg-surface/50 border-dashed hover:border-accent/40') : 
+        status === 'DONE' ? 'bg-success/5 border-success/30' : ''
       )}
-    </div>
-  );
-}
-
-function ProgressStep({ active, done, label }: { active: boolean, done: boolean, label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <div className={`w-6 h-6 rounded-full border flex items-center justify-center text-[10px] font-bold tracking-tighter transition-all ${
-        done ? "bg-green-500 border-green-500 text-white" : 
-        active ? "bg-accent border-accent text-accent-foreground ring-4 ring-ring" : 
-        "border-border text-text-muted"
+    >
+      <div className="w-full h-4" />
+      <div className={`p-3 rounded-full transition-transform duration-300 ${isDragging ? 'scale-110' : ''} ${
+        status === 'DONE' ? "bg-success/10 text-success" : "bg-surface text-text-muted"
       }`}>
-        {done ? <CheckCircle2 size={14} /> : active ? "!" : ""}
+        {status === 'DONE' ? <CheckCircle2 size={24} /> : <Upload size={24} className={isDragging ? 'text-accent' : ''} />}
       </div>
-      <span className={`text-xs font-bold uppercase tracking-widest ${active || done ? "text-text-primary" : "text-text-muted"}`}>{label}</span>
-    </div>
-  );
-}
-
-function UploadCard({ title, description, status, onUpload, isOptional }: { title: string, description: string, status: string, onUpload: (f: File) => void, isOptional?: boolean }) {
-  return (
-    <div className={`card p-6 flex flex-col justify-between items-center text-center space-y-4 ${isOptional && status === 'IDLE' ? 'border-dashed' : ''}`}>
-      <div className="w-full flex justify-end">
-        {isOptional && status === 'IDLE' && (
-          <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest px-2 py-0.5 bg-surface rounded-full border border-border">Optional</span>
-        )}
-      </div>
-      <div className={`p-3 rounded-full ${
-        status === 'DONE' ? "bg-green-50 text-green-600 dark:bg-green-900/10" : "bg-surface text-text-muted"
-      }`}>
-        {status === 'DONE' ? <CheckCircle2 size={24} /> : <Upload size={24} />}
-      </div>
-      <div>
-        <h4 className="text-sm font-bold text-text-primary tracking-tight">{title}</h4>
-        <p className="text-xs text-text-muted mt-1">{description}</p>
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold text-text-primary tracking-tight">{title}</h4>
+        <p className={cn(
+          "text-xs mt-1",
+          status === 'DONE' ? "text-success font-medium" : "text-text-muted"
+        )}>
+          {status === 'DONE' && fileName ? fileName : description}
+        </p>
       </div>
       
       <div className="w-full">
         {status === 'IDLE' && (
-          <label className="w-full py-2 bg-surface-elevated border border-border text-xs font-bold text-text-primary rounded cursor-pointer hover:bg-surface transition-colors flex items-center justify-center">
-            Browse File
+          <label className="w-full py-2 bg-surface-elevated border border-border text-xs font-semibold text-text-primary rounded-md cursor-pointer hover:bg-surface transition-colors flex items-center justify-center">
+            {isDragging ? 'Drop to Upload' : 'Browse File'}
             <input 
               type="file" 
               className="hidden" 
@@ -316,16 +320,15 @@ function UploadCard({ title, description, status, onUpload, isOptional }: { titl
         )}
         
         {status === 'UPLOADING' && (
-          <div className="w-full py-2 flex items-center justify-center gap-2 text-xs font-bold text-accent">
+          <div className="w-full py-2 flex items-center justify-center gap-2 text-xs font-semibold text-accent">
             <Loader2 className="animate-spin" size={14} />
             Uploading...
           </div>
         )}
 
         {status === 'DONE' && (
-          <label className="w-full py-2 bg-green-50/50 border border-green-200 text-xs font-bold text-green-600 rounded cursor-pointer hover:bg-green-50 transition-colors flex items-center justify-center gap-2">
-            <CheckCircle2 size={14} />
-            File Verified (Change)
+          <label className="w-full py-2 bg-success/10 border border-success/20 text-xs font-semibold text-success rounded-md cursor-pointer hover:bg-success/20 transition-colors flex items-center justify-center gap-2">
+            Change File
             <input 
               type="file" 
               className="hidden" 
@@ -341,9 +344,9 @@ function UploadCard({ title, description, status, onUpload, isOptional }: { titl
         )}
 
         {status === 'ERROR' && (
-          <label className="w-full py-2 bg-red-50/50 border border-red-200 text-xs font-bold text-danger rounded cursor-pointer hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
+          <label className="w-full py-2 bg-danger/10 border border-danger/20 text-xs font-semibold text-danger rounded-md cursor-pointer hover:bg-danger/20 transition-colors flex items-center justify-center gap-2">
             <AlertCircle size={14} />
-            Failed. Retry.
+            Retry Upload
             <input 
               type="file" 
               className="hidden" 

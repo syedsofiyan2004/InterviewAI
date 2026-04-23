@@ -26,12 +26,12 @@
 
 .dark {
   /* Dark Mode Tokens - Premium & Restrained */
-  --background: hsl(222 47% 6%);
+  --background: hsl(222 47% 5%);        /* slightly darker page bg */
   --foreground: hsl(210 40% 98%);
   
-  --surface: hsl(222 47% 11%);
-  --surface-elevated: hsl(222 47% 14%);
-  --border: hsl(217 33% 17%);
+  --surface: hsl(222 47% 9%);           /* sidebar */
+  --surface-elevated: hsl(222 47% 12%); /* cards — noticeably lighter than bg */
+  --border: hsl(217 33% 20%);           /* slightly more visible borders */
   
   --text-primary: hsl(210 40% 98%);
   --text-secondary: hsl(215 20% 75%);

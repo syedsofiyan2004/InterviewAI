@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "InterviewAI | Evaluation Platform",
-  description: "Production-grade AI interview evaluation platform.",
+  title: "Minfy AI",
+  description: "AI-powered interview evaluation platform by Minfy",
 };
 
 export default function RootLayout({
@@ -25,7 +25,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            const saved = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDarkMode = saved ? saved === 'dark' : prefersDark;
+            if (isDarkMode) document.documentElement.classList.add('dark');
+          })()
+        ` }} />
+      </head>
       <body>
         <AuthProvider>
           <AppShell>

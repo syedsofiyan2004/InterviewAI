@@ -2,7 +2,19 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ShieldCheck, Mail, Lock, Eye, EyeOff, ArrowRight, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { 
+  ShieldCheck, 
+  Mail, 
+  Lock, 
+  Eye, 
+  EyeOff, 
+  ArrowRight, 
+  Loader2, 
+  CheckCircle2, 
+  AlertCircle, 
+  RefreshCw,
+  BarChart2
+} from 'lucide-react';
 import { signIn, signUp, confirmSignUp, resendCode } from '@/lib/auth';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -29,7 +41,6 @@ function LoginContent() {
     setSuccess(null);
   };
 
-  // ── Sign In ───────────────────────────────────────────────────────────────
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
@@ -55,7 +66,6 @@ function LoginContent() {
     }
   };
 
-  // ── Sign Up ───────────────────────────────────────────────────────────────
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
@@ -82,7 +92,6 @@ function LoginContent() {
     }
   };
 
-  // ── Verify ────────────────────────────────────────────────────────────────
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
@@ -90,7 +99,6 @@ function LoginContent() {
     setLoading(true);
     try {
       await confirmSignUp(email, verifyCode);
-      // Auto sign-in after verification
       await signIn(email, password);
       await refreshSession();
       router.push(nextPath);
@@ -107,7 +115,6 @@ function LoginContent() {
     }
   };
 
-  // ── Resend Code ───────────────────────────────────────────────────────────
   const handleResend = async () => {
     clearMessages();
     if (!email) return setError('Enter your email address first.');
@@ -123,183 +130,194 @@ function LoginContent() {
   };
 
   return (
-    <div className="w-full max-w-md">
-      {/* Logo mark */}
-      <div className="flex flex-col items-center mb-8">
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-accent text-accent-foreground mb-4 shadow-lg shadow-accent/30">
-          <ShieldCheck size={26} />
+    <div className="min-h-screen flex flex-row">
+      {/* Left Column: Branding & Features */}
+      <div className="w-[420px] hidden lg:flex flex-col justify-between p-12 bg-[#050B1A] shrink-0">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent text-white">
+              <ShieldCheck size={20} />
+            </div>
+            <span className="font-semibold text-white text-lg">Minfy AI</span>
+          </div>
         </div>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">InterviewAI</h1>
-        <p className="text-sm text-text-secondary mt-1">AI-Powered Interview Evaluation Platform</p>
+        
+        <div className="space-y-8">
+          <h2 className="text-white text-2xl font-semibold leading-tight">
+            Structured AI evaluation for every hire.
+          </h2>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 text-sm text-slate-300">
+              <CheckCircle2 size={18} className="text-accent" />
+              <span>Automated transcript analysis</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-slate-300">
+              <BarChart2 size={18} className="text-accent" />
+              <span>Dimension-based scoring rubric</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-slate-300">
+              <ShieldCheck size={18} className="text-accent" />
+              <span>AWS-grade security & compliance</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="text-xs text-slate-500 font-medium">
+          Secured by AWS Cognito
+        </div>
       </div>
 
-      {/* Card */}
-      <div className="card p-8 space-y-6 shadow-xl">
-
-        {/* Mode tabs (only signin / signup) */}
-        {mode !== 'verify' && (
-          <div className="flex bg-surface rounded-lg p-1 gap-1">
-            <button
-              type="button"
-              onClick={() => { setMode('signin'); clearMessages(); }}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${
-                mode === 'signin'
-                  ? 'bg-surface-elevated text-text-primary shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('signup'); clearMessages(); }}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${
-                mode === 'signup'
-                  ? 'bg-surface-elevated text-text-primary shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'
-              }`}
-            >
-              Create Account
-            </button>
-          </div>
-        )}
-
-        {/* Verify heading */}
-        {mode === 'verify' && (
-          <div className="text-center space-y-1">
-            <h2 className="text-lg font-bold text-text-primary">Check your email</h2>
-            <p className="text-sm text-text-secondary">
-              We sent a 6-digit code to <span className="font-semibold text-text-primary">{email}</span>
+      {/* Right Column: Auth Forms */}
+      <div className="flex-1 flex items-center justify-center bg-background p-4 overflow-y-auto">
+        <div className="card p-8 max-w-sm w-full space-y-8 bg-surface-elevated border-border shadow-sm">
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
+              {mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create account' : 'Verify email'}
+            </h1>
+            <p className="text-sm text-text-muted">
+              {mode === 'signin' ? 'Enter your details to sign in' : mode === 'signup' ? 'Join Minfy AI today' : 'Enter the code sent to your email'}
             </p>
           </div>
-        )}
 
-        {/* Feedback messages */}
-        {error && (
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-danger/5 border border-danger/20 text-danger text-sm">
-            <AlertCircle size={16} className="shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-        {success && (
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-success/5 border border-success/20 text-success text-sm">
-            <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
-            <span>{success}</span>
-          </div>
-        )}
-
-        {/* ── Sign In Form ── */}
-        {mode === 'signin' && (
-          <form onSubmit={handleSignIn} className="space-y-4">
-            <InputField
-              id="email"
-              label="Email Address"
-              type="email"
-              icon={<Mail size={16} />}
-              value={email}
-              onChange={setEmail}
-              placeholder="you@company.com"
-              autoComplete="email"
-            />
-            <PasswordField
-              id="password"
-              label="Password"
-              value={password}
-              onChange={setPassword}
-              show={showPassword}
-              onToggle={() => setShowPassword(!showPassword)}
-              autoComplete="current-password"
-            />
-            <SubmitButton loading={loading} label="Sign In" />
-          </form>
-        )}
-
-        {/* ── Sign Up Form ── */}
-        {mode === 'signup' && (
-          <form onSubmit={handleSignUp} className="space-y-4">
-            <InputField
-              id="email-signup"
-              label="Email Address"
-              type="email"
-              icon={<Mail size={16} />}
-              value={email}
-              onChange={setEmail}
-              placeholder="you@company.com"
-              autoComplete="email"
-            />
-            <PasswordField
-              id="password-signup"
-              label="Password"
-              value={password}
-              onChange={setPassword}
-              show={showPassword}
-              onToggle={() => setShowPassword(!showPassword)}
-              autoComplete="new-password"
-              hint="Min 8 chars, 1 uppercase, 1 number"
-            />
-            <PasswordField
-              id="confirm-password"
-              label="Confirm Password"
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-              show={showPassword}
-              onToggle={() => setShowPassword(!showPassword)}
-              autoComplete="new-password"
-            />
-            <SubmitButton loading={loading} label="Create Account" />
-          </form>
-        )}
-
-        {/* ── Verify Form ── */}
-        {mode === 'verify' && (
-          <form onSubmit={handleVerify} className="space-y-4">
-            <div>
-              <label
-                htmlFor="verify-code"
-                className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2"
-              >
-                Verification Code
-              </label>
-              <input
-                id="verify-code"
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
-                placeholder="123456"
-                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm text-center tracking-[0.5em] font-bold focus:ring-2 focus:ring-ring focus:outline-none transition-all"
-              />
+          {/* Feedback messages */}
+          {error && (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
-            <SubmitButton loading={loading} label="Verify & Sign In" />
-            <button
-              type="button"
-              onClick={handleResend}
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2 text-xs text-text-muted hover:text-text-primary font-semibold transition-colors"
-            >
-              <RefreshCw size={14} />
-              Resend code
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('signin'); clearMessages(); }}
-              className="w-full text-center text-xs text-text-muted hover:text-text-primary transition-colors"
-            >
-              ← Back to sign in
-            </button>
-          </form>
-        )}
-      </div>
+          )}
+          {success && (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-success/10 border border-success/20 text-success text-xs font-medium">
+              <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+              <span>{success}</span>
+            </div>
+          )}
 
-      <p className="text-center text-xs text-text-muted mt-6">
-        Secured by AWS Cognito · All data encrypted at rest
-      </p>
+          <div className="space-y-6">
+            {mode === 'signin' && (
+              <form onSubmit={handleSignIn} className="space-y-4">
+                <InputField
+                  id="email"
+                  label="Email Address"
+                  type="email"
+                  icon={<Mail size={16} />}
+                  value={email}
+                  onChange={setEmail}
+                  placeholder="you@company.com"
+                  autoComplete="email"
+                />
+                <PasswordField
+                  id="password"
+                  label="Password"
+                  value={password}
+                  onChange={setPassword}
+                  show={showPassword}
+                  onToggle={() => setShowPassword(!showPassword)}
+                  autoComplete="current-password"
+                />
+                <SubmitButton loading={loading} label="Sign In" />
+                <p className="text-center text-xs text-text-muted">
+                  Don't have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signup'); clearMessages(); }}
+                    className="text-accent font-semibold hover:underline"
+                  >
+                    Sign up
+                  </button>
+                </p>
+              </form>
+            )}
+
+            {mode === 'signup' && (
+              <form onSubmit={handleSignUp} className="space-y-4">
+                <InputField
+                  id="email-signup"
+                  label="Email Address"
+                  type="email"
+                  icon={<Mail size={16} />}
+                  value={email}
+                  onChange={setEmail}
+                  placeholder="you@company.com"
+                  autoComplete="email"
+                />
+                <PasswordField
+                  id="password-signup"
+                  label="Password"
+                  value={password}
+                  onChange={setPassword}
+                  show={showPassword}
+                  onToggle={() => setShowPassword(!showPassword)}
+                  autoComplete="new-password"
+                  hint="Min. 8 chars"
+                />
+                <PasswordField
+                  id="confirm-password"
+                  label="Confirm Password"
+                  value={confirmPassword}
+                  onChange={setConfirmPassword}
+                  show={showPassword}
+                  onToggle={() => setShowPassword(!showPassword)}
+                  autoComplete="new-password"
+                />
+                <SubmitButton loading={loading} label="Create Account" />
+                <p className="text-center text-xs text-text-muted">
+                  Already have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signin'); clearMessages(); }}
+                    className="text-accent font-semibold hover:underline"
+                  >
+                    Sign in
+                  </button>
+                </p>
+              </form>
+            )}
+
+            {mode === 'verify' && (
+              <form onSubmit={handleVerify} className="space-y-6">
+                <div className="space-y-2">
+                  <label htmlFor="verify-code" className="block text-sm font-medium text-text-secondary text-center">
+                    Verification Code
+                  </label>
+                  <input
+                    id="verify-code"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    className="w-full h-14 bg-surface border border-border rounded-xl px-4 text-2xl text-center tracking-[0.5em] font-bold text-text-primary focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
+                  />
+                </div>
+                <SubmitButton loading={loading} label="Verify Account" />
+                <div className="flex flex-col gap-3">
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={loading}
+                    className="text-xs text-text-muted hover:text-text-primary font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+                    Resend code
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signin'); clearMessages(); }}
+                    className="text-xs text-text-muted hover:text-text-primary transition-colors text-center"
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
-
-// ── Sub-components ──────────────────────────────────────────────────────────
 
 function InputField({
   id, label, type, icon, value, onChange, placeholder, autoComplete,
@@ -314,12 +332,12 @@ function InputField({
   autoComplete?: string;
 }) {
   return (
-    <div>
-      <label htmlFor={id} className="block text-xs font-bold text-text-muted uppercase tracking-wider mb-2">
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-sm font-medium text-text-secondary">
         {label}
       </label>
       <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">{icon}</span>
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted">{icon}</span>
         <input
           id={id}
           type={type}
@@ -327,7 +345,7 @@ function InputField({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="w-full h-11 bg-surface border border-border rounded-md pl-10 pr-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+          className="w-full h-11 bg-surface border border-border rounded-lg pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/50 focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
         />
       </div>
     </div>
@@ -347,15 +365,15 @@ function PasswordField({
   hint?: string;
 }) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <label htmlFor={id} className="block text-xs font-bold text-text-muted uppercase tracking-wider">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label htmlFor={id} className="block text-sm font-medium text-text-secondary">
           {label}
         </label>
         {hint && <span className="text-[10px] text-text-muted">{hint}</span>}
       </div>
       <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted">
           <Lock size={16} />
         </span>
         <input
@@ -364,12 +382,12 @@ function PasswordField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
-          className="w-full h-11 bg-surface border border-border rounded-md pl-10 pr-10 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+          className="w-full h-11 bg-surface border border-border rounded-lg pl-10 pr-10 text-sm text-text-primary placeholder:text-text-muted/50 focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
         />
         <button
           type="button"
           onClick={onToggle}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary transition-colors"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
           tabIndex={-1}
         >
           {show ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -384,7 +402,7 @@ function SubmitButton({ loading, label }: { loading: boolean; label: string }) {
     <button
       type="submit"
       disabled={loading}
-      className="w-full h-11 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-accent/20"
+      className="w-full h-11 bg-accent text-white font-semibold rounded-lg hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm active:scale-[0.98]"
     >
       {loading ? (
         <Loader2 className="animate-spin" size={18} />

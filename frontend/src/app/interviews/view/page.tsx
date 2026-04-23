@@ -13,11 +13,15 @@ import {
   Target,
   FileText,
   Trash2,
+  Download,
   ArrowRight
 } from 'lucide-react';
 import Link from 'next/link';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Toast, type ToastType } from '@/components/ui/Toast';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -32,6 +36,8 @@ function InterviewDetailsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
   const getFriendlyError = (err: string) => {
     if (err.includes('AI_MALFORMED_OUTPUT')) return "The AI had trouble formatting the result. This often happens if the transcript is very messy. Please try clicking 'Retry Analysis'.";
@@ -71,14 +77,15 @@ function InterviewDetailsContent() {
 
   const handleDelete = async () => {
     if (!interview) return;
-    if (!confirm(`Are you sure you want to delete the interview for ${interview.metadata.candidate_name}?`)) return;
     try {
       setLoading(true);
       await api.deleteInterview(id);
       router.push('/');
     } catch (err) {
-      alert('Failed to delete interview');
+      setToast({ message: 'Failed to delete interview', type: 'error' });
       setLoading(false);
+    } finally {
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -94,7 +101,7 @@ function InterviewDetailsContent() {
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      alert('Failed to download report');
+      setToast({ message: 'Failed to download report', type: 'error' });
     }
   };
 
@@ -104,7 +111,7 @@ function InterviewDetailsContent() {
       await api.analyzeInterview(id);
       fetchInterview(); 
     } catch (err: any) {
-      alert(err.message || 'Failed to start analysis');
+      setToast({ message: err.message || 'Failed to start analysis', type: 'error' });
       setLoading(false);
     }
   };
@@ -116,7 +123,7 @@ function InterviewDetailsContent() {
       setInterview(prev => prev ? { ...prev, status: 'QUEUED', error: null } : null);
       setResult(null);
     } catch (err) {
-      alert('Failed to restart analysis');
+      setToast({ message: 'Failed to restart analysis', type: 'error' });
       setLoading(false);
     }
   };
@@ -136,7 +143,7 @@ function InterviewDetailsContent() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
         <Loader2 className="animate-spin text-accent" size={40} />
-        <p className="text-text-secondary font-medium tracking-tight">Loading evaluation details...</p>
+        <p className="text-text-secondary font-normal tracking-tight">Loading evaluation details...</p>
       </div>
     );
   }
@@ -147,9 +154,9 @@ function InterviewDetailsContent() {
         <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center mx-auto">
           <AlertCircle size={32} />
         </div>
-        <h3 className="text-xl font-bold text-text-primary">Failed to load</h3>
+        <h3 className="text-xl font-semibold text-text-primary">Failed to load</h3>
         <p className="text-text-secondary">{error}</p>
-        <Link href="/" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-bold rounded-md">
+        <Link href="/" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-semibold rounded-md">
           Back to Dashboard
         </Link>
       </div>
@@ -161,17 +168,17 @@ function InterviewDetailsContent() {
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-bold uppercase tracking-tight">
+        <Link href="/" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
           <ArrowLeft size={16} />
           Back to Dashboard
         </Link>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Status</span>
-            <StatusBadge status={interview?.status || 'CREATED'} />
+            <span className="text-xs font-semibold text-text-muted">Status</span>
+            <StatusBadge status={interview?.status || 'CREATED'} variant="pill" />
           </div>
           <button
-            onClick={handleDelete}
+            onClick={() => setShowDeleteConfirm(true)}
             className="p-1.5 rounded-md text-text-muted hover:text-red-500 transition-all border border-border/50 hover:bg-red-50 hover:border-red-100"
             title="Delete Interview"
           >
@@ -183,22 +190,23 @@ function InterviewDetailsContent() {
       <header className="space-y-4">
         <div className="flex items-end justify-between">
           <div className="space-y-1">
-            <h1 className="text-4xl font-black text-text-primary tracking-tighter">{interview?.metadata.candidate_name}</h1>
-            <p className="text-xl text-text-secondary font-medium">{interview?.metadata.position}</p>
+            <h1 className="text-2xl font-semibold text-text-primary">{interview?.metadata.candidate_name}</h1>
+            <p className="text-base text-text-secondary">{interview?.metadata.position}</p>
           </div>
           
           {result && interview?.report_s3_key && (
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4">
               <button
                 onClick={handleDownloadReport}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-surface border border-border text-text-secondary hover:text-accent hover:border-accent transition-all font-bold text-xs uppercase tracking-widest shadow-sm"
+                className="flex items-center gap-2 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition-all shadow-lg shadow-accent/20"
               >
-                <FileText size={18} />
-                Download Report
+                <Download size={18} />
+                Download PDF Report
               </button>
+              <div className="h-8 w-px bg-border mx-2" />
               <div className="text-right">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1">Overall Rating</p>
-                <div className="text-5xl font-black text-accent tracking-tighter leading-none">
+                <p className="text-xs font-semibold text-text-muted mb-1">Overall Rating</p>
+                <div className="text-4xl font-semibold text-accent leading-none">
                   {formatScore(result.overall_score)}
                   <span className="text-xl text-text-muted ml-1">/10</span>
                 </div>
@@ -212,32 +220,34 @@ function InterviewDetailsContent() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                  <FileText size={20} className="text-accent" />
                  1. Document Enrollment
               </h3>
               {interview?.jd_s3_key && interview?.transcript_s3_key && (
-                 <span className="px-2 py-0.5 bg-success/10 text-success text-[10px] font-bold rounded uppercase">Verified</span>
+                 <span className="px-2 py-0.5 bg-success/10 text-success text-[10px] font-semibold rounded uppercase">Verified</span>
               )}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <FileUploadSection 
-                  type="jd" 
-                  interviewId={id} 
-                  isUploaded={!!interview?.jd_s3_key} 
-                  onSuccess={fetchInterview} 
-               />
-               <FileUploadSection 
-                  type="transcript" 
-                  interviewId={id} 
-                  isUploaded={!!interview?.transcript_s3_key} 
-                  onSuccess={fetchInterview} 
-               />
+                <FileUploadSection 
+                   type="jd" 
+                   interviewId={id} 
+                   isUploaded={!!interview?.jd_s3_key} 
+                   onSuccess={fetchInterview} 
+                   setToast={setToast}
+                />
+                <FileUploadSection 
+                   type="transcript" 
+                   interviewId={id} 
+                   isUploaded={!!interview?.transcript_s3_key} 
+                   onSuccess={fetchInterview} 
+                   setToast={setToast}
+                />
             </div>
           </div>
 
           <div className="space-y-6">
-            <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                <ShieldCheck size={20} className="text-accent" />
                2. Readiness Gate
             </h3>
@@ -246,7 +256,7 @@ function InterviewDetailsContent() {
                (interview?.is_mismatched && !!interview?.inferred_role) ? "border-danger/30 bg-danger/5" : "border-border bg-surface/50"
             )}>
                <div className="space-y-3">
-                  <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2">Checklist</p>
+                  <p className="text-xs font-semibold text-text-muted mb-2">Checklist</p>
                   <CheckItem label="JD Uploaded" done={!!interview?.jd_s3_key} />
                   <CheckItem label="Transcript Uploaded" done={!!interview?.transcript_s3_key} />
                   <CheckItem 
@@ -260,16 +270,16 @@ function InterviewDetailsContent() {
                   <div className="pt-4 border-t border-border space-y-4">
                     <div className="grid grid-cols-1 gap-4">
                        <div className="space-y-1">
-                          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Position</p>
-                          <p className="text-sm font-bold text-text-primary">{interview?.metadata.position}</p>
+                          <p className="text-xs font-semibold text-text-muted">Position</p>
+                          <p className="text-sm font-semibold text-text-primary">{interview?.metadata.position}</p>
                        </div>
                        <div className="space-y-1">
-                          <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Detected Candidate Context</p>
-                          <p className="text-sm font-bold text-accent italic">{interview?.inferred_role || 'Analyzing...'}</p>
+                          <p className="text-xs font-semibold text-text-muted">Detected Candidate Context</p>
+                          <p className="text-sm font-semibold text-accent italic">{interview?.inferred_role || 'Analyzing...'}</p>
                        </div>
                     </div>
                     {interview?.is_mismatched && !!interview?.inferred_role && (
-                       <div className="p-3 bg-danger/10 border border-danger/20 rounded text-xs text-danger font-bold leading-relaxed">
+                       <div className="p-3 bg-danger/10 border border-danger/20 rounded text-xs text-danger font-semibold leading-relaxed">
                           Role Mismatch Warning: The detected JD context differs from your target position. Please verify uploads.
                        </div>
                     )}
@@ -278,11 +288,11 @@ function InterviewDetailsContent() {
 
                {/* Intelligent Guidance Section */}
                <div className="p-4 rounded-lg bg-accent/5 border border-accent/10 space-y-2">
-                  <p className="text-[10px] font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-accent flex items-center gap-1.5">
                      <Target size={12} />
                      AI Assistant Guidance
                   </p>
-                   <p className="text-xs text-text-secondary leading-relaxed font-medium">
+                   <p className="text-xs text-text-secondary leading-relaxed font-normal">
                       {!interview?.jd_s3_key ? "First, upload the Job Description to baseline the evaluation rubric." : 
                        !interview?.transcript_s3_key ? "Great, now upload the Interview Transcript to begin the technical deep-dive." :
                        !interview?.inferred_role ? "AI is currently verifying the document alignment. Please wait a moment..." :
@@ -294,7 +304,7 @@ function InterviewDetailsContent() {
                <button
                   onClick={handleManualAnalyze}
                   disabled={!interview?.jd_s3_key || !interview?.transcript_s3_key || loading || (interview as any).is_mismatched}
-                  className="w-full py-4 bg-accent text-accent-foreground font-black uppercase tracking-widest text-xs rounded-lg hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2 shadow-xl shadow-accent/20"
+                  className="w-full py-4 bg-accent text-accent-foreground font-semibold uppercase tracking-widest text-xs rounded-lg hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2 shadow-xl shadow-accent/20"
                >
                   {loading ? <Loader2 className="animate-spin" size={18} /> : (
                      <>
@@ -317,7 +327,7 @@ function InterviewDetailsContent() {
              </div>
           </div>
           <div className="space-y-2">
-            <h3 className="text-2xl font-bold text-text-primary tracking-tight">AI Analysis in Progress</h3>
+            <h3 className="text-2xl font-semibold text-text-primary tracking-tight">AI Analysis in Progress</h3>
             <p className="text-text-secondary max-w-sm mx-auto">
               Amazon Bedrock is currently evaluating the transcript against the JD rubric. This usually takes 30-45 seconds.
             </p>
@@ -329,13 +339,13 @@ function InterviewDetailsContent() {
         <div className="card p-8 border-danger/30 bg-danger/5 space-y-4">
           <div className="flex items-center gap-3 text-danger">
             <AlertCircle size={24} />
-            <h3 className="text-lg font-bold uppercase tracking-tight">Technical Issue Detected</h3>
+            <h3 className="text-lg font-semibold uppercase tracking-tight">Technical Issue Detected</h3>
           </div>
-          <p className="text-text-secondary font-medium leading-relaxed">{getFriendlyError(typeof interview?.error === 'string' ? interview.error : (interview?.error?.message || 'Unknown Technical Error'))}</p>
+          <p className="text-text-secondary font-normal leading-relaxed">{getFriendlyError(typeof interview?.error === 'string' ? interview.error : (interview?.error?.message || 'Unknown Technical Error'))}</p>
           <div className="pt-4">
              <button 
               onClick={handleRetry}
-              className="px-4 py-2 bg-danger text-white rounded font-bold text-sm hover:bg-danger/90 transition-colors"
+              className="px-4 py-2 bg-danger text-white rounded font-semibold text-sm hover:bg-danger/90 transition-colors"
             >
               Retry Analysis
             </button>
@@ -348,7 +358,7 @@ function InterviewDetailsContent() {
           <div className="lg:col-span-2 space-y-8">
             {/* Dimension Breakdown */}
             <section className="space-y-4">
-              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <ShieldCheck size={20} className="text-accent" />
                 Dimension Breakdown
               </h3>
@@ -356,9 +366,9 @@ function InterviewDetailsContent() {
                 {result.dimension_breakdown.map((dim, i) => (
                   <div key={i} className="card p-5 space-y-3 hover:border-accent/20 transition-colors">
                     <div className="flex justify-between items-start">
-                      <h4 className="font-bold text-text-primary text-sm tracking-tight">{dim.dimension}</h4>
+                      <h4 className="font-semibold text-text-primary text-sm tracking-tight">{dim.dimension}</h4>
                       <span className={cn(
-                        "text-sm font-black tracking-tighter",
+                        "text-sm font-semibold tracking-tighter",
                         dim.score >= 7.5 ? "text-success" : dim.score >= 5.5 ? "text-accent" : "text-danger"
                       )}>{formatScore(dim.score)}/10</span>
                     </div>
@@ -367,9 +377,9 @@ function InterviewDetailsContent() {
                       <div 
                         className={cn(
                            "h-full transition-all duration-1000",
-                           (dim.score > 10 ? dim.score / 10 : dim.score) >= 8 ? "bg-success" : "bg-accent"
+                           dim.score >= 8 ? "bg-success" : "bg-accent"
                         )} 
-                        style={{ width: `${(dim.score > 10 ? dim.score : dim.score * 10)}%` }} 
+                        style={{ width: `${dim.score * 10}%` }} 
                       />
                     </div>
                   </div>
@@ -379,22 +389,19 @@ function InterviewDetailsContent() {
 
             {/* Evidence Items */}
             <section className="space-y-4">
-              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <FileText size={20} className="text-accent" />
                 Direct Evidence
               </h3>
               <div className="space-y-4">
                 {(result as any).evidence_items?.map((item: any, i: number) => (
-                  <div key={i} className="card p-6 bg-surface/50 border-l-4 border-l-accent relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-2 opacity-5">
-                       <FileText size={64} />
-                    </div>
+                  <div key={i} className="card p-6 bg-surface/50 border-l-4 border-l-accent">
                     <p className="italic text-text-primary leading-relaxed relative z-10">&ldquo;{item.quote}&rdquo;</p>
                     <div className="mt-4 flex items-center gap-3">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-accent bg-accent/5 px-2 py-0.5 rounded border border-accent/10">
+                      <span className="text-xs font-medium normal-case text-accent bg-accent/5 px-2 py-0.5 rounded border border-accent/10">
                         {item.dimension}
                       </span>
-                      <span className="text-[10px] font-medium text-text-muted truncate">
+                      <span className="text-xs font-normal text-text-secondary">
                         Context: {item.context}
                       </span>
                     </div>
@@ -406,24 +413,28 @@ function InterviewDetailsContent() {
 
           <div className="space-y-8">
             {/* Recommendation Card */}
-            <div className="card p-6 bg-accent text-accent-foreground space-y-4">
+            <div className="card p-6 bg-surface-elevated text-text-primary border-2 border-accent space-y-4">
               <div className="flex items-center justify-between">
-                 <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">Recommendation</p>
-                 <TrendingUp size={20} />
+                 <p className="text-xs font-normal text-text-secondary">Recommendation</p>
+                 <TrendingUp size={20} className="text-accent" />
               </div>
-              <h3 className="text-3xl font-black tracking-tight leading-none uppercase">{result.recommendation}</h3>
-              <div className="pt-4 border-t border-accent-foreground/20 space-y-3">
-                 <div className="flex justify-between items-center text-xs font-medium">
-                    <span className="opacity-80">JD Fit Score</span>
-                    <span className="font-bold">{result.jd_fit_score}%</span>
+              <h3 className="text-2xl font-semibold tracking-tight leading-none">{result.recommendation}</h3>
+              <div className="pt-4 border-t border-border space-y-3">
+                 <div className="flex justify-between items-center text-xs font-normal">
+                    <span className="text-text-secondary">JD Fit Score</span>
+                    <span className="font-semibold text-text-primary">{result.jd_fit_score}%</span>
                  </div>
-                 <div className="flex justify-between items-center text-xs font-medium">
-                    <span className="opacity-80">Technical Depth</span>
-                    <span className="font-bold">{result.technical_depth}/10</span>
+                 <div className="flex justify-between items-center text-xs font-normal">
+                    <span className="text-text-secondary">Technical Depth</span>
+                    <span className="font-semibold text-text-primary">{result.technical_depth}/10</span>
                  </div>
-                 <div className="flex justify-between items-center text-xs font-medium">
-                    <span className="opacity-80">Analysis Confidence</span>
-                    <span className="font-bold">{(result.confidence * 100).toFixed(0)}%</span>
+                 <div className="flex justify-between items-center text-xs font-normal">
+                    <span className="text-text-secondary">Analysis Confidence</span>
+                    <span className="font-semibold text-text-primary">
+                      {result.confidence <= 1 
+                        ? (result.confidence * 100).toFixed(0) 
+                        : result.confidence.toFixed(0)}%
+                    </span>
                  </div>
               </div>
             </div>
@@ -431,12 +442,12 @@ function InterviewDetailsContent() {
             {/* Strengths & Areas for Review */}
             <div className="space-y-6">
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-success uppercase tracking-widest flex items-center gap-2">
+                <h4 className="text-xs font-normal text-success flex items-center gap-2">
                   <CheckCircle2 size={14} /> Key Strengths
                 </h4>
                 <ul className="space-y-2">
                   {result.strengths.map((s, i) => (
-                    <li key={i} className="text-sm font-medium text-text-primary flex gap-2">
+                    <li key={i} className="text-sm font-normal text-text-primary flex gap-2">
                       <span className="text-success">•</span> {s}
                     </li>
                   ))}
@@ -444,12 +455,12 @@ function InterviewDetailsContent() {
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-danger uppercase tracking-widest flex items-center gap-2">
+                <h4 className="text-xs font-normal text-danger flex items-center gap-2">
                   <AlertCircle size={14} /> Areas for Review
                 </h4>
                 <ul className="space-y-2">
                   {(result as any).areas_for_review?.map((c: string, i: number) => (
-                    <li key={i} className="text-sm font-medium text-text-primary flex gap-2">
+                    <li key={i} className="text-sm font-normal text-text-primary flex gap-2">
                       <span className="text-danger">•</span> {c}
                     </li>
                   ))}
@@ -458,20 +469,37 @@ function InterviewDetailsContent() {
             </div>
 
             <div className="card p-6 space-y-3 border-border">
-               <h4 className="text-xs font-bold text-text-muted uppercase tracking-widest">Executive Summary</h4>
-               <p className="text-sm text-text-primary leading-relaxed font-medium">
+               <h4 className="text-xs font-normal text-text-muted">Executive Summary</h4>
+               <p className="text-sm text-text-primary leading-relaxed font-normal">
                  {(result as any).executive_summary}
                </p>
             </div>
             
              <div className="card p-6 space-y-3 border-border bg-blue-50/10">
-               <h4 className="text-xs font-bold text-text-muted uppercase tracking-widest">Final Note</h4>
+               <h4 className="text-xs font-normal text-text-muted">Final Note</h4>
                <p className="text-sm text-text-primary italic leading-relaxed">
                  {(result as any).final_recommendation_note}
                </p>
             </div>
           </div>
         </div>
+      )}
+
+      <ConfirmDialog 
+        isOpen={showDeleteConfirm}
+        title="Delete Interview"
+        description={`Are you sure you want to delete the interview for ${interview?.metadata.candidate_name}?`}
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      {toast && (
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
       )}
     </div>
   );
@@ -486,43 +514,26 @@ function CheckItem({ label, done, warn }: { label: string, done: boolean, warn?:
       )}>
          {done ? <CheckCircle2 size={10} /> : warn ? <AlertCircle size={10} /> : null}
       </div>
-      <span className={cn("text-xs font-semibold uppercase tracking-tight", done ? "text-text-primary" : "text-text-muted")}>
+      <span className={cn("text-xs font-normal text-text-muted", done ? "text-text-primary" : "text-text-muted")}>
          {label}
       </span>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const styles: any = {
-    CREATED: "text-text-muted border-border bg-surface/30",
-    FILES_UPLOADED: "text-blue-600 bg-blue-50/50 border-blue-100 dark:text-blue-400 dark:bg-blue-900/10 dark:border-blue-900/30",
-    QUEUED: "text-amber-600 bg-amber-50/50 border-amber-100 dark:text-amber-400 dark:bg-amber-900/10 dark:border-amber-900/30",
-    PROCESSING: "text-amber-600 bg-amber-50/50 border-amber-100 dark:text-amber-400 dark:bg-amber-900/10 dark:border-amber-900/30 animate-pulse",
-    COMPLETED: "text-green-600 bg-green-50/50 border-green-100 dark:text-green-400 dark:bg-green-900/10 dark:border-green-900/30",
-    FAILED: "text-red-600 bg-red-50/50 border-red-100 dark:text-red-400 dark:bg-red-900/10 dark:border-red-900/30",
-  };
-
-  return (
-    <span className={cn(
-      "px-3 py-1 rounded text-[10px] font-bold border uppercase tracking-widest",
-      styles[status]
-    )}>
-      {status.replace('_', ' ')}
-    </span>
-  );
-}
 
 function FileUploadSection({ 
   type, 
   interviewId, 
   isUploaded, 
-  onSuccess 
+  onSuccess,
+  setToast
 }: { 
   type: 'jd' | 'transcript', 
   interviewId: string, 
   isUploaded: boolean, 
-  onSuccess: () => void 
+  onSuccess: () => void,
+  setToast: (toast: { message: string, type: ToastType } | null) => void
 }) {
   const [uploading, setUploading] = useState(false);
 
@@ -556,7 +567,7 @@ function FileUploadSection({
       
       onSuccess();
     } catch (err: any) {
-      alert(`Upload failed: ${err.message}`);
+      setToast({ message: `Upload failed: ${err.message}`, type: 'error' });
       e.target.value = '';
     } finally {
       setUploading(false);
@@ -576,17 +587,17 @@ function FileUploadSection({
       </div>
       
       <div className="text-center">
-        <p className="text-sm font-bold text-text-primary uppercase tracking-tight">
+        <p className="text-sm font-semibold text-text-primary uppercase tracking-tight">
           {type === 'jd' ? 'Job Description' : 'Interview Transcript'}
         </p>
-        <p className="text-[10px] text-text-muted font-medium mt-0.5">
+        <p className="text-[10px] text-text-muted font-normal mt-0.5">
           {isUploaded ? 'File Ready' : 'Awaiting Upload'}
         </p>
       </div>
 
       <div className="flex flex-col gap-2 w-full mt-2">
         {uploading ? (
-          <div className="flex items-center justify-center gap-2 py-2 text-xs font-bold text-accent animate-pulse">
+          <div className="flex items-center justify-center gap-2 py-2 text-xs font-semibold text-accent animate-pulse">
             <Loader2 size={14} className="animate-spin" />
             Uploading...
           </div>
@@ -602,7 +613,7 @@ function FileUploadSection({
             {isUploaded ? (
               <label 
                 htmlFor={`file-${type}`}
-                className="w-full py-2 rounded-md bg-surface border border-success/30 text-success text-[10px] font-bold uppercase tracking-widest text-center cursor-pointer hover:bg-success hover:text-white transition-all shadow-sm"
+                className="w-full py-2 rounded-md bg-surface border border-success/30 text-success text-[10px] font-semibold uppercase tracking-widest text-center cursor-pointer hover:bg-success hover:text-white transition-all shadow-sm"
               >
                 Replace File
               </label>
