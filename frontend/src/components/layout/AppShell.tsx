@@ -7,6 +7,9 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { useAuth } from '@/contexts/AuthContext';
 
+import { TourProvider } from '@/contexts/TourContext';
+import { TourOverlay } from '@/components/ui/TourOverlay';
+
 const PUBLIC_PATHS = ['/login'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -47,14 +50,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <Sidebar />
-      <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
-        <Topbar />
-        <main className="flex-1 p-8 overflow-y-auto bg-background">
-          {children}
-        </main>
+    <TourProvider>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+        <Sidebar />
+        <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
+          <Topbar />
+          <main className="flex-1 p-8 overflow-y-auto bg-background">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+      <TourOverlay />
+    </TourProvider>
   );
 }

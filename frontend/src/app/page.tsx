@@ -18,7 +18,7 @@ import { format } from 'date-fns';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { OnboardingTour } from '@/components/ui/OnboardingTour';
+import { useTour } from '@/contexts/TourContext';
 
 export default function Dashboard() {
    const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -29,6 +29,36 @@ export default function Dashboard() {
   const [filter, setFilter] = useState('ALL');
 
   const filteredInterviews = interviews.filter(i => filter === 'ALL' || i.status === filter);
+
+  const { startTour } = useTour();
+
+  useEffect(() => {
+    const done = localStorage.getItem('minfy_tour_done');
+    if (!done) {
+      setTimeout(() => {
+        startTour([
+          {
+            targetId: 'tour-stats',
+            title: 'Your evaluation overview',
+            body: 'These cards show live counts of all your evaluations. Click any card to filter the table below by that status.',
+            position: 'bottom',
+          },
+          {
+            targetId: 'tour-new-btn',
+            title: 'Start a new evaluation',
+            body: 'Click here to begin. You will enter candidate details, then upload documents for AI analysis.',
+            position: 'bottom',
+          },
+          {
+            targetId: 'tour-table',
+            title: 'Track every candidate',
+            body: 'All evaluations appear here sorted by date. Click any row arrow to open the full AI report.',
+            position: 'top',
+          },
+        ]);
+      }, 800);
+    }
+  }, [startTour]);
 
   useEffect(() => {
     async function loadData() {
@@ -81,174 +111,253 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      <OnboardingTour />
-      <div className="flex items-center justify-between">
+    <div className="max-w-6xl mx-auto space-y-8 pb-8">
+
+      {/* ── Page header ── */}
+      <div className="flex items-end justify-between pt-2">
         <div>
-          <h1 className="text-xl font-semibold text-text-primary">Evaluations</h1>
-          <p className="text-sm text-text-secondary mt-0.5">
-            {interviews.length} total · {stats.completed} completed · {stats.pending} in progress
+          <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase mb-1">
+            Minfy AI · Evaluation Platform
+          </p>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">
+            Evaluations
+          </h1>
+          <p className="text-sm text-text-muted mt-0.5">
+            {interviews.length} total &middot; {stats.completed} completed &middot; {stats.pending} in progress
           </p>
         </div>
-        <Link 
+        <Link
           href="/interviews/new"
           id="tour-new-btn"
-          className="bg-accent text-accent-foreground px-4 py-2 rounded-md font-semibold text-sm hover:opacity-90 transition-opacity flex items-center gap-2"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90 shrink-0"
+          style={{ background: '#4F46E5' }}
         >
-          <Plus size={18} />
-          New Interview
+          <Plus size={15} />
+          New evaluation
         </Link>
       </div>
 
-      {/* Summary Cards */}
-      <div id="tour-stats" className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard title="Total interviews" value={stats.total} icon={Users} type="blue" />
-        <StatCard title="Evaluating" value={stats.pending} icon={Clock} type="amber" />
-        <StatCard title="Completed" value={stats.completed} icon={CheckCircle2} type="green" />
-        <StatCard title="Needs attention" value={stats.failed} icon={AlertCircle} type="red" />
+      {/* ── Stat cards ── */}
+      <div id="tour-stats" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Total interviews" value={stats.total}
+          icon={Users} type="blue"
+          onClick={() => setFilter('ALL')} active={filter === 'ALL'} />
+        <StatCard title="Evaluating" value={stats.pending}
+          icon={Clock} type="amber"
+          onClick={() => setFilter('PROCESSING')} active={filter === 'PROCESSING'} />
+        <StatCard title="Completed" value={stats.completed}
+          icon={CheckCircle2} type="green"
+          onClick={() => setFilter('COMPLETED')} active={filter === 'COMPLETED'} />
+        <StatCard title="Needs attention" value={stats.failed}
+          icon={AlertCircle} type="red"
+          onClick={() => setFilter('FAILED')} active={filter === 'FAILED'} />
       </div>
 
-      {/* Table Section */}
-      <div id="tour-table" className="card overflow-hidden">
-        <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-surface/30">
-          <h3 className="text-sm font-semibold text-text-primary">Recent Evaluations</h3>
-          <div className="flex items-center gap-2">
-             <span className="text-xs text-text-muted">Filter by status:</span>
-             <select 
-               value={filter}
-               onChange={(e) => setFilter(e.target.value)}
-               className="bg-surface border border-border text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent"
-             >
-               <option value="ALL">All States</option>
-               <option value="CREATED">Created</option>
-               <option value="COMPLETED">Completed</option>
-               <option value="FAILED">Failed</option>
-             </select>
+      {/* ── Evaluations table ── */}
+      <div id="tour-table" className="rounded-xl overflow-hidden"
+           style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}>
+
+        {/* Table header bar */}
+        <div className="px-6 py-4 flex items-center justify-between"
+             style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-text-primary">Recent evaluations</h3>
+            {filter !== 'ALL' && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
+                    style={{ background: '#4F46E512', color: '#4F46E5', border: '1px solid #4F46E530' }}>
+                {filter.charAt(0) + filter.slice(1).toLowerCase()}
+                <button onClick={() => setFilter('ALL')}
+                        className="ml-0.5 opacity-60 hover:opacity-100 leading-none">×</button>
+              </span>
+            )}
           </div>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent/30 transition-all"
+            style={{
+              border: '1px solid var(--border)',
+              background: 'var(--surface)',
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <option value="ALL">All statuses</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="PROCESSING">Processing</option>
+            <option value="FAILED">Failed</option>
+          </select>
         </div>
+
+        {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left">
             <thead>
-              <tr className="bg-surface/50 text-text-muted text-xs font-semibold border-b border-border">
-                <th className="px-6 py-3 font-semibold">Candidate</th>
-                <th className="px-6 py-3 font-semibold">Position</th>
-                <th className="px-6 py-3 font-semibold text-center">Date</th>
-                <th className="px-6 py-3 font-semibold text-center">Status</th>
-                <th className="px-6 py-3 font-semibold text-right">Action</th>
+              <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+                <th className="px-6 py-3 text-xs font-medium text-text-muted">Candidate</th>
+                <th className="px-6 py-3 text-xs font-medium text-text-muted">Position</th>
+                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Date</th>
+                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Status</th>
+                <th className="px-6 py-3 text-xs font-medium text-text-muted text-right">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody>
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
-                    <td colSpan={5} className="px-6 py-6 h-16 bg-surface/20" />
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td colSpan={5} className="px-6 py-5">
+                      <div className="h-4 rounded animate-pulse" style={{ background: 'var(--surface)' }} />
+                    </td>
                   </tr>
                 ))
               ) : filteredInterviews.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-20 text-center">
-                    <div className="flex flex-col items-center justify-center space-y-3">
-                       <div className="w-12 h-12 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-text-muted">
-                          <FileSearch size={24} />
-                       </div>
-                       <div className="space-y-1">
-                          <p className="text-sm font-semibold text-text-primary">No evaluations found</p>
-                          <p className="text-xs text-text-muted">
-                            {filter === 'ALL' ? "Start by creating a new interview evaluation." : `No interviews with status "${filter}" found.`}
-                          </p>
-                       </div>
-                       {filter !== 'ALL' && (
-                         <button 
-                           onClick={() => setFilter('ALL')}
-                           className="text-xs text-accent font-semibold hover:underline mt-2"
-                         >
-                           Clear Filter
-                         </button>
-                       )}
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center text-text-muted"
+                           style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                        <FileSearch size={22} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-text-primary">No evaluations found</p>
+                        <p className="text-xs text-text-muted mt-1">
+                          {filter === 'ALL'
+                            ? 'Start by creating a new evaluation.'
+                            : `No "${filter.toLowerCase()}" evaluations yet.`}
+                        </p>
+                      </div>
+                      {filter !== 'ALL' && (
+                        <button onClick={() => setFilter('ALL')}
+                                className="text-xs font-semibold text-accent hover:underline">
+                          Clear filter
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ) : (
-                filteredInterviews.map((interview) => (
-                  <tr key={interview.interview_id} className="hover:bg-surface/60 dark:hover:bg-slate-700/30 transition-colors group">
-                    <td className="px-6 py-5 font-semibold text-text-primary text-sm">
-                      {interview.candidate_name}
-                    </td>
-                    <td className="px-6 py-5 text-text-secondary text-sm">
-                      {interview.position}
-                    </td>
-                    <td className="px-6 py-5 text-center text-text-secondary text-xs">
-                      {format(new Date(interview.created_at), 'MMM d, yyyy')}
-                    </td>
-                    <td className="px-6 py-5 text-center">
-                      <StatusBadge status={interview.status} />
-                    </td>
-                    <td className="px-6 py-5 text-right flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => setConfirmDelete({ id: interview.interview_id, name: interview.candidate_name })}
-                        className="p-1 rounded-md text-text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-all"
-                        title="Delete Interview"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                      <Link 
-                        href={`/interviews/view?id=${interview.interview_id}`}
-                        className="p-1 rounded-md text-text-muted group-hover:text-accent group-hover:bg-accent/5 transition-all inline-block"
-                      >
-                        <ChevronRight size={18} />
-                      </Link>
-                    </td>
-                  </tr>
-                ))
+                filteredInterviews.map((interview, idx) => {
+                  const initials = interview.candidate_name
+                    .split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
+                  const avatarColors = ['#4F46E5','#0891B2','#059669','#D97706','#DC2626'];
+                  const avatarColor = avatarColors[interview.candidate_name.charCodeAt(0) % 5];
+
+                  return (
+                    <tr
+                      key={interview.interview_id}
+                      className="group transition-colors"
+                      style={{ borderBottom: '1px solid var(--border)' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      {/* Candidate with avatar */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                            style={{ background: avatarColor }}
+                          >
+                            {initials}
+                          </div>
+                          <span className="text-sm font-semibold text-text-primary">
+                            {interview.candidate_name}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Position */}
+                      <td className="px-6 py-4 text-sm text-text-secondary">
+                        {interview.position}
+                      </td>
+
+                      {/* Date */}
+                      <td className="px-6 py-4 text-xs text-text-muted text-center">
+                        {format(new Date(interview.created_at), 'MMM d, yyyy')}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-6 py-4 text-center">
+                        <StatusBadge status={interview.status} />
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setConfirmDelete({
+                              id: interview.interview_id,
+                              name: interview.candidate_name,
+                            })}
+                            className="p-1.5 rounded-md transition-colors text-text-muted hover:text-red-500"
+                            style={{}}
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <Link
+                            href={`/interviews/view?id=${interview.interview_id}`}
+                            className="p-1.5 rounded-md transition-colors text-text-muted hover:text-accent"
+                          >
+                            <ChevronRight size={16} />
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
-      <ConfirmDialog 
+
+      {/* Dialogs */}
+      <ConfirmDialog
         isOpen={!!confirmDelete}
-        title="Delete Interview"
-        description={`Are you sure you want to delete the interview for ${confirmDelete?.name}? This action cannot be undone.`}
+        title="Delete evaluation"
+        description={`Are you sure you want to delete the evaluation for ${confirmDelete?.name}? This cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={() => confirmDelete && handleDelete(confirmDelete.id)}
         onCancel={() => setConfirmDelete(null)}
       />
-
       {toast && (
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={() => setToast(null)} 
-        />
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
     </div>
   );
 }
 
-function StatCard({ title, value, icon: Icon, type }: any) {
-  const iconColor: any = {
-    blue: "text-blue-400",
-    amber: "text-amber-400",
-    green: "text-green-400",
-    red: "text-red-400",
+function StatCard({ title, value, icon: Icon, type, onClick, active }: {
+  title: string; value: number; icon: any; type: string;
+  onClick?: () => void; active?: boolean;
+}) {
+  const config: Record<string, { color: string; bg: string; border: string }> = {
+    blue:  { color: '#3B82F6', bg: '#EFF6FF', border: '#BFDBFE' },
+    amber: { color: '#F59E0B', bg: '#FFFBEB', border: '#FDE68A' },
+    green: { color: '#10B981', bg: '#ECFDF5', border: '#A7F3D0' },
+    red:   { color: '#EF4444', bg: '#FEF2F2', border: '#FECACA' },
   };
-  const borderColor: any = {
-    blue: "border-b-blue-500/40",
-    amber: "border-b-amber-500/40",
-    green: "border-b-green-500/40",
-    red: "border-b-red-500/40",
-  };
+  const { color, bg, border } = config[type] || config.blue;
 
   return (
-    <div className={cn(
-      "card p-5 flex items-start justify-between border-b-2 transition-colors cursor-pointer hover:shadow-sm",
-      borderColor[type]
-    )}>
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-text-secondary">{title}</p>
-        <h4 className="text-3xl font-bold text-text-primary tracking-tight">{value}</h4>
+    <div
+      onClick={onClick}
+      className="rounded-xl p-5 transition-all duration-150 cursor-pointer select-none"
+      style={{
+        background: 'var(--surface-elevated)',
+        border: active ? `1.5px solid ${color}` : '1px solid var(--border)',
+        boxShadow: active ? `0 0 0 3px ${color}22` : '0 1px 3px rgba(0,0,0,0.04)',
+      }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-xs font-medium text-text-muted tracking-wide">{title}</p>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+             style={{ background: bg, border: `1px solid ${border}` }}>
+          <Icon size={15} style={{ color }} />
+        </div>
       </div>
-      <Icon size={18} className={iconColor[type]} />
+      <div className="text-3xl font-bold text-text-primary tracking-tight">{value}</div>
+      <div className="mt-3 h-[2px] rounded-full" 
+           style={{ background: active ? color : `${color}35` }} />
     </div>
   );
 }

@@ -151,3 +151,48 @@ All notable changes to the InterviewAI platform are documented here.
 - **Evaluation Reset**: Implemented an automated state reset in the API handler. Uploading a new Job Description, Transcript, or Resume now clears all previous scores, recommendations, and PDF reports, preventing stale data from being displayed after a file update.
 - **Syntax Correction**: Resolved a duplicate return statement in the API handler that was causing build failures.
 - **Role Alignment Logic**: Simplified the semantic alignment check to be more robust and domain-aware without relying on biased examples.
+
+## [2026-04-24] — Dashboard Redesign
+
+### Changed
+- **Visual Identity**: Completely redesigned the dashboard with a professional, "Minfy AI" branded aesthetic, moving away from standard AI-generated layouts.
+- **Stat Cards**: Rebuilt stat cards with interactive states, colored icon backgrounds, and dynamic bottom progress bars that reflect the active filter state.
+- **Candidate Avatars**: Implemented dynamic initials-based avatars for candidates in the evaluations table with a rotating professional color palette.
+- **Interactive Filtering**:
+    - Stat cards now function as direct filter toggles with visual "active" feedback (borders and glows).
+    - Added an active filter chip in the table header with a quick-clear (×) option.
+    - Standardized the status dropdown with custom styling to match the brand identity.
+- **Layout Refinement**: Standardized spacing, typography, and borders across the dashboard to create a premium, cohesive user experience.
+
+## [2026-04-24] — Interactive Tour System
+
+### Added
+- **Global Tour Framework**: Implemented a robust `TourProvider` and `TourContext` to manage step-by-step guidance across the entire application.
+- **Context-Aware Overlays**: Created a `TourOverlay` component that dynamically highlights UI elements and provides instructional tooltips with automatic viewport clamping.
+- **Multi-Step Guidance**:
+    - **Dashboard**: Highlights stats, navigation, and the evaluations table.
+    - **New Evaluation (Setup)**: Guides users through candidate naming, role selection, and AI model choices.
+    - **New Evaluation (Uploads)**: Explains the purpose of transcripts, job descriptions, and resumes during the upload phase.
+- **Replay Functionality**: Added a "Replay Guide" button (Help Circle) to the Topbar, allowing users to re-trigger instructional tours on any page at any time.
+- **Cross-Page State**: Tours now persist across page transitions (e.g., from step 1 to step 2 of evaluation creation) for a seamless onboarding experience.
+
+## [2026-04-24] — PDF Report v2 (Executive Grade)
+
+### Changed
+- **Visual Overhaul**: Completely redesigned the PDF evaluation report with a high-contrast indigo and slate professional color palette.
+- **Executive Header**: Added a weighted brand header with the Minfy AI logo wordmark and automated evaluation timestamps.
+- **Metrics Strip**: Implemented a four-column executive summary strip for high-level visibility into Overall Rating, JD Fit, Technical Depth, and Confidence scores.
+- **Competency Visualization**: Replaced text-only breakdowns with progress-bar visualizations and score-based color coding (Green/Indigo/Amber/Red).
+- **Two-Column Risk Analysis**: Reformatted Strengths and Risks into a balanced two-column layout with high-visibility iconography.
+- **Executive Verdict**: Added a boxed, branded "Final Verdict" section with score-matched background shading for instant decision-making.
+- **Structural Integrity**: Improved page-break logic and footer consistency across multi-page reports.
+
+## [2026-04-24] — Tour Final
+
+### Added
+- **Bidirectional Navigation**: Integrated `prevStep` logic into the global `TourProvider`, allowing users to navigate backward through tour steps.
+- **Visual Pulse Effects**: Implemented a non-destructive pulsing focus ring (`tour PulseRing`) using CSS keyframes to highlight target elements without blocking clicks.
+- **Smart Tooltip Positioning**: Developed a dynamic collision-detection algorithm for tour tooltips that automatically flips positions (Top/Bottom/Left/Right) to ensure they remain within the viewport.
+- **Vignette Focus**: Replaced the full-screen dark overlay with a subtle radial vignette centered on the active element, providing focus while maintaining context.
+- **First-Visit Guard**: Added persistent localStorage checks to the "New Interview" flow, ensuring the instructional tour only triggers for first-time users (while remaining manual-replayable).
+- **UI Refinements**: Redesigned tour tooltips with updated typography, step indicators, and progress bars.

@@ -526,162 +526,294 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  
-  const MARGIN_X = 50;
-  const MARGIN_TOP = 50;
-  const MARGIN_BOTTOM = 50;
-  const PAGE_WIDTH = 600;
-  const PAGE_HEIGHT = 850;
-  const DRAW_WIDTH = PAGE_WIDTH - (MARGIN_X * 2);
-  
-  // Design System
-  const COLOR_PRIMARY = rgb(0.31, 0.27, 0.9); // Indigo #4F46E5
-  const COLOR_TEXT = rgb(0.1, 0.1, 0.2);
-  const COLOR_MUTED = rgb(0.4, 0.4, 0.5);
-  const COLOR_SUCCESS = rgb(0.05, 0.6, 0.3);
-  const COLOR_DANGER = rgb(0.8, 0.2, 0.2);
 
-  let currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let y = PAGE_HEIGHT - MARGIN_TOP;
-  
-  // Normalize score if it was passed in old scale (safety)
-  const normScore = results.overall_score > 10 ? (results.overall_score / 10).toFixed(1) : results.overall_score;
-  const isHire = Number(normScore) >= 7.0;
+  const W = 595.28; // A4 width
+  const H = 841.89; // A4 height
+  const ML = 48;    // margin left
+  const MR = 48;    // margin right
+  const MT = 48;    // margin top
+  const MB = 48;    // margin bottom
+  const CW = W - ML - MR; // content width
 
-  const ensureSpace = (needed: number) => {
-    if (y - needed < MARGIN_BOTTOM) {
-      currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = PAGE_HEIGHT - MARGIN_TOP;
-      drawFooter(currentPage, pdfDoc.getPageCount());
-      return true;
-    }
-    return false;
+  // ── Color palette ──────────────────────────────
+  const C = {
+    indigo:     rgb(0.310, 0.275, 0.898), // #4F46E5
+    indigoDark: rgb(0.231, 0.212, 0.722), // #3B36B8
+    indigoLight:rgb(0.937, 0.937, 0.996), // #EFEFFE
+    white:      rgb(1, 1, 1),
+    black:      rgb(0.067, 0.067, 0.067), // #111111
+    gray800:    rgb(0.157, 0.165, 0.188), // #282A30
+    gray600:    rgb(0.369, 0.384, 0.420), // #5E626B
+    gray300:    rgb(0.820, 0.831, 0.847), // #D1D4D8
+    gray100:    rgb(0.961, 0.965, 0.969), // #F5F6F7
+    green:      rgb(0.016, 0.647, 0.439), // #04A570
+    greenLight: rgb(0.878, 0.976, 0.945), // #E0F9F1
+    amber:      rgb(0.851, 0.502, 0.000), // #D98000
+    amberLight: rgb(1.000, 0.961, 0.878), // #FFF5E0
+    red:        rgb(0.800, 0.133, 0.133), // #CC2222
+    redLight:   rgb(0.996, 0.878, 0.878), // #FEE0E0
+    divider:    rgb(0.910, 0.914, 0.922), // #E8E9EB
   };
 
-  const drawFooter = (p: any, num: number) => {
-    p.drawText(`Page ${num}  |  CONFIDENTIAL EXECUTIVE REPORT  |  Bar-Raiser AI`, {
-      x: 180, y: 30, size: 7, font, color: rgb(0.6, 0.6, 0.6)
+  // ── Score-based verdict color ──────────────────
+  const score = results.overall_score;
+  const verdictColor = score >= 7.5 ? C.green : score >= 5.0 ? C.amber : C.red;
+  const verdictBg    = score >= 7.5 ? C.greenLight : score >= 5.0 ? C.amberLight : C.redLight;
+
+  // ── Page management ────────────────────────────
+  let page = pdfDoc.addPage([W, H]);
+  let y = H - MT;
+
+  const newPage = () => {
+    // Footer on current page
+    page.drawText('CONFIDENTIAL — MINFY AI EVALUATION REPORT', {
+      x: ML, y: 24, size: 6.5, font, color: C.gray300,
     });
+    page.drawText(`Page ${pdfDoc.getPageCount()}`, {
+      x: W - MR - 30, y: 24, size: 6.5, font, color: C.gray300,
+    });
+    page = pdfDoc.addPage([W, H]);
+    y = H - MT;
   };
 
-  const drawProgressBar = (p: any, val: number, max: number, x: number, py: number, width: number) => {
-    const ratio = Math.min(Math.max(val / max, 0), 1);
-    const color = val >= 8 ? COLOR_SUCCESS : val >= 6 ? COLOR_PRIMARY : COLOR_DANGER;
-    p.drawRectangle({ x, y: py, width, height: 6, color: rgb(0.9, 0.95, 1), opacity: 0.5 });
-    p.drawRectangle({ x, y: py, width: width * ratio, height: 6, color });
+  const gap = (n: number) => { y -= n; };
+
+  const needsSpace = (n: number) => {
+    if (y - n < MB + 40) newPage();
   };
 
-  const drawFlowText = (text: string, size: number, f: any, lineH: number = 16, color: any = COLOR_TEXT, indent: number = 0) => {
-    const paragraphs = text.split('\n');
-    for (const para of paragraphs) {
-      if (!para.trim()) { y -= lineH; continue; }
-      const words = para.split(/\s+/);
-      let line = '';
-      for (const word of words) {
-        const testLine = line + word + ' ';
-        const width = f.widthOfTextAtSize(testLine.trim(), size);
-        if (width > (DRAW_WIDTH - indent)) {
-          ensureSpace(lineH);
-          currentPage.drawText(line.trim(), { x: MARGIN_X + indent, y, size, font: f, color });
-          line = word + ' ';
-          y -= lineH;
-        } else {
-          line = testLine;
-        }
+  // Wrap and draw text, returns lines used
+  const drawText = (
+    text: string,
+    opts: {
+      x?: number; size?: number; f?: any; color?: any;
+      maxWidth?: number; lineHeight?: number; indent?: number;
+    } = {}
+  ): number => {
+    const {
+      x = ML, size = 9, f = font, color = C.gray800,
+      maxWidth = CW, lineHeight = 14, indent = 0,
+    } = opts;
+
+    const words = String(text || '').split(/\s+/);
+    let line = '';
+    let linesDrawn = 0;
+
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (f.widthOfTextAtSize(test, size) > maxWidth - indent && line) {
+        needsSpace(lineHeight);
+        page.drawText(line, { x: x + indent, y, size, font: f, color });
+        y -= lineHeight;
+        linesDrawn++;
+        line = word;
+      } else {
+        line = test;
       }
-      ensureSpace(lineH);
-      currentPage.drawText(line.trim(), { x: MARGIN_X + indent, y, size, font: f, color });
-      y -= lineH + 6;
     }
+    if (line) {
+      needsSpace(lineHeight);
+      page.drawText(line, { x: x + indent, y, size, font: f, color });
+      y -= lineHeight;
+      linesDrawn++;
+    }
+    return linesDrawn;
   };
 
-  const drawSectionHeader = (title: string) => {
-    ensureSpace(80);
-    y -= 40;
-    currentPage.drawText(title.toUpperCase(), { x: MARGIN_X, y, size: 10, font: boldFont, color: COLOR_PRIMARY });
-    y -= 12;
-    currentPage.drawLine({ start: { x: MARGIN_X, y }, end: { x: PAGE_WIDTH - MARGIN_X, y }, thickness: 0.5, color: rgb(0.9, 0.9, 0.9) });
-    y -= 25;
-  };
-
-  // --- Start Rendering ---
-  drawFooter(currentPage, 1);
-
-  // 1. Header
-  const candidateName = (interviewParams.metadata?.candidate_name || 'Anonymous').toUpperCase();
-  const position = interviewParams.metadata?.position || 'N/A';
-  
-  currentPage.drawText(candidateName, { x: MARGIN_X, y: y - 5, size: 24, font: boldFont, color: COLOR_TEXT });
-  currentPage.drawText(`${position}  -  Technical Assessment`, { x: MARGIN_X, y: y - 30, size: 10, font, color: COLOR_MUTED });
-  y -= 80;
-
-  // 2. Metrics Grid
-  const metricY = y;
-  const drawMetric = (lbl: string, val: string, x: number) => {
-    currentPage.drawRectangle({ x, y: metricY - 70, width: 120, height: 75, color: rgb(0.98, 0.99, 1), borderColor: rgb(0.9, 0.92, 0.95), borderWidth: 1, opacity: 0.8 });
-    currentPage.drawText(lbl, { x: x + 12, y: metricY - 20, size: 7, font: boldFont, color: COLOR_MUTED });
-    currentPage.drawText(val, { x: x + 12, y: metricY - 48, size: 18, font: boldFont, color: COLOR_PRIMARY });
-  };
-  drawMetric('OVERALL RATING', `${results.overall_score}/10`, 30);
-  drawMetric('JD ALIGNMENT', `${results.jd_fit_score}%`, 165);
-  drawMetric('TECHNICAL DEPTH', `${results.technical_depth || 0}/10`, 300);
-  drawMetric('VERDICT', results.recommendation.toUpperCase(), 435);
-  y -= 100;
-
-  // 3. Sections
-  drawSectionHeader('Executive Summary');
-  drawFlowText(results.executive_summary, 9, font, 16);
-
-  drawSectionHeader('Competency Analysis');
-  results.dimension_breakdown.forEach(dim => {
-    ensureSpace(60);
-    const dScore = dim.score;
-    currentPage.drawText(dim.dimension.toUpperCase(), { x: MARGIN_X, y, size: 8, font: boldFont });
-    currentPage.drawText(`${dScore}/10`, { x: DRAW_WIDTH + MARGIN_X - 25, y, size: 8, font: boldFont, color: dScore >= 7.5 ? COLOR_SUCCESS : COLOR_PRIMARY });
-    y -= 12;
-    drawProgressBar(currentPage, dScore, 10, MARGIN_X, y, DRAW_WIDTH);
-    y -= 18;
-    drawFlowText(dim.reason, 8, font, 12, COLOR_MUTED, 5);
-    y -= 8;
-  });
-
-  drawSectionHeader('Strength & Risks');
-  const halfWidth = DRAW_WIDTH / 2 - 10;
-  const startY = y;
-  currentPage.drawText('KEY STRENGTHS', { x: MARGIN_X, y: startY, size: 8, font: boldFont, color: COLOR_SUCCESS });
-  currentPage.drawText('IDENTIFIED RISKS', { x: MARGIN_X + halfWidth + 20, y: startY, size: 8, font: boldFont, color: COLOR_DANGER });
-  y -= 15;
-  
-  const listY = y;
-  results.strengths.slice(0, 4).forEach((s, i) => {
-    currentPage.drawCircle({ x: MARGIN_X, y: listY - (i * 15) + 3, size: 1.5, color: COLOR_SUCCESS });
-    currentPage.drawText(s.length > 50 ? s.substring(0, 47) + '...' : s, { x: MARGIN_X + 10, y: listY - (i * 15), size: 7, font });
-  });
-  results.areas_for_review.slice(0, 4).forEach((r, i) => {
-    currentPage.drawCircle({ x: MARGIN_X + halfWidth + 20, y: listY - (i * 15) + 3, size: 1.5, color: COLOR_DANGER });
-    currentPage.drawText(r.length > 50 ? r.substring(0, 47) + '...' : r, { x: MARGIN_X + halfWidth + 30, y: listY - (i * 15), size: 7, font });
-  });
-  y -= 75;
-
-  drawSectionHeader('Verdict Details');
-  ensureSpace(120);
-  currentPage.drawRectangle({ x: MARGIN_X, y: y - 100, width: DRAW_WIDTH, height: 110, color: rgb(0.98, 0.99, 1), borderColor: COLOR_PRIMARY, borderWidth: 1 });
-  currentPage.drawText('FINAL RECOMMENDATION:', { x: MARGIN_X + 20, y: y - 25, size: 9, font: boldFont, color: COLOR_MUTED });
-  currentPage.drawText(results.recommendation.toUpperCase(), { x: MARGIN_X + 150, y: y - 25, size: 12, font: boldFont, color: results.overall_score >= 7 ? COLOR_SUCCESS : COLOR_DANGER });
-  y -= 45;
-  drawFlowText(results.final_recommendation_note, 9, font, 15, COLOR_TEXT, 20);
-
-  // Resume inclusion note
-  if (interviewParams.resume_s3_key) {
-    ensureSpace(40);
-    y -= 40;
-    currentPage.drawText('Note: Evaluation included verification against candidate resume.', {
-      x: MARGIN_X, y, size: 7, font, color: COLOR_MUTED
+  const drawDivider = (opacity = 1) => {
+    needsSpace(1);
+    page.drawLine({
+      start: { x: ML, y },
+      end: { x: W - MR, y },
+      thickness: 0.5,
+      color: C.divider,
+      opacity,
     });
+    y -= 1;
+  };
+
+  const sectionTitle = (title: string) => {
+    needsSpace(36);
+    gap(20);
+    page.drawText(title.toUpperCase(), {
+      x: ML, y, size: 7.5, font: boldFont, color: C.indigo,
+    });
+    y -= 10;
+    drawDivider();
+    gap(10);
+  };
+
+  // ══════════════════════════════════════════════
+  // PAGE 1 — COVER HEADER
+  // ══════════════════════════════════════════════
+
+  // Top navy bar
+  page.drawRectangle({ x: 0, y: H - 56, width: W, height: 56, color: C.indigoDark });
+  
+  // Logo text in bar
+  page.drawText('MINFY', { x: ML, y: H - 34, size: 13, font: boldFont, color: C.white });
+  page.drawText('AI', { x: ML + 46, y: H - 34, size: 13, font, color: rgb(0.6, 0.6, 1) });
+  page.drawText('EVALUATION REPORT', {
+    x: W - MR - 110, y: H - 34, size: 8, font: boldFont, color: rgb(0.7, 0.7, 0.9),
+  });
+
+  y = H - 56 - 32;
+
+  // Candidate name
+  const name = (interviewParams.metadata?.candidate_name || 'Candidate').toUpperCase();
+  page.drawText(name, { x: ML, y, size: 22, font: boldFont, color: C.black });
+  y -= 26;
+
+  // Position + date line
+  const position = interviewParams.metadata?.position || 'N/A';
+  const dateStr = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  page.drawText(`${position}  ·  Evaluated ${dateStr}`, {
+    x: ML, y, size: 9, font, color: C.gray600,
+  });
+  y -= 20;
+
+  drawDivider();
+  gap(20);
+
+  // ── Metrics strip (4 boxes) ────────────────────
+  const metrics = [
+    { label: 'Overall Rating', value: `${results.overall_score}/10` },
+    { label: 'JD Fit Score',   value: `${results.jd_fit_score ?? '--'}%` },
+    { label: 'Tech Depth',     value: `${results.technical_depth ?? '--'}/10` },
+    { label: 'Confidence',     value: `${results.confidence ?? '--'}%` },
+  ];
+
+  const boxW = CW / 4 - 6;
+  const boxH = 58;
+  const boxY = y - boxH;
+
+  metrics.forEach((m, i) => {
+    const bx = ML + i * (boxW + 8);
+    page.drawRectangle({ x: bx, y: boxY, width: boxW, height: boxH, color: C.gray100 });
+    page.drawRectangle({ x: bx, y: boxY + boxH - 3, width: boxW, height: 3, color: C.indigo });
+    page.drawText(m.label, { x: bx + 10, y: boxY + boxH - 16, size: 7, font, color: C.gray600 });
+    page.drawText(m.value, { x: bx + 10, y: boxY + 16, size: 16, font: boldFont, color: C.indigoDark });
+  });
+
+  y = boxY - 20;
+
+  // ── Verdict badge ──────────────────────────────
+  const recText = results.recommendation.toUpperCase();
+  const recW = boldFont.widthOfTextAtSize(recText, 11) + 28;
+  page.drawRectangle({ x: ML, y: y - 26, width: recW, height: 26, color: verdictBg });
+  page.drawRectangle({ x: ML, y: y - 26, width: 4, height: 26, color: verdictColor });
+  page.drawText(recText, { x: ML + 12, y: y - 17, size: 11, font: boldFont, color: verdictColor });
+  y -= 44;
+
+  // ══════════════════════════════════════════════
+  // EXECUTIVE SUMMARY
+  // ══════════════════════════════════════════════
+  sectionTitle('Executive Summary');
+  drawText(results.executive_summary, { size: 9, lineHeight: 15, color: C.gray800 });
+  gap(4);
+
+  // ══════════════════════════════════════════════
+  // COMPETENCY BREAKDOWN
+  // ══════════════════════════════════════════════
+  sectionTitle('Competency Analysis');
+
+  results.dimension_breakdown.forEach((dim) => {
+    needsSpace(52);
+
+    // Dim name + score on one line
+    const dimScore = dim.score;
+    const dimColor = dimScore >= 8 ? C.green : dimScore >= 6 ? C.indigo : dimScore >= 4 ? C.amber : C.red;
+
+    page.drawText(dim.dimension, {
+      x: ML, y, size: 8.5, font: boldFont, color: C.black,
+    });
+    page.drawText(`${dimScore}/10`, {
+      x: W - MR - 30, y, size: 8.5, font: boldFont, color: dimColor,
+    });
+    y -= 12;
+
+    // Progress bar
+    const barW = CW;
+    const ratio = Math.min(Math.max(dimScore / 10, 0), 1);
+    page.drawRectangle({ x: ML, y, width: barW, height: 5, color: C.gray100 });
+    page.drawRectangle({ x: ML, y, width: barW * ratio, height: 5, color: dimColor });
+    y -= 10;
+
+    // Reason text
+    drawText(dim.reason, { size: 8, lineHeight: 13, color: C.gray600, indent: 2 });
+    gap(8);
+  });
+
+  // ══════════════════════════════════════════════
+  // STRENGTHS & RISKS (two columns)
+  // ════════════════════════════════════════──────────────────────
+  sectionTitle('Strengths & Risks');
+
+  const colW = CW / 2 - 12;
+  const strengths = results.strengths.slice(0, 6);
+  const risks = results.areas_for_review.slice(0, 6);
+  const rows = Math.max(strengths.length, risks.length);
+
+  // Column headers
+  page.drawText('KEY STRENGTHS', { x: ML, y, size: 7.5, font: boldFont, color: C.green });
+  page.drawText('AREAS FOR REVIEW', { x: ML + colW + 24, y, size: 7.5, font: boldFont, color: C.red });
+  y -= 14;
+
+  for (let i = 0; i < rows; i++) {
+    needsSpace(20);
+
+    if (strengths[i]) {
+      page.drawCircle({ x: ML + 4, y: y + 3, size: 2.5, color: C.green });
+      const s = strengths[i].length > 65 ? strengths[i].slice(0, 62) + '…' : strengths[i];
+      page.drawText(s, { x: ML + 12, y, size: 7.5, font, color: C.gray800 });
+    }
+
+    if (risks[i]) {
+      page.drawCircle({ x: ML + colW + 28, y: y + 3, size: 2.5, color: C.red });
+      const r = risks[i].length > 65 ? risks[i].slice(0, 62) + '…' : risks[i];
+      page.drawText(r, { x: ML + colW + 36, y, size: 7.5, font, color: C.gray800 });
+    }
+
+    y -= 16;
   }
 
-  const bytes = await pdfDoc.save();
-  return Buffer.from(bytes);
+  gap(4);
+
+  // ══════════════════════════════════════════════
+  // VERDICT BOX
+  // ══════════════════════════════════════════════
+  sectionTitle('Final Verdict');
+  needsSpace(80);
+
+  const vboxH = 72;
+  page.drawRectangle({ x: ML, y: y - vboxH, width: CW, height: vboxH, color: C.indigoLight });
+  page.drawRectangle({ x: ML, y: y - vboxH, width: 4, height: vboxH, color: C.indigo });
+
+  page.drawText('RECOMMENDATION:', {
+    x: ML + 14, y: y - 18, size: 7.5, font: boldFont, color: C.gray600,
+  });
+  page.drawText(recText, {
+    x: ML + 110, y: y - 18, size: 9, font: boldFont, color: verdictColor,
+  });
+
+  y -= 30;
+  drawText(results.final_recommendation_note, {
+    x: ML + 14, size: 8.5, lineHeight: 14,
+    color: C.gray800, maxWidth: CW - 24,
+  });
+  gap(16);
+
+  // ══════════════════════════════════════════════
+  // FOOTER on last page
+  // ══════════════════════════════════════════════
+  page.drawText('CONFIDENTIAL — MINFY AI EVALUATION REPORT', {
+    x: ML, y: 24, size: 6.5, font, color: C.gray300,
+  });
+  page.drawText(`Page ${pdfDoc.getPageCount()}`, {
+    x: W - MR - 30, y: 24, size: 6.5, font, color: C.gray300,
+  });
+
+  return Buffer.from(await pdfDoc.save());
 }
 
 function extractJson(text: string): string {

@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { useTour } from '@/contexts/TourContext';
 import { api } from '@/lib/api';
 import { 
   ArrowLeft, 
@@ -38,6 +40,74 @@ export default function NewInterview() {
     return tooManyConsonants || isRepeated || !hasVowels;
   };
   const [interviewId, setInterviewId] = useState<string | null>(null);
+
+  const { startTour } = useTour();
+  
+  useEffect(() => {
+    if (step === 'CREATE') {
+      const done = localStorage.getItem('minfy_tour_done');
+      if (!done) {
+        setTimeout(() => {
+          startTour([
+            {
+              targetId: 'tour-candidate-name',
+              title: 'Candidate full name',
+              body: "Enter the candidate's full name exactly as it appears on their resume. This will appear in the generated PDF report.",
+              position: 'right',
+            },
+            {
+              targetId: 'tour-position',
+              title: 'Role being evaluated',
+              body: 'Enter the exact job title. This calibrates the AI scoring rubric against the right seniority level.',
+              position: 'right',
+            },
+            {
+              targetId: 'tour-model',
+              title: 'AI evaluation model',
+              body: 'Claude 3.7 Sonnet gives the most accurate evaluation. Nova Pro is faster but less nuanced. Recommended: Claude 3.7 Sonnet.',
+              position: 'right',
+            },
+          ]);
+        }, 400);
+      }
+    }
+  }, [step, startTour]);
+
+  useEffect(() => {
+    if (step === 'UPLOAD') {
+      const done = localStorage.getItem('minfy_tour_done');
+      if (!done) {
+        setTimeout(() => {
+          startTour([
+            {
+              targetId: 'tour-transcript-upload',
+              title: 'Interview transcript (required)',
+              body: 'Upload the full interview transcript as PDF, DOCX or TXT. The more complete it is, the more accurate the evaluation.',
+              position: 'bottom',
+            },
+            {
+              targetId: 'tour-jd-upload',
+              title: 'Job description (required)',
+              body: 'Upload the exact JD the candidate was interviewed against. The AI uses this to build a custom scoring rubric.',
+              position: 'bottom',
+            },
+            {
+              targetId: 'tour-resume-upload',
+              title: 'Candidate resume (optional)',
+              body: 'If provided, the AI cross-checks transcript claims against the resume. This significantly improves accuracy.',
+              position: 'bottom',
+            },
+            {
+              targetId: 'tour-submit-btn',
+              title: 'Submit for analysis',
+              body: 'Once transcript and JD are uploaded, click here. Analysis takes 60–90 seconds. You will be redirected automatically.',
+              position: 'top',
+            },
+          ]);
+        }, 300);
+      }
+    }
+  }, [step, startTour]);
   
   // Form State
   const [formData, setFormData] = useState({
@@ -137,7 +207,7 @@ export default function NewInterview() {
       {step === 'CREATE' && (
         <form onSubmit={handleCreate} className="card p-8 space-y-6">
           <div className="space-y-4">
-            <div>
+            <div id="tour-candidate-name">
               <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
               <input 
                 required
@@ -147,7 +217,7 @@ export default function NewInterview() {
                 placeholder="e.g. Sarah Connor"
               />
             </div>
-            <div>
+            <div id="tour-position">
               <label className="block text-xs font-semibold text-text-muted mb-2">Position</label>
               <input 
                 required
@@ -167,7 +237,7 @@ export default function NewInterview() {
                 onChange={e => setFormData({ ...formData, interview_date: e.target.value })}
               />
             </div>
-            <div>
+            <div id="tour-model">
               <label className="block text-xs font-semibold text-text-muted mb-2">Assessment Model</label>
               <select
                 id="model_id"
@@ -194,31 +264,38 @@ export default function NewInterview() {
       {step === 'UPLOAD' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <UploadCard 
-              title="Interview Transcript" 
-              description="PDF, DOCX or TXT of the conversation"
-              status={uploads.transcript.status}
-              fileName={uploads.transcript.file?.name}
-              onUpload={file => handleFileUpload('transcript', file)}
-            />
-            <UploadCard 
-              title="Job Description" 
-              description="Primary requirements and expectations"
-              status={uploads.jd.status}
-              fileName={uploads.jd.file?.name}
-              onUpload={file => handleFileUpload('jd', file)}
-            />
-            <UploadCard 
-              title="Candidate Resume" 
-              description="Optional: For deep experience verification"
-              status={uploads.resume.status}
-              fileName={uploads.resume.file?.name}
-              onUpload={file => handleFileUpload('resume', file)}
-            />
+            <div id="tour-transcript-upload" className="flex flex-col h-full">
+              <UploadCard 
+                title="Interview Transcript" 
+                description="PDF, DOCX or TXT of the conversation"
+                status={uploads.transcript.status}
+                fileName={uploads.transcript.file?.name}
+                onUpload={file => handleFileUpload('transcript', file)}
+              />
+            </div>
+            <div id="tour-jd-upload" className="flex flex-col h-full">
+              <UploadCard 
+                title="Job Description" 
+                description="Primary requirements and expectations"
+                status={uploads.jd.status}
+                fileName={uploads.jd.file?.name}
+                onUpload={file => handleFileUpload('jd', file)}
+              />
+            </div>
+            <div id="tour-resume-upload" className="flex flex-col h-full">
+              <UploadCard 
+                title="Candidate Resume" 
+                description="Optional: For deep experience verification"
+                status={uploads.resume.status}
+                fileName={uploads.resume.file?.name}
+                onUpload={file => handleFileUpload('resume', file)}
+              />
+            </div>
           </div>
 
           <div className="pt-4">
             <button 
+              id="tour-submit-btn"
               onClick={() => router.push(`/interviews/view?id=${interviewId}`)}
               disabled={uploads.transcript.status !== 'DONE' || uploads.jd.status !== 'DONE'}
               className="w-full py-3 bg-accent text-accent-foreground font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-30 flex items-center justify-center gap-2"
