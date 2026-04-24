@@ -247,12 +247,17 @@ async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<st
   
   const buildRubric = async () => {
     const prompt = `
-      Analyze the following Job Description (JD) and build a structured, dynamic evaluation rubric.
-      
-      CRITICAL ANALYSIS RULES:
-      1. Identify "Mandatory Non-Negotiables": These are specific skills, scale/experience levels, or certifications that are deal-breakers.
-      2. Identify "Seniority Indicators": For Senior/Lead roles, focus the rubric on Strategy, Architectural Decisions, and Team/Scale impact over simple technical syntax.
-      3. Assign "Decision Weights": High-risk dimensions (like "Scale Management" for an Architect) should have higher weights to ensure gaps there trigger a rejection.
+      You are an evaluation rubric builder. Your job is to read the Job Description below and 
+      extract evaluation dimensions DIRECTLY from it.
+
+      RULES:
+      1. Every dimension MUST be grounded in a skill, responsibility, or requirement 
+         explicitly stated in this JD. Do not invent or assume dimensions from outside the JD.
+      2. Dimension names must reflect the actual domain of this role as described in the JD.
+      3. Identify which requirements are non-negotiable (deal-breakers) vs. preferred vs. nice-to-have,
+         based on the language used in the JD (e.g. "required", "minimum", "preferred", "advantageous").
+         Assign weights accordingly: higher weight for critical requirements, lower for optional ones.
+      4. Ignore any prior training bias — only use what the JD text actually says.
 
       Output ONLY a valid raw JSON object. 
       NO MARKDOWN FENCES. NO CONVERSATIONAL TEXT.
@@ -263,6 +268,11 @@ async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<st
           { "name": "string", "description": "string", "weight": number /* 1-10 */, "is_critical_deal_breaker": boolean }
         ]
       }
+
+      CONSTRAINTS:
+      - Generate EXACTLY 6 to 9 dimensions. No more, no less.
+      - Mark no more than 3 dimensions as is_critical_deal_breaker: true.
+      - All dimensions must be directly derivable from the JD below.
       
       IMPORTANT: Wrap your final JSON output ONLY inside <rubric_json> tags.
       
@@ -350,15 +360,32 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     2. VAGUE = GAP: High-level answers without verifiable detail must be marked as GAPs.
     3. DEAL-BREAKER PENALTY: Critical deal-breakers identified as GAPs force a No-Hire verdict and a sub-40 score.
     4. RESUME VERIFICATION: ${resume ? 'Use the provided RESUME to verify the candidate\'s claims in the TRANSCRIPT. Check for consistency in years of experience, specific projects, and technical depth.' : 'No resume provided for verification.'}
+    
+    WEIGHTED SCORING RULES:
+    5. WEIGHT ENFORCEMENT: Each dimension has a "weight" (1-10) and 
+       "is_critical_deal_breaker" flag from the rubric. 
+       - Dimensions with weight >= 8 must be scored with maximum scrutiny.
+       - A GAP (score < 5.0) on any is_critical_deal_breaker dimension 
+         FORCES the overall recommendation to "No Hire" or lower, 
+         regardless of other scores.
+       - The overall_score should be a weighted average, not a simple 
+         average. Higher-weight dimensions affect the final score more.
+    6. INTERNAL REASONING: Before outputting JSON, mentally calculate:
+       weighted_score = sum(dim.score * dim.weight) / sum(all weights)
+       Use this as your overall_score baseline.
 
-    SCORING CALIBRATION:
-    - 8.5 - 10.0: "Strong Hire" (Excellent execution across ALL non-negotiables)
-    - 7.0 - 8.4: "Hire" (Strong execution across all criticals; minor nice-to-have gaps)
-    - 4.0 - 6.9: "Maybe" (Has some good points but failed on at least one important indicator)
-    - 0.0 - 3.9: "No Hire" (Failed a critical deal-breaker or showed significant seniority gaps)
+    SCORING CALIBRATION (STRICTLY ENFORCE):
+    - 9.0 - 10.0: "Strong Hire" — Exceptional. Exceeded expectations on ALL critical dimensions.
+    - 7.5 - 8.9: "Hire" — Strong execution across all criticals. Minor gaps in nice-to-haves only.
+    - 5.0 - 7.4: "Maybe" — Adequate on some criticals but clear gaps. Needs further evaluation.
+    - 2.5 - 4.9: "No Hire" — Failed at least one critical deal-breaker. Not ready for this role.
+    - 0.0 - 2.4: "Strong No Hire" — Multiple critical failures or dishonesty detected. 
+    
+    The recommendation MUST mathematically match the overall_score range above.
+    Do not override this mapping under any circumstances.
 
     EVALUATION DEPTH:
-    - executive_summary: Start with "CRITICAL RISKS & GAPS" before mentioning strengths. Be specific and blunt.
+    - executive_summary: Open with the single most important risk or concern in plain language. Be direct and specific. Do not use all-caps headers or prefixes inside the summary text. Write in continuous prose, not bullet points.
     - areas_for_review: Be surgical. Identify exactly which requirement was not met and why the answer was insufficient.
 
     - Return ONLY valid raw JSON wrapped in <evaluation_json> tags. Escape all special characters. 
@@ -383,7 +410,7 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
       "evidence_items": [
         { "quote": "string", "context": "string", "dimension": "string" }
       ], // Provide 5-8 verbatim evidence nuggets
-      "executive_summary": "SCEPTICAL executive assessment starting with risks",
+      "executive_summary": "SCEPTICAL executive assessment starting with the primary risk",
       "final_recommendation_note": "A final verdict from a Bar-Raiser's perspective",
       "technical_depth": 0-10,
       "jd_fit_score": 0-100,
@@ -394,6 +421,15 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     }
     </evaluation_json>
     
+    ANTI-HALLUCINATION RULES:
+    - Every score and claim in evidence_items MUST be grounded in 
+      something the candidate actually said in the TRANSCRIPT.
+    - Do NOT infer or assume skills not evidenced in the transcript.
+    - If a dimension has zero evidence in the transcript, 
+      set evidence_found: false and score it 2.0 or below.
+    - Quotes in evidence_items must be near-verbatim from the 
+      transcript, not paraphrased reconstructions.
+
     RUBRIC:
     ${rubric}
 
@@ -455,14 +491,14 @@ async function invokeBedrock(prompt: string, modelId: string): Promise<string> {
     if (isNova) {
       body = JSON.stringify({
         messages: [{ role: 'user', content: [{ text: prompt }] }],
-        inferenceConfig: { maxTokens: 4096, temperature: 0 }
+        inferenceConfig: { maxTokens: 6000, temperature: 0.1 }
       });
     } else {
       body = JSON.stringify({
         anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: 4096,
+        max_tokens: 6000,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        temperature: 0
+        temperature: 0.1
       });
     }
 

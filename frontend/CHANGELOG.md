@@ -133,3 +133,20 @@ All notable changes to the InterviewAI platform are documented here.
 - **Header Uniformity**: Synchronized the heights of the sidebar logo area and the topbar to exactly `h-14` (56px), creating a seamless horizontal visual band across the top of the application.
 - **Sidebar Refinement**: Adjusted the sidebar header padding (`px-5`) and layout to ensure perfect alignment with the new height constraints.
 - **Topbar Styling**: Updated the topbar background to `bg-surface-elevated` and standardized its horizontal padding to `px-6` for better content alignment.
+
+## [2026-04-23] — Evaluation Engine v2
+
+### Changed
+- **Model Configuration**: Increased `max_tokens` to 6000 and adjusted `temperature` to 0.1 for both Claude and Nova models. This prevents truncation on long transcripts and improves the natural flow of summaries while maintaining scoring consistency.
+- **Scoring Calibration**: Updated the evaluation rubric to include a "Strong No Hire" category (0.0 - 2.4) and strictly enforced mathematical alignment between the `overall_score` and the final recommendation.
+- **Rubric Generation**: Added strict constraints to the JD parser, enforcing 6-9 specific dimensions with controlled weight distributions (critical vs. nice-to-have) and a maximum of 3 critical deal-breakers.
+- **Weighted Scoring**: Implemented a weighted average model for the `overall_score`. The evaluation prompt now explicitly instructs the AI to prioritize high-weight and critical dimensions in its final verdict.
+- **Anti-Hallucination**: Introduced rigorous anti-hallucination rules requiring all claims to be grounded in verbatim transcript evidence. Scores for dimensions with missing evidence are now capped.
+- **Executive Summaries**: Refined the summary format to be more direct and professional, removing redundant prefixes like "CRITICAL RISKS & GAPS" in favor of specific, prose-based risk assessment.
+
+## [2026-04-23] — Evaluation Engine v2.1 (Alignment & Reset Fixes)
+
+### Fixed
+- **Domain Hallucination**: Completely removed all hardcoded role examples (like "Distributed Systems" or "L&D") from the rubric generation prompt. The engine is now strictly grounded in the provided JD text, ensuring accurate dimensions for any role (HR, Finance, Tech, etc.).
+- **Evaluation Reset**: Implemented an automated state reset in the API handler. Uploading a new Job Description or Transcript now clears all previous scores, recommendations, and PDF reports, preventing stale data from being displayed after a file update.
+- **Role Alignment Logic**: Simplified the semantic alignment check to be more robust and domain-aware without relying on biased examples.

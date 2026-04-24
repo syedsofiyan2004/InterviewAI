@@ -254,33 +254,24 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   
   // Determine if we should move to FILES_UPLOADED
   // (Only transcript and JD are strictly required for evaluation)
+  // Determine if we should move to FILES_UPLOADED
+  // (Only transcript and JD are strictly required for evaluation)
   const transcriptKey = file_type === 'transcript' ? s3_key : item.transcript_s3_key;
   const jdKey = file_type === 'jd' ? s3_key : item.jd_s3_key;
   
   const finalStatus = (transcriptKey && jdKey) ? 'FILES_UPLOADED' : item.status;
 
-  // --- NEW: Dynamic Role Alignment Inference ---
+  // --- NEW: Dynamic Role Alignment Inference & State Reset ---
   let inferredRole = item.inferred_role;
   let isMismatched = item.is_mismatched;
 
   if (file_type === 'jd') {
     console.log('Automated JD check triggered...');
     
-    // ATOMIC RESET: Clear old mismatch state immediately to prevent stale UI warnings
-    try {
-      await ddbDocClient.send(new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { interview_id: id },
-        UpdateExpression: `SET inferred_role = :null, is_mismatched = :false, alignment_reason = :null`,
-        ExpressionAttributeValues: {
-          ':null': null,
-          ':false': false
-        }
-      }));
-    } catch (resetErr) {
-      console.warn('Pre-emptive state reset failed (non-blocking):', resetErr);
-    }
-
+    // RESET evaluation results and mismatch state if JD changes
+    inferredRole = null;
+    isMismatched = false;
+    
     try {
       const { getFileBuffer } = await import('../shared/aws.js');
       const { extractTextFromBuffer, extractJson } = await import('../shared/utils.js');
@@ -288,28 +279,24 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
       const jdBuffer = await getFileBuffer(BUCKET_NAME, s3_key);
       const jdText = await extractTextFromBuffer(jdBuffer, s3_key);
       
-      // 3. Perform Semantic Alignment Check
       const enteredRole = item.metadata?.position || 'N/A';
       const inferPrompt = `
-        You are a Taxonomical Role Matcher. Compare the "Requirement" with the "Job Description".
+        Compare the "Requirement" with the "Job Description".
         
-        LOGIC RULES:
-        1. **Professional Ecosystems**: Categorize the roles into broad domains (e.g., Information Technology, Healthcare, Finance, Human Resources, Defense/Military, Legal).
-        2. **Ecosystem Clash**: If the roles belong to fundamentally different professional ecosystems (e.g., Active Military vs. Corporate Commercial), they are NOT ALIGNED.
-        3. **Functional Inclusion**: Within the same ecosystem (e.g. IT), allow flexibility between specific titles (e.g. Lead Dev vs Architect).
-        4. **Keyword Shield**: Do NOT match based on shared generic jargon (like "management" or "leadership") if the industrial domains clash.
+        RULES:
+        1. Professional Ecosystems: Categorize into broad domains (e.g. IT, Healthcare, HR).
+        2. Ecosystem Clash: If fundamentally different ecosystems, they are NOT ALIGNED.
+        3. Keyword Shield: Do not match based on generic words like "management" if domains clash.
         
-        Return ONLY a JSON object: { "aligned": boolean, "inferred_role": "professional title", "reason": "1-sentence justification" }
+        Return ONLY JSON: { "aligned": boolean, "inferred_role": "string", "reason": "string" }
         
-        Requirement (Title): "${enteredRole}"
-        JD Content (READING CLEAN TEXT):
-        ${jdText.substring(0, 4000)}
+        Requirement: "${enteredRole}"
+        JD Content: ${jdText.substring(0, 3000)}
       `;
 
       const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
       const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
       
-      // Resolve Model for Gate Check (Respect User Selection)
       const selectedModel = item.model_id || 'claude-3-sonnet';
       const mapping: Record<string, string | undefined> = {
         'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
@@ -319,8 +306,6 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
       const finalModelId = mapping[selectedModel] || 
         (selectedModel === 'nova-pro' ? 'amazon.nova-pro-v1:0' : 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0');
       
-      console.info(`[JD Alignment] Using User-Selected Model (${selectedModel}):`, finalModelId);
-
       const bedrockResp = await client.send(new InvokeModelCommand({
         modelId: finalModelId,
         contentType: 'application/json',
@@ -330,10 +315,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
           max_tokens: 600,
           messages: [{ 
             role: 'user', 
-            content: [{ 
-              type: 'text', 
-              text: inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.' 
-            }] 
+            content: [{ type: 'text', text: inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.' }] 
           }],
           temperature: 0
         })
@@ -341,8 +323,6 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
 
       const resData = JSON.parse(new TextDecoder().decode(bedrockResp.body));
       const rawText = resData.content?.[0]?.text || '';
-      
-      // Robust extraction
       const xmlMatch = rawText.match(/<jd_check>([\s\S]*?)<\/jd_check>/i);
       const jsonStr = xmlMatch ? xmlMatch[1] : extractJson(rawText);
       
@@ -350,40 +330,38 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
         const result = JSON.parse(jsonStr);
         inferredRole = result.inferred_role;
         isMismatched = !result.aligned;
-        const alignmentReason = result.reason || '';
-        console.log(`[Bedrock Alignment Success] ${result.aligned ? 'MATCH' : 'MISMATCH'} - ${alignmentReason}`);
-
-        // Update the item with the alignment data
-        item.inferred_role = inferredRole;
-        item.is_mismatched = isMismatched;
-      } else {
-        console.warn('[Bedrock Alignment] No extractable JSON found in response:', rawText);
       }
     } catch (err: any) {
-      console.error('[CRITICAL] JD Alignment Inference SILENTLY Failed (Non-Blocking):', {
-        name: err.name,
-        message: err.message,
-        stack: err.stack
-      });
-      // Fallback: We proceed without the mismatch flag to ensure the process isn't blocked
+      console.error('[JD Alignment Failed]', err.message);
     }
+  }
+
+  // Final update: reset all results if a core file (JD, Transcript, or Resume) is updated
+  const resetResults = file_type === 'jd' || file_type === 'transcript' || file_type === 'resume';
+  
+  let updateExpr = `SET #attr = :key, #st = :status, inferred_role = :ir, is_mismatched = :im, updated_at = :now`;
+  const exprValues: any = {
+    ':key': s3_key,
+    ':status': finalStatus,
+    ':ir': inferredRole || null,
+    ':im': isMismatched || false,
+    ':now': Date.now(),
+  };
+
+  if (resetResults) {
+    updateExpr += `, overall_score = :null, recommendation = :null, confidence = :null, coverage_percent = :null, dimension_breakdown = :null, result_s3_key = :null, report_s3_key = :null, strengths = :null, areas_for_review = :null, evidence_items = :null, executive_summary = :null, final_recommendation_note = :null, technical_depth = :null, jd_fit_score = :null, experience_level = :null, fit_gap_analysis = :null, error_message = :null`;
+    exprValues[':null'] = null;
   }
 
   await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
     Key: { interview_id: id },
-    UpdateExpression: `SET #attr = :key, #st = :status, inferred_role = :ir, is_mismatched = :im, updated_at = :now`,
+    UpdateExpression: updateExpr,
     ExpressionAttributeNames: { 
       '#attr': attrName,
       '#st': 'status' 
     },
-    ExpressionAttributeValues: {
-      ':key': s3_key,
-      ':status': finalStatus,
-      ':ir': inferredRole || null,
-      ':im': isMismatched || false,
-      ':now': Date.now(),
-    },
+    ExpressionAttributeValues: exprValues,
   }));
 
   return successResponse({ status: finalStatus, inferred_role: inferredRole, is_mismatched: isMismatched });
