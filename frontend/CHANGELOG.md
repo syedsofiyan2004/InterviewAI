@@ -144,9 +144,10 @@ All notable changes to the InterviewAI platform are documented here.
 - **Anti-Hallucination**: Introduced rigorous anti-hallucination rules requiring all claims to be grounded in verbatim transcript evidence. Scores for dimensions with missing evidence are now capped.
 - **Executive Summaries**: Refined the summary format to be more direct and professional, removing redundant prefixes like "CRITICAL RISKS & GAPS" in favor of specific, prose-based risk assessment.
 
-## [2026-04-23] — Evaluation Engine v2.1 (Alignment & Reset Fixes)
+## [2026-04-24] — Evaluation Engine v2.1 (Alignment & Reset Fixes)
 
 ### Fixed
 - **Domain Hallucination**: Completely removed all hardcoded role examples (like "Distributed Systems" or "L&D") from the rubric generation prompt. The engine is now strictly grounded in the provided JD text, ensuring accurate dimensions for any role (HR, Finance, Tech, etc.).
-- **Evaluation Reset**: Implemented an automated state reset in the API handler. Uploading a new Job Description or Transcript now clears all previous scores, recommendations, and PDF reports, preventing stale data from being displayed after a file update.
+- **Evaluation Reset**: Implemented an automated state reset in the API handler. Uploading a new Job Description, Transcript, or Resume now clears all previous scores, recommendations, and PDF reports, preventing stale data from being displayed after a file update.
+- **Syntax Correction**: Resolved a duplicate return statement in the API handler that was causing build failures.
 - **Role Alignment Logic**: Simplified the semantic alignment check to be more robust and domain-aware without relying on biased examples.
