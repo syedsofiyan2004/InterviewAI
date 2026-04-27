@@ -193,6 +193,8 @@ All notable changes to the InterviewAI platform are documented here.
 - **Bidirectional Navigation**: Integrated `prevStep` logic into the global `TourProvider`, allowing users to navigate backward through tour steps.
 - **Visual Pulse Effects**: Implemented a non-destructive pulsing focus ring (`tour PulseRing`) using CSS keyframes to highlight target elements without blocking clicks.
 - **Smart Tooltip Positioning**: Developed a dynamic collision-detection algorithm for tour tooltips that automatically flips positions (Top/Bottom/Left/Right) to ensure they remain within the viewport.
+- **Tour Per-User Tracking**: Migrated the tour completion flag from `localStorage` to a DynamoDB-backed user preferences model. This ensures a seamless "one-and-done" tour experience that follows users across different devices and browsers.
+- **Tour Reliability Fix**: Resolved an issue where the tour overlay would fail to render due to early measurement of target elements. Implemented a retry mechanism (up to 15 attempts) with polling for element visibility and increased initial delays to ensure page stability before activation.
 - **Vignette Focus**: Replaced the full-screen dark overlay with a subtle radial vignette centered on the active element, providing focus while maintaining context.
 - **First-Visit Guard**: Added persistent localStorage checks to the "New Interview" flow, ensuring the instructional tour only triggers for first-time users (while remaining manual-replayable).
 - **UI Refinements**: Redesigned tour tooltips with updated typography, step indicators, and progress bars.

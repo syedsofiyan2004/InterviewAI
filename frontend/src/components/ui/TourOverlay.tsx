@@ -97,28 +97,59 @@ export function TourOverlay() {
     clearHighlight();
 
     const step = steps[currentStep];
-    const el = document.getElementById(step.targetId);
-    if (!el) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
 
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.add('tour-pulse-target');
-    prevElRef.current = el;
+    const tryFindElement = () => {
+      const el = document.getElementById(step.targetId);
 
-    const timer = setTimeout(() => {
-      const rect = el.getBoundingClientRect();
-      const r = { 
-        top: rect.top, 
-        left: rect.left, 
-        width: rect.width, 
-        height: rect.height,
-        right: rect.right,
-        bottom: rect.bottom
-      };
-      setTargetRect(r);
-      setTooltipPos(calcTooltipPos(r, step.position));
-    }, 350);
+      if (!el) {
+        // Element not in DOM yet — retry
+        if (attempts < 15) {
+          attempts++;
+          timer = setTimeout(tryFindElement, 200);
+        }
+        return;
+      }
 
-    return () => clearTimeout(timer);
+      // Element found — add highlight
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('tour-pulse-target');
+      prevElRef.current = el;
+
+      // Wait for scroll to settle then measure
+      timer = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+
+        // If rect is zero, element not visible yet — retry
+        if (rect.width === 0 && rect.height === 0) {
+          if (attempts < 15) {
+            attempts++;
+            el.classList.remove('tour-pulse-target');
+            timer = setTimeout(tryFindElement, 200);
+          }
+          return;
+        }
+
+        const r = {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+          right: rect.right,
+          bottom: rect.bottom,
+        };
+        setTargetRect(r);
+        setTooltipPos(calcTooltipPos(r, step.position));
+      }, 400);
+    };
+
+    // Start first attempt after short delay
+    timer = setTimeout(tryFindElement, 300);
+
+    return () => {
+      clearTimeout(timer);
+    };
   }, [isActive, currentStep, steps, clearHighlight, calcTooltipPos]);
 
   useEffect(() => {
@@ -146,11 +177,24 @@ export function TourOverlay() {
 
   useEffect(() => () => clearHighlight(), [clearHighlight]);
 
-  if (!isActive || !steps[currentStep] || !targetRect) return null;
+  if (!isActive || !steps[currentStep]) return null;
+
+  // If targetRect is null (element not found yet), show tooltip 
+  // centered on screen so the user at least sees the guidance
+  const rect = targetRect ?? {
+    top: window.innerHeight / 2 - 20,
+    left: window.innerWidth / 2 - 20,
+    width: 40,
+    height: 40,
+    right: window.innerWidth / 2 + 20,
+    bottom: window.innerHeight / 2 + 20,
+  };
 
   const step = steps[currentStep];
   const isLast  = currentStep === steps.length - 1;
   const isFirst = currentStep === 0;
+
+  const finalTooltipPos = targetRect ? tooltipPos : calcTooltipPos(rect, step.position);
 
   return (
     <>
@@ -162,8 +206,8 @@ export function TourOverlay() {
           zIndex: 9990,
           pointerEvents: 'none',
           background: `radial-gradient(
-            ellipse 70% 60% at ${targetRect.left + targetRect.width / 2}px
-            ${targetRect.top + targetRect.height / 2}px,
+            ellipse 70% 60% at ${rect.left + rect.width / 2}px
+            ${rect.top + rect.height / 2}px,
             transparent 40%,
             rgba(0,0,0,0.18) 100%
           )`,
@@ -174,8 +218,8 @@ export function TourOverlay() {
       <div
         style={{
           position: 'fixed',
-          top: tooltipPos.top,
-          left: tooltipPos.left,
+          top: finalTooltipPos.top,
+          left: finalTooltipPos.left,
           width: TOOLTIP_W,
           zIndex: 10001,
           background: '#ffffff',

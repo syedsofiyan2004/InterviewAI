@@ -1,5 +1,27 @@
 'use client';
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { api } from '@/lib/api';
+
+export async function checkTourStatus(): Promise<boolean> {
+  try {
+    const data = await api.getUserPreferences();
+    return data.tour_completed === true;
+  } catch {
+    // Fallback to localStorage if API fails
+    return typeof window !== 'undefined' && localStorage.getItem('minfy_tour_done') === 'true';
+  }
+}
+
+export async function markTourDone(): Promise<void> {
+  try {
+    await api.updateUserPreferences({ tour_completed: true });
+  } catch {
+    // Fallback
+  }
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('minfy_tour_done', 'true');
+  }
+}
 
 export type TourStep = {
   targetId: string;       // DOM element id to highlight
@@ -35,7 +57,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
     setCurrentStep(prev => {
       if (prev >= steps.length - 1) {
         setIsActive(false);
-        localStorage.setItem('minfy_tour_done', 'true');
+        markTourDone(); // calls API + localStorage
         return 0;
       }
       return prev + 1;
@@ -48,7 +70,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const endTour = useCallback(() => {
     setIsActive(false);
-    localStorage.setItem('minfy_tour_done', 'true');
+    markTourDone(); // calls API + localStorage
   }, []);
 
   return (

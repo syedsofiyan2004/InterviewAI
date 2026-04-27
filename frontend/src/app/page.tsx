@@ -18,7 +18,7 @@ import { format } from 'date-fns';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useTour } from '@/contexts/TourContext';
+import { useTour, checkTourStatus } from '@/contexts/TourContext';
 
 export default function Dashboard() {
    const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -33,31 +33,32 @@ export default function Dashboard() {
   const { startTour } = useTour();
 
   useEffect(() => {
-    const done = localStorage.getItem('minfy_tour_done');
-    if (!done) {
-      setTimeout(() => {
-        startTour([
-          {
-            targetId: 'tour-stats',
-            title: 'Your evaluation overview',
-            body: 'These cards show live counts of all your evaluations. Click any card to filter the table below by that status.',
-            position: 'bottom',
-          },
-          {
-            targetId: 'tour-new-btn',
-            title: 'Start a new evaluation',
-            body: 'Click here to begin. You will enter candidate details, then upload documents for AI analysis.',
-            position: 'bottom',
-          },
-          {
-            targetId: 'tour-table',
-            title: 'Track every candidate',
-            body: 'All evaluations appear here sorted by date. Click any row arrow to open the full AI report.',
-            position: 'top',
-          },
-        ]);
-      }, 800);
-    }
+    checkTourStatus().then(done => {
+      if (!done) {
+        setTimeout(() => {
+          startTour([
+            {
+              targetId: 'tour-stats',
+              title: 'Your evaluation overview',
+              body: 'These cards show live counts of all your evaluations. Click any card to filter the table below by that status.',
+              position: 'bottom',
+            },
+            {
+              targetId: 'tour-new-btn',
+              title: 'Start a new evaluation',
+              body: 'Click here to begin. You will enter candidate details, then upload documents for AI analysis.',
+              position: 'bottom',
+            },
+            {
+              targetId: 'tour-table',
+              title: 'Track every candidate',
+              body: 'All evaluations appear here sorted by date. Click any row arrow to open the full AI report.',
+              position: 'top',
+            },
+          ]);
+        }, 1500);
+      }
+    });
   }, [startTour]);
 
   useEffect(() => {

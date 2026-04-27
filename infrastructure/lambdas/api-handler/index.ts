@@ -43,6 +43,14 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   console.log(`Request: ${httpMethod} ${resource} (ID: ${pathParameters?.id || 'N/A'})`);
 
   try {
+    if (httpMethod === 'GET' && resource === '/user/preferences') {
+      return await getUserPreferences(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/user/preferences') {
+      return await updateUserPreferences(event);
+    }
+
     if (httpMethod === 'POST' && resource === '/interviews') {
       return await createInterview(event);
     }
@@ -100,7 +108,9 @@ async function createInterview(event: APIGatewayProxyEvent) {
   const now = Date.now();
   
   const item = {
-    interview_id: interviewId,
+    PK: `INTERVIEW#${interviewId}`,
+    SK: 'METADATA',
+    interview_id: interviewId, // Keep for backward compatibility/clarity in the object
     status: 'CREATED',
     created_at: now,
     updated_at: now,
@@ -119,6 +129,8 @@ async function createInterview(event: APIGatewayProxyEvent) {
 async function listInterviews() {
   const result = await ddbDocClient.send(new ScanCommand({
     TableName: TABLE_NAME,
+    FilterExpression: 'SK = :sk',
+    ExpressionAttributeValues: { ':sk': 'METADATA' },
     Limit: 50,
   }));
 
@@ -145,7 +157,7 @@ async function getInterview(id?: string) {
 
   const result = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   const item = result.Item;
@@ -238,7 +250,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   // 2. Fetch current record to check other file
   const interviewResult = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
   const item = interviewResult.Item;
   if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
@@ -355,7 +367,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
 
   await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
     UpdateExpression: updateExpr,
     ExpressionAttributeNames: { 
       '#attr': attrName,
@@ -374,7 +386,7 @@ async function runAnalysis(id?: string) {
 
   const interviewResult = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   const item = interviewResult.Item;
@@ -397,7 +409,7 @@ async function runAnalysis(id?: string) {
   // 2. Update status to QUEUED
   await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
     UpdateExpression: 'SET #st = :status, updated_at = :now',
     ExpressionAttributeNames: { '#st': 'status' },
     ExpressionAttributeValues: {
@@ -420,7 +432,7 @@ async function getEvaluationResult(id?: string) {
 
   const result = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   const item = result.Item;
@@ -447,7 +459,7 @@ async function deleteInterview(id?: string) {
   // 1. Fetch metadata to get S3 keys
   const result = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   const item = result.Item;
@@ -480,7 +492,7 @@ async function deleteInterview(id?: string) {
   // 4. Delete from DynamoDB
   await ddbDocClient.send(new DeleteCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   return successResponse({ message: 'Interview deleted successfully' });
@@ -500,7 +512,7 @@ async function getInterviewReport(id?: string) {
 
   const result = await ddbDocClient.send(new GetCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
   }));
 
   const item = result.Item;
@@ -519,6 +531,42 @@ async function getInterviewReport(id?: string) {
   const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
   
   return successResponse({ download_url: url });
+}
+
+// --- NEW User Preference Handlers ---
+
+async function getUserPreferences(event: APIGatewayProxyEvent) {
+  const userId = event.requestContext.authorizer?.claims.sub;
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `USER#${userId}`, SK: 'PREFERENCES' },
+  }));
+
+  return successResponse({
+    tour_completed: result.Item?.tour_completed === true
+  });
+}
+
+async function updateUserPreferences(event: APIGatewayProxyEvent) {
+  const userId = event.requestContext.authorizer?.claims.sub;
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const { tour_completed } = body;
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      PK: `USER#${userId}`,
+      SK: 'PREFERENCES',
+      tour_completed: tour_completed === true,
+      updated_at: Date.now(),
+    },
+  }));
+
+  return successResponse({ success: true });
 }
 
 

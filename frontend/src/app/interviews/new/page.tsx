@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { useTour } from '@/contexts/TourContext';
+import { useTour, checkTourStatus } from '@/contexts/TourContext';
 import { api } from '@/lib/api';
 import { 
   ArrowLeft, 
@@ -45,67 +45,69 @@ export default function NewInterview() {
   
   useEffect(() => {
     if (step === 'CREATE') {
-      const done = localStorage.getItem('minfy_tour_done');
-      if (!done) {
-        setTimeout(() => {
-          startTour([
-            {
-              targetId: 'tour-candidate-name',
-              title: 'Candidate full name',
-              body: "Enter the candidate's full name exactly as it appears on their resume. This will appear in the generated PDF report.",
-              position: 'right',
-            },
-            {
-              targetId: 'tour-position',
-              title: 'Role being evaluated',
-              body: 'Enter the exact job title. This calibrates the AI scoring rubric against the right seniority level.',
-              position: 'right',
-            },
-            {
-              targetId: 'tour-model',
-              title: 'AI evaluation model',
-              body: 'Claude 3.7 Sonnet gives the most accurate evaluation. Nova Pro is faster but less nuanced. Recommended: Claude 3.7 Sonnet.',
-              position: 'right',
-            },
-          ]);
-        }, 400);
-      }
+      checkTourStatus().then(done => {
+        if (!done) {
+          setTimeout(() => {
+            startTour([
+              {
+                targetId: 'tour-candidate-name',
+                title: 'Candidate full name',
+                body: "Enter the candidate's full name exactly as it appears on their resume. This will appear in the generated PDF report.",
+                position: 'right',
+              },
+              {
+                targetId: 'tour-position',
+                title: 'Role being evaluated',
+                body: 'Enter the exact job title. This calibrates the AI scoring rubric against the right seniority level.',
+                position: 'right',
+              },
+              {
+                targetId: 'tour-model',
+                title: 'AI evaluation model',
+                body: 'Claude 3.7 Sonnet gives the most accurate evaluation. Nova Pro is faster but less nuanced. Recommended: Claude 3.7 Sonnet.',
+                position: 'right',
+              },
+            ]);
+          }, 1000);
+        }
+      });
     }
   }, [step, startTour]);
 
   useEffect(() => {
     if (step === 'UPLOAD') {
-      const done = localStorage.getItem('minfy_tour_done');
-      if (!done) {
-        setTimeout(() => {
-          startTour([
-            {
-              targetId: 'tour-transcript-upload',
-              title: 'Interview transcript (required)',
-              body: 'Upload the full interview transcript as PDF, DOCX or TXT. The more complete it is, the more accurate the evaluation.',
-              position: 'bottom',
-            },
-            {
-              targetId: 'tour-jd-upload',
-              title: 'Job description (required)',
-              body: 'Upload the exact JD the candidate was interviewed against. The AI uses this to build a custom scoring rubric.',
-              position: 'bottom',
-            },
-            {
-              targetId: 'tour-resume-upload',
-              title: 'Candidate resume (optional)',
-              body: 'If provided, the AI cross-checks transcript claims against the resume. This significantly improves accuracy.',
-              position: 'bottom',
-            },
-            {
-              targetId: 'tour-submit-btn',
-              title: 'Submit for analysis',
-              body: 'Once transcript and JD are uploaded, click here. Analysis takes 60–90 seconds. You will be redirected automatically.',
-              position: 'top',
-            },
-          ]);
-        }, 300);
-      }
+      checkTourStatus().then(done => {
+        if (!done) {
+          setTimeout(() => {
+            startTour([
+              {
+                targetId: 'tour-transcript-upload',
+                title: 'Interview transcript (required)',
+                body: 'Upload the full interview transcript as PDF, DOCX or TXT. The more complete it is, the more accurate the evaluation.',
+                position: 'bottom',
+              },
+              {
+                targetId: 'tour-jd-upload',
+                title: 'Job description (required)',
+                body: 'Upload the exact JD the candidate was interviewed against. The AI uses this to build a custom scoring rubric.',
+                position: 'bottom',
+              },
+              {
+                targetId: 'tour-resume-upload',
+                title: 'Candidate resume (optional)',
+                body: 'If provided, the AI cross-checks transcript claims against the resume. This significantly improves accuracy.',
+                position: 'bottom',
+              },
+              {
+                targetId: 'tour-submit-btn',
+                title: 'Submit for analysis',
+                body: 'Once transcript and JD are uploaded, click here. Analysis takes 60–90 seconds. You will be redirected automatically.',
+                position: 'top',
+              },
+            ]);
+          }, 800);
+        }
+      });
     }
   }, [step, startTour]);
   
@@ -142,8 +144,8 @@ export default function NewInterview() {
       });
       setInterviewId(interview_id);
       setStep('UPLOAD');
-    } catch (err) {
-      alert('Failed to create interview record');
+    } catch (err: any) {
+      setError(err.message || 'Failed to create interview record');
     } finally {
       setLoading(false);
     }

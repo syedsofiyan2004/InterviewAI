@@ -1,0 +1,11 @@
+{
+  "IepStack-dev": {
+    "TableName": "iep-dev-interviews-202533543944-ap-south-1",
+    "UserPoolClientId": "1f9t2t21h72mioggm4nnh02p1h",
+    "ApiUrl": "https://t5tfmut5da.execute-api.ap-south-1.amazonaws.com/dev/",
+    "BucketName": "iep-dev-files-202533543944-ap-south-1",
+    "UserPoolId": "ap-south-1_sAz1gikJ8",
+    "IepApiEndpointE361331A": "https://t5tfmut5da.execute-api.ap-south-1.amazonaws.com/dev/",
+    "FrontendUrl": "https://d3teais7mcxx85.cloudfront.net"
+  }
+}
