@@ -135,14 +135,21 @@ async function listInterviews() {
   }));
 
   // Map to structured output
-  const items = (result.Items || []).map(item => ({
-    interview_id: item.interview_id,
-    status: item.status,
-    candidate_name: item.metadata?.candidate_name,
-    position: item.metadata?.position,
-    created_at: item.created_at,
-    model_id: item.model_id,
-  }));
+  const items = (result.Items || [])
+    .map(item => {
+      const interviewId = item.interview_id || item.PK?.replace(/^INTERVIEW#/, '');
+      if (!interviewId) return null;
+
+      return {
+        interview_id: interviewId,
+        status: item.status,
+        candidate_name: item.metadata?.candidate_name,
+        position: item.metadata?.position,
+        created_at: item.created_at || item.updated_at || 0,
+        model_id: item.model_id,
+      };
+    })
+    .filter(Boolean);
 
   return successResponse({ 
     items,

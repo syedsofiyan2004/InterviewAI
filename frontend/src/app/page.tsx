@@ -237,10 +237,13 @@ export default function Dashboard() {
                 </tr>
               ) : (
                 filteredInterviews.map((interview, idx) => {
-                  const initials = interview.candidate_name
+                  const candidateName = interview.candidate_name || 'Unknown candidate';
+                  const position = interview.position || 'Unknown position';
+                  const createdAt = Number.isFinite(interview.created_at) ? interview.created_at : Date.now();
+                  const initials = candidateName
                     .split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
                   const avatarColors = ['#4F46E5','#0891B2','#059669','#D97706','#DC2626'];
-                  const avatarColor = avatarColors[interview.candidate_name.charCodeAt(0) % 5];
+                  const avatarColor = avatarColors[candidateName.charCodeAt(0) % 5];
 
                   return (
                     <tr
@@ -260,19 +263,19 @@ export default function Dashboard() {
                             {initials}
                           </div>
                           <span className="text-sm font-semibold text-text-primary">
-                            {interview.candidate_name}
+                            {candidateName}
                           </span>
                         </div>
                       </td>
 
                       {/* Position */}
                       <td className="px-6 py-4 text-sm text-text-secondary">
-                        {interview.position}
+                        {position}
                       </td>
 
                       {/* Date */}
                       <td className="px-6 py-4 text-xs text-text-muted text-center">
-                        {format(new Date(interview.created_at), 'MMM d, yyyy')}
+                        {format(new Date(createdAt), 'MMM d, yyyy')}
                       </td>
 
                       {/* Status */}
@@ -286,7 +289,7 @@ export default function Dashboard() {
                           <button
                             onClick={() => setConfirmDelete({
                               id: interview.interview_id,
-                              name: interview.candidate_name,
+                              name: candidateName,
                             })}
                             className="p-1.5 rounded-md transition-colors text-text-muted hover:text-red-500"
                             style={{}}
@@ -366,4 +369,3 @@ function StatCard({ title, value, icon: Icon, type, onClick, active }: {
 function cn(...inputs: any[]) {
   return inputs.filter(Boolean).join(' ');
 }
-
