@@ -98,7 +98,7 @@ async function updateStatus(id: string, status: string, results: any = {}) {
 
   await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
-    Key: { interview_id: id },
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
     UpdateExpression: updateExpr,
     ExpressionAttributeNames: { '#st': 'status' },
     ExpressionAttributeValues: values,
@@ -111,7 +111,7 @@ async function runEvaluationPipeline(id: string) {
   try {
     const recordResult = await ddbDocClient.send(new GetCommand({
       TableName: TABLE_NAME,
-      Key: { interview_id: id },
+      Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
     }));
     item = recordResult.Item;
   } catch (err) {
