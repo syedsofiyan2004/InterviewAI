@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -16,6 +16,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useAuth();
+  const [pointer, setPointer] = useState({ x: 55, y: 35 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
@@ -55,7 +56,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar />
         <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
           <Topbar />
-          <main className="flex-1 p-8 overflow-y-auto bg-background">
+          <main
+            className="app-workspace flex-1 overflow-y-auto p-6 lg:p-7"
+            onMouseMove={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setPointer({
+                x: ((event.clientX - rect.left) / rect.width) * 100,
+                y: ((event.clientY - rect.top) / rect.height) * 100,
+              });
+            }}
+            style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
+          >
             {children}
           </main>
         </div>

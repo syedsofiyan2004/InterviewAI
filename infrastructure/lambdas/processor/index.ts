@@ -185,7 +185,12 @@ async function runEvaluationPipeline(id: string) {
   const validatedResult = evaluation;
 
   // 7. Persist Full Result to S3
-  const resultS3Key = `processed/${id}/result.json`;
+  const ownerPrefix = item.owner_user_id
+    ? `users/${item.owner_user_id}/interviews/${id}`
+    : `processed/${id}`;
+  const resultS3Key = item.owner_user_id
+    ? `${ownerPrefix}/processed/result.json`
+    : `${ownerPrefix}/result.json`;
   try {
     const serializedResult = JSON.stringify(validatedResult, null, 2);
     if (!serializedResult) throw new Error('SERIALIZATION_EMPTY');
@@ -201,8 +206,10 @@ async function runEvaluationPipeline(id: string) {
   console.log('Step 7: Generating PDF report...');
   let reportS3Key: string | undefined = undefined;
   try {
-    const pdfBuffer = await generatePdfReport(item, validatedResult);
-    const key = `processed/${id}/report.pdf`;
+    const pdfBuffer = await generateInterviewPdfReport(item, validatedResult);
+    const key = item.owner_user_id
+      ? `${ownerPrefix}/processed/report.pdf`
+      : `${ownerPrefix}/report.pdf`;
     await saveFileContent(BUCKET_NAME, key, pdfBuffer, 'application/pdf');
     reportS3Key = key;
     console.log(`Step 8: PDF report saved to S3: ${reportS3Key}`);
@@ -522,7 +529,7 @@ async function invokeBedrock(prompt: string, modelId: string): Promise<string> {
   }
 }
 
-async function generatePdfReport(interviewParams: any, results: DetailedEvaluationResult): Promise<Buffer> {
+export async function generateInterviewPdfReport(interviewParams: any, results: DetailedEvaluationResult): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -582,6 +589,56 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
     if (y - n < MB + 40) newPage();
   };
 
+  const splitWordToFit = (word: string, f: any, size: number, maxWidth: number): string[] => {
+    if (f.widthOfTextAtSize(word, size) <= maxWidth) return [word];
+
+    const parts: string[] = [];
+    let part = '';
+    for (const char of word) {
+      const candidate = part + char;
+      if (part && f.widthOfTextAtSize(`${candidate}-`, size) > maxWidth) {
+        parts.push(`${part}-`);
+        part = char;
+      } else {
+        part = candidate;
+      }
+    }
+    if (part) parts.push(part);
+    return parts;
+  };
+
+  const fitText = (value: string, f: any, size: number, maxWidth: number): string => {
+    let text = String(value || '');
+    if (f.widthOfTextAtSize(text, size) <= maxWidth) return text;
+
+    while (text.length > 1 && f.widthOfTextAtSize(`${text}...`, size) > maxWidth) {
+      text = text.slice(0, -1);
+    }
+    return `${text}...`;
+  };
+
+  const measureLines = (value: string, f: any, size: number, maxWidth: number): string[] => {
+    const words = String(value || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .flatMap(word => splitWordToFit(word, f, size, maxWidth));
+    if (!words.length) return [];
+
+    const lines: string[] = [];
+    let line = '';
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (f.widthOfTextAtSize(test, size) > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+
   // Wrap and draw text, returns lines used
   const drawText = (
     text: string,
@@ -595,7 +652,10 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
       maxWidth = CW, lineHeight = 14, indent = 0,
     } = opts;
 
-    const words = String(text || '').split(/\s+/);
+    const words = String(text || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .flatMap(word => splitWordToFit(word, f, size, maxWidth - indent));
     let line = '';
     let linesDrawn = 0;
 
@@ -661,13 +721,13 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
 
   // Candidate name
   const name = (interviewParams.metadata?.candidate_name || 'Candidate').toUpperCase();
-  page.drawText(name, { x: ML, y, size: 22, font: boldFont, color: C.black });
+  page.drawText(fitText(name, boldFont, 22, CW), { x: ML, y, size: 22, font: boldFont, color: C.black });
   y -= 26;
 
   // Position + date line
   const position = interviewParams.metadata?.position || 'N/A';
   const dateStr = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  page.drawText(`${position}  ·  Evaluated ${dateStr}`, {
+  page.drawText(fitText(`${position} - Evaluated ${dateStr}`, font, 9, CW), {
     x: ML, y, size: 9, font, color: C.gray600,
   });
   y -= 20;
@@ -724,7 +784,7 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
     const dimScore = dim.score;
     const dimColor = dimScore >= 8 ? C.green : dimScore >= 6 ? C.indigo : dimScore >= 4 ? C.amber : C.red;
 
-    page.drawText(dim.dimension, {
+    page.drawText(fitText(dim.dimension, boldFont, 8.5, CW - 44), {
       x: ML, y, size: 8.5, font: boldFont, color: C.black,
     });
     page.drawText(`${dimScore}/10`, {
@@ -764,13 +824,13 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
 
     if (strengths[i]) {
       page.drawCircle({ x: ML + 4, y: y + 3, size: 2.5, color: C.green });
-      const s = strengths[i].length > 65 ? strengths[i].slice(0, 62) + '…' : strengths[i];
+      const s = fitText(strengths[i], font, 7.5, colW - 16);
       page.drawText(s, { x: ML + 12, y, size: 7.5, font, color: C.gray800 });
     }
 
     if (risks[i]) {
       page.drawCircle({ x: ML + colW + 28, y: y + 3, size: 2.5, color: C.red });
-      const r = risks[i].length > 65 ? risks[i].slice(0, 62) + '…' : risks[i];
+      const r = fitText(risks[i], font, 7.5, colW - 16);
       page.drawText(r, { x: ML + colW + 36, y, size: 7.5, font, color: C.gray800 });
     }
 
@@ -783,9 +843,10 @@ async function generatePdfReport(interviewParams: any, results: DetailedEvaluati
   // VERDICT BOX
   // ══════════════════════════════════════════════
   sectionTitle('Final Verdict');
-  needsSpace(80);
 
-  const vboxH = 72;
+  const verdictLineCount = Math.max(1, measureLines(results.final_recommendation_note, font, 8.5, CW - 24).length);
+  const vboxH = Math.max(72, 44 + verdictLineCount * 14);
+  needsSpace(vboxH + 8);
   page.drawRectangle({ x: ML, y: y - vboxH, width: CW, height: vboxH, color: C.indigoLight });
   page.drawRectangle({ x: ML, y: y - vboxH, width: 4, height: vboxH, color: C.indigo });
 
@@ -842,5 +903,3 @@ function extractJson(text: string): string {
   
   return text;
 }
-
-

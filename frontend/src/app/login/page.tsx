@@ -2,18 +2,19 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { 
-  ShieldCheck, 
-  Mail, 
-  Lock, 
-  Eye, 
-  EyeOff, 
-  ArrowRight, 
-  Loader2, 
-  CheckCircle2, 
-  AlertCircle, 
+import {
+  ShieldCheck,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  ArrowRight,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
   RefreshCw,
-  BarChart2
+  ClipboardList,
+  FileText,
 } from 'lucide-react';
 import { signIn, signUp, confirmSignUp, resendCode } from '@/lib/auth';
 import { useAuth } from '@/contexts/AuthContext';
@@ -35,6 +36,23 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [activeStory, setActiveStory] = useState(0);
+  const [pointer, setPointer] = useState({ x: 50, y: 50 });
+
+  const stories = [
+    {
+      label: 'Interviews',
+      title: 'Evaluate candidates with confidence.',
+      body: 'Scores, evidence, and clear recommendations from interview conversations.',
+      icon: <ClipboardList size={17} />,
+    },
+    {
+      label: 'Meetings',
+      title: 'Understand meetings without replaying them.',
+      body: 'Summaries, decisions, risks, next steps, and owner-wise action items.',
+      icon: <FileText size={17} />,
+    },
+  ];
 
   const clearMessages = () => {
     setError(null);
@@ -130,190 +148,244 @@ function LoginContent() {
   };
 
   return (
-    <div className="min-h-screen flex flex-row">
-      {/* Left Column: Branding & Features */}
-      <div className="w-[420px] hidden lg:flex flex-col justify-between p-12 bg-[#050B1A] shrink-0">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent text-white">
-              <ShieldCheck size={20} />
-            </div>
-            <span className="font-semibold text-white text-lg">Minfy AI</span>
-          </div>
-        </div>
-        
-        <div className="space-y-8">
-          <h2 className="text-white text-2xl font-semibold leading-tight">
-            Structured AI evaluation for every hire.
-          </h2>
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 text-sm text-slate-300">
-              <CheckCircle2 size={18} className="text-accent" />
-              <span>Automated transcript analysis</span>
-            </div>
-            <div className="flex items-center gap-3 text-sm text-slate-300">
-              <BarChart2 size={18} className="text-accent" />
-              <span>Dimension-based scoring rubric</span>
-            </div>
-            <div className="flex items-center gap-3 text-sm text-slate-300">
-              <ShieldCheck size={18} className="text-accent" />
-              <span>AWS-grade security & compliance</span>
-            </div>
-          </div>
-        </div>
+    <div
+      className="login-stage h-screen w-full overflow-hidden"
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPointer({
+          x: ((event.clientX - rect.left) / rect.width) * 100,
+          y: ((event.clientY - rect.top) / rect.height) * 100,
+        });
+      }}
+      style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
+    >
+      <div className="login-grid" />
+      <div className="login-scanline" />
+      <div className="login-pointer-field" />
+      <div className="login-orbit login-orbit-one" />
+      <div className="login-orbit login-orbit-two" />
 
-        <div className="text-xs text-slate-500 font-medium">
-          Secured by AWS Cognito
-        </div>
-      </div>
-
-      {/* Right Column: Auth Forms */}
-      <div className="flex-1 flex items-center justify-center bg-background p-4 overflow-y-auto">
-        <div className="card p-8 max-w-sm w-full space-y-8 bg-surface-elevated border-border shadow-sm">
-          <div className="text-center space-y-2">
-            <h1 className="text-2xl font-semibold text-text-primary tracking-tight">
-              {mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create account' : 'Verify email'}
-            </h1>
-            <p className="text-sm text-text-muted">
-              {mode === 'signin' ? 'Enter your details to sign in' : mode === 'signup' ? 'Join Minfy AI today' : 'Enter the code sent to your email'}
-            </p>
+      <div className="relative z-10 grid h-full grid-cols-1 gap-9 px-[clamp(24px,3.8vw,58px)] py-[clamp(24px,4.5vh,48px)] lg:grid-cols-[minmax(0,1fr)_minmax(430px,540px)]">
+        <section className="hidden min-h-0 flex-col justify-between lg:flex">
+          <div className="flex items-center justify-between">
+            <div className="relative flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#6EE7B7] text-[#071018]">
+                <ShieldCheck size={20} />
+              </div>
+              <span className="text-lg font-semibold tracking-tight text-white">Minfy AI</span>
+            </div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6EE7B7]">
+              Interview intelligence / Meeting clarity
+            </div>
           </div>
 
-          {/* Feedback messages */}
-          {error && (
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
-              <AlertCircle size={14} className="shrink-0 mt-0.5" />
-              <span>{error}</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_clamp(76px,10vw,148px)] items-end gap-7">
+            <div className="max-w-[720px] space-y-6">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#93C5FD]">Work clarity suite</p>
+              <div>
+                <h2 className="text-[clamp(46px,5vw,82px)] font-semibold leading-[0.94] tracking-tight text-white">
+                  Conversations,
+                  <span className="block text-[#6EE7B7]">understood.</span>
+                </h2>
+                <div className="mt-5 h-[34px] overflow-hidden text-[28px] font-semibold tracking-tight text-white/80">
+                  <div className="login-kinetic-stack">
+                    <span>Evaluate candidates</span>
+                    <span>Summarize meetings</span>
+                    <span>Share reports</span>
+                  </div>
+                </div>
+              </div>
+              <p className="max-w-[500px] text-[15px] leading-7 text-slate-300">
+                A focused workspace that turns long discussions into useful reports your team can read, trust, and share.
+              </p>
             </div>
-          )}
-          {success && (
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-success/10 border border-success/20 text-success text-xs font-medium">
-              <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
-              <span>{success}</span>
-            </div>
-          )}
 
-          <div className="space-y-6">
-            {mode === 'signin' && (
-              <form onSubmit={handleSignIn} className="space-y-4">
-                <InputField
-                  id="email"
-                  label="Email Address"
-                  type="email"
-                  icon={<Mail size={16} />}
-                  value={email}
-                  onChange={setEmail}
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                />
-                <PasswordField
-                  id="password"
-                  label="Password"
-                  value={password}
-                  onChange={setPassword}
-                  show={showPassword}
-                  onToggle={() => setShowPassword(!showPassword)}
-                  autoComplete="current-password"
-                />
-                <SubmitButton loading={loading} label="Sign In" />
-                <p className="text-center text-xs text-text-muted">
-                  Don't have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => { setMode('signup'); clearMessages(); }}
-                    className="text-accent font-semibold hover:underline"
-                  >
-                    Sign up
-                  </button>
-                </p>
-              </form>
+            <div className="login-index-mark" aria-hidden="true">
+              <span>01</span>
+              <span>02</span>
+              <span>03</span>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <div className="grid gap-0 border-y border-white/10">
+              {stories.map((story, index) => (
+                <button
+                  key={story.label}
+                  type="button"
+                  onMouseEnter={() => setActiveStory(index)}
+                  onFocus={() => setActiveStory(index)}
+                  className={`login-capability text-left ${activeStory === index ? 'is-active' : ''}`}
+                >
+                  <div className="flex items-center gap-4">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6EE7B7]">
+                      0{index + 1}
+                    </span>
+                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white/[0.06] text-[#6EE7B7]">
+                      {story.icon}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-semibold text-white">{story.label}</p>
+                    <p className="mt-1 max-w-[620px] text-xs leading-5 text-slate-400">{story.body}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>{stories[activeStory].title}</span>
+            <span>Reports ready to review and download</span>
+          </div>
+        </section>
+
+        <section className="flex items-center justify-center lg:justify-end">
+          <div className="login-auth-card w-full max-w-[520px] space-y-7 p-10">
+            <div className="text-center space-y-2.5">
+              <h1 className="text-3xl font-semibold text-white tracking-tight">
+                {mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create account' : 'Verify email'}
+              </h1>
+              <p className="text-base text-slate-300">
+                {mode === 'signin' ? 'Enter your details to sign in' : mode === 'signup' ? 'Join Minfy AI today' : 'Enter the code sent to your email'}
+              </p>
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-3 rounded-lg border border-red-400/25 bg-red-400/10 p-3 text-xs font-medium text-red-200">
+                <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+            {success && (
+              <div className="flex items-start gap-3 rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-3 text-xs font-medium text-emerald-100">
+                <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+                <span>{success}</span>
+              </div>
             )}
 
-            {mode === 'signup' && (
-              <form onSubmit={handleSignUp} className="space-y-4">
-                <InputField
-                  id="email-signup"
-                  label="Email Address"
-                  type="email"
-                  icon={<Mail size={16} />}
-                  value={email}
-                  onChange={setEmail}
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                />
-                <PasswordField
-                  id="password-signup"
-                  label="Password"
-                  value={password}
-                  onChange={setPassword}
-                  show={showPassword}
-                  onToggle={() => setShowPassword(!showPassword)}
-                  autoComplete="new-password"
-                  hint="Min. 8 chars"
-                />
-                <PasswordField
-                  id="confirm-password"
-                  label="Confirm Password"
-                  value={confirmPassword}
-                  onChange={setConfirmPassword}
-                  show={showPassword}
-                  onToggle={() => setShowPassword(!showPassword)}
-                  autoComplete="new-password"
-                />
-                <SubmitButton loading={loading} label="Create Account" />
-                <p className="text-center text-xs text-text-muted">
-                  Already have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => { setMode('signin'); clearMessages(); }}
-                    className="text-accent font-semibold hover:underline"
-                  >
-                    Sign in
-                  </button>
-                </p>
-              </form>
-            )}
-
-            {mode === 'verify' && (
-              <form onSubmit={handleVerify} className="space-y-6">
-                <div className="space-y-2">
-                  <label htmlFor="verify-code" className="block text-sm font-medium text-text-secondary text-center">
-                    Verification Code
-                  </label>
-                  <input
-                    id="verify-code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={verifyCode}
-                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
-                    placeholder="000000"
-                    className="w-full h-14 bg-surface border border-border rounded-xl px-4 text-2xl text-center tracking-[0.5em] font-bold text-text-primary focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
+            <div className="space-y-5">
+              {mode === 'signin' && (
+                <form onSubmit={handleSignIn} className="space-y-5">
+                  <InputField
+                    id="email"
+                    label="Email Address"
+                    type="email"
+                    icon={<Mail size={16} />}
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="you@company.com"
+                    autoComplete="email"
                   />
-                </div>
-                <SubmitButton loading={loading} label="Verify Account" />
-                <div className="flex flex-col gap-3">
-                  <button
-                    type="button"
-                    onClick={handleResend}
-                    disabled={loading}
-                    className="text-xs text-text-muted hover:text-text-primary font-medium transition-colors flex items-center justify-center gap-2"
-                  >
-                    <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-                    Resend code
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setMode('signin'); clearMessages(); }}
-                    className="text-xs text-text-muted hover:text-text-primary transition-colors text-center"
-                  >
-                    Back to sign in
-                  </button>
-                </div>
-              </form>
-            )}
+                  <PasswordField
+                    id="password"
+                    label="Password"
+                    value={password}
+                    onChange={setPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="current-password"
+                  />
+                  <SubmitButton loading={loading} label="Sign In" />
+                  <p className="text-center text-xs text-slate-400">
+                    Don't have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signup'); clearMessages(); }}
+                      className="font-semibold text-[#6EE7B7] hover:underline"
+                    >
+                      Sign up
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {mode === 'signup' && (
+                <form onSubmit={handleSignUp} className="space-y-4">
+                  <InputField
+                    id="email-signup"
+                    label="Email Address"
+                    type="email"
+                    icon={<Mail size={16} />}
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                  />
+                  <PasswordField
+                    id="password-signup"
+                    label="Password"
+                    value={password}
+                    onChange={setPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                    hint="Min. 8 chars"
+                  />
+                  <PasswordField
+                    id="confirm-password"
+                    label="Confirm Password"
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                  />
+                  <SubmitButton loading={loading} label="Create Account" />
+                  <p className="text-center text-xs text-slate-400">
+                    Already have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signin'); clearMessages(); }}
+                      className="font-semibold text-[#6EE7B7] hover:underline"
+                    >
+                      Sign in
+                    </button>
+                  </p>
+                </form>
+              )}
+
+              {mode === 'verify' && (
+                <form onSubmit={handleVerify} className="space-y-6">
+                  <div className="space-y-2">
+                    <label htmlFor="verify-code" className="block text-center text-sm font-medium text-slate-300">
+                      Verification Code
+                    </label>
+                    <input
+                      id="verify-code"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={verifyCode}
+                      onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="000000"
+                      className="w-full h-14 rounded-xl border border-white/10 bg-white/[0.08] px-4 text-center text-2xl font-bold tracking-[0.5em] text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
+                    />
+                  </div>
+                  <SubmitButton loading={loading} label="Verify Account" />
+                  <div className="flex flex-col gap-3">
+                    <button
+                      type="button"
+                      onClick={handleResend}
+                      disabled={loading}
+                      className="flex items-center justify-center gap-2 text-xs font-medium text-slate-400 transition-colors hover:text-white"
+                    >
+                      <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                      Resend code
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signin'); clearMessages(); }}
+                      className="text-center text-xs text-slate-400 transition-colors hover:text-white"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
@@ -333,11 +405,11 @@ function InputField({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-sm font-medium text-text-secondary">
+      <label htmlFor={id} className="block text-sm font-medium text-slate-300">
         {label}
       </label>
       <div className="relative">
-        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted">{icon}</span>
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">{icon}</span>
         <input
           id={id}
           type={type}
@@ -345,7 +417,7 @@ function InputField({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="w-full h-11 bg-surface border border-border rounded-lg pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/50 focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
+          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-4 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
         />
       </div>
     </div>
@@ -367,13 +439,13 @@ function PasswordField({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <label htmlFor={id} className="block text-sm font-medium text-text-secondary">
+        <label htmlFor={id} className="block text-sm font-medium text-slate-300">
           {label}
         </label>
-        {hint && <span className="text-[10px] text-text-muted">{hint}</span>}
+        {hint && <span className="text-[10px] text-slate-500">{hint}</span>}
       </div>
       <div className="relative">
-        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted">
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
           <Lock size={16} />
         </span>
         <input
@@ -382,12 +454,12 @@ function PasswordField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
-          className="w-full h-11 bg-surface border border-border rounded-lg pl-10 pr-10 text-sm text-text-primary placeholder:text-text-muted/50 focus:ring-2 focus:ring-accent/20 focus:border-accent focus:outline-none transition-all"
+          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-10 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
         />
         <button
           type="button"
           onClick={onToggle}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-white"
           tabIndex={-1}
         >
           {show ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -402,7 +474,7 @@ function SubmitButton({ loading, label }: { loading: boolean; label: string }) {
     <button
       type="submit"
       disabled={loading}
-      className="w-full h-11 bg-accent text-white font-semibold rounded-lg hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm active:scale-[0.98]"
+      className="w-full h-12 rounded-lg bg-[#6EE7B7] text-base font-semibold text-[#071018] shadow-[0_16px_44px_rgba(110,231,183,0.22)] transition-all hover:bg-[#8CF3CB] disabled:opacity-50 active:scale-[0.98] flex items-center justify-center gap-2"
     >
       {loading ? (
         <Loader2 className="animate-spin" size={18} />

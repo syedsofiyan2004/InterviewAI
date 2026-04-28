@@ -12,6 +12,7 @@ import {
 import { 
   ddbDocClient, 
   getPresignedUploadUrl,
+  saveFileContent,
   s3Client,
   validateEnv
 } from '../shared/aws';
@@ -28,12 +29,22 @@ import {
   UploadUrlSchema,
   ConfirmUploadSchema
 } from '../../schema';
+import {
+  ConfirmMomUploadSchema,
+  CreateMomSchema,
+  MomResultSchema,
+  MomUploadUrlSchema
+} from '../../schema/mom.js';
+import { generateMomPdfReport } from '../shared/mom-report.js';
+import { generateInterviewPdfReport } from '../processor/index.js';
 
-validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL']);
+validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL', 'MOM_TABLE_NAME', 'MOM_QUEUE_URL']);
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const QUEUE_URL = process.env.QUEUE_URL!;
+const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
+const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
 
 const sqsClient = new SQSClient({});
 
@@ -51,20 +62,56 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await updateUserPreferences(event);
     }
 
+    if (httpMethod === 'POST' && resource === '/moms') {
+      return await createMom(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/moms') {
+      return await listMoms(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/moms/{id}') {
+      return await getMom(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'DELETE' && resource === '/moms/{id}') {
+      return await deleteMom(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/moms/{id}/upload-url') {
+      return await getMomUploadUrl(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/moms/{id}/confirm-upload') {
+      return await confirmMomUpload(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/moms/{id}/analyze') {
+      return await runMomAnalysis(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/moms/{id}/result') {
+      return await getMomResult(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/moms/{id}/report') {
+      return await getMomReport(pathParameters?.id, event);
+    }
+
     if (httpMethod === 'POST' && resource === '/interviews') {
       return await createInterview(event);
     }
 
     if (httpMethod === 'GET' && resource === '/interviews') {
-      return await listInterviews();
+      return await listInterviews(event);
     }
 
     if (httpMethod === 'GET' && resource === '/interviews/{id}') {
-      return await getInterview(pathParameters?.id);
+      return await getInterview(pathParameters?.id, event);
     }
 
     if (httpMethod === 'DELETE' && resource === '/interviews/{id}') {
-      return await deleteInterview(pathParameters?.id);
+      return await deleteInterview(pathParameters?.id, event);
     }
 
     if (httpMethod === 'POST' && resource === '/interviews/{id}/upload-url') {
@@ -76,15 +123,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
 
     if (httpMethod === 'POST' && resource === '/interviews/{id}/analyze') {
-      return await runAnalysis(pathParameters?.id);
+      return await runAnalysis(pathParameters?.id, event);
     }
 
     if (httpMethod === 'GET' && resource === '/interviews/{id}/result') {
-      return await getEvaluationResult(pathParameters?.id);
+      return await getEvaluationResult(pathParameters?.id, event);
     }
 
     if (httpMethod === 'GET' && resource === '/interviews/{id}/report') {
-      return await getInterviewReport(pathParameters?.id);
+      return await getInterviewReport(pathParameters?.id, event);
     }
 
 
@@ -96,7 +143,80 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   }
 };
 
+function getAuthenticatedUserId(event: APIGatewayProxyEvent): string | null {
+  return event.requestContext.authorizer?.claims?.sub || null;
+}
+
+function userInterviewPrefix(userId: string, interviewId: string): string {
+  return `users/${userId}/interviews/${interviewId}`;
+}
+
+function userMomPrefix(userId: string, momId: string): string {
+  return `users/${userId}/moms/${momId}`;
+}
+
+function isOwnedBy(item: any, userId: string): boolean {
+  return item?.owner_user_id === userId;
+}
+
+async function getOwnedInterviewRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'Interview not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this interview') };
+  }
+
+  return { item, userId };
+}
+
+async function getOwnedMomRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'MOM not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this MOM') };
+  }
+
+  return { item, userId };
+}
+
 async function createInterview(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
   const body = JSON.parse(event.body || '{}');
   const result = CreateInterviewSchema.safeParse(body);
   
@@ -112,6 +232,7 @@ async function createInterview(event: APIGatewayProxyEvent) {
     SK: 'METADATA',
     interview_id: interviewId, // Keep for backward compatibility/clarity in the object
     status: 'CREATED',
+    owner_user_id: userId,
     created_at: now,
     updated_at: now,
     metadata: result.data,
@@ -126,11 +247,14 @@ async function createInterview(event: APIGatewayProxyEvent) {
   return createdResponse({ interview_id: interviewId });
 }
 
-async function listInterviews() {
+async function listInterviews(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
   const result = await ddbDocClient.send(new ScanCommand({
     TableName: TABLE_NAME,
-    FilterExpression: 'SK = :sk',
-    ExpressionAttributeValues: { ':sk': 'METADATA' },
+    FilterExpression: 'SK = :sk AND owner_user_id = :owner',
+    ExpressionAttributeValues: { ':sk': 'METADATA', ':owner': userId },
     Limit: 50,
   }));
 
@@ -159,22 +283,13 @@ async function listInterviews() {
 }
 
 
-async function getInterview(id?: string) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
-
-  const result = await ddbDocClient.send(new GetCommand({
-    TableName: TABLE_NAME,
-    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
-  }));
-
-  const item = result.Item;
-  if (!item) {
-    return errorResponse(404, 'NOT_FOUND', 'Interview not found');
-  }
+async function getInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
 
   // Return structured contract shape
   return successResponse({
-    interview_id: item.interview_id,
+    interview_id: item.interview_id || id,
     status: item.status,
     created_at: item.created_at,
     updated_at: item.updated_at,
@@ -203,7 +318,9 @@ async function getInterview(id?: string) {
 
 
 async function getUploadUrl(id: string | undefined, event: APIGatewayProxyEvent) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
+  const owned = await getOwnedInterviewRecord(id, event);
+  if (owned.response) return owned.response;
+  const userId = owned.userId!;
 
   const body = JSON.parse(event.body || '{}');
   const result = UploadUrlSchema.safeParse(body);
@@ -221,7 +338,7 @@ async function getUploadUrl(id: string | undefined, event: APIGatewayProxyEvent)
      return errorResponse(400, 'VALIDATION_ERROR', `Unsupported file extension: .${extension}`);
   }
 
-  const s3Key = `uploads/${id}/${file_type}-${Date.now()}.${extension}`;
+  const s3Key = `${userInterviewPrefix(userId, id!)}/uploads/${file_type}-${Date.now()}.${extension}`;
   
   const uploadUrl = await getPresignedUploadUrl(BUCKET_NAME, s3Key, content_type);
 
@@ -233,7 +350,10 @@ async function getUploadUrl(id: string | undefined, event: APIGatewayProxyEvent)
 }
 
 async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
+  const owned = await getOwnedInterviewRecord(id, event);
+  if (owned.response) return owned.response;
+  const item = owned.item!;
+  const userId = owned.userId!;
 
   const body = JSON.parse(event.body || '{}');
   const result = ConfirmUploadSchema.safeParse(body);
@@ -243,6 +363,11 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   }
 
   const { file_type, s3_key } = result.data;
+  const expectedPrefix = `${userInterviewPrefix(userId, id!)}/uploads/`;
+
+  if (!s3_key.startsWith(expectedPrefix)) {
+    return errorResponse(403, 'ACCESS_DENIED', 'Upload key does not belong to this user');
+  }
 
   // 1. Verify object exists in S3
   try {
@@ -254,15 +379,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
     return errorResponse(404, 'UPLOAD_ERROR', 'File not found in storage. Please upload first.');
   }
 
-  // 2. Fetch current record to check other file
-  const interviewResult = await ddbDocClient.send(new GetCommand({
-    TableName: TABLE_NAME,
-    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
-  }));
-  const item = interviewResult.Item;
-  if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
-
-  // 3. Map file type and determine status
+  // 2. Map file type and determine status
   const attrMap: Record<string, string> = {
     'transcript': 'transcript_s3_key',
     'jd': 'jd_s3_key',
@@ -388,16 +505,9 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
 
 
 
-async function runAnalysis(id?: string) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
-
-  const interviewResult = await ddbDocClient.send(new GetCommand({
-    TableName: TABLE_NAME,
-    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
-  }));
-
-  const item = interviewResult.Item;
-  if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
+async function runAnalysis(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
   
   if (!item.transcript_s3_key || !item.jd_s3_key) {
     return errorResponse(400, 'VALIDATION_ERROR', 'Both transcript and JD must be uploaded before analysis.');
@@ -428,21 +538,16 @@ async function runAnalysis(id?: string) {
   // 3. Send to SQS
   await sqsClient.send(new SendMessageCommand({
     QueueUrl: QUEUE_URL,
-    MessageBody: JSON.stringify({ interview_id: id }),
+    MessageBody: JSON.stringify({ interview_id: id, owner_user_id: item.owner_user_id }),
   }));
   
   return acceptedResponse({ status: 'QUEUED' });
 }
 
-async function getEvaluationResult(id?: string) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
+async function getEvaluationResult(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
 
-  const result = await ddbDocClient.send(new GetCommand({
-    TableName: TABLE_NAME,
-    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
-  }));
-
-  const item = result.Item;
   if (!item || !item.result_s3_key) {
     return errorResponse(404, 'NOT_FOUND', 'Evaluation result not found or not yet available');
   }
@@ -460,21 +565,11 @@ async function getEvaluationResult(id?: string) {
   return successResponse(JSON.parse(jsonContent));
 }
 
-async function deleteInterview(id?: string) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
+async function deleteInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
 
-  // 1. Fetch metadata to get S3 keys
-  const result = await ddbDocClient.send(new GetCommand({
-    TableName: TABLE_NAME,
-    Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
-  }));
-
-  const item = result.Item;
-  if (!item) {
-    return errorResponse(404, 'NOT_FOUND', 'Interview not found');
-  }
-
-  // 2. Identify potential S3 objects to delete
+  // 1. Identify potential S3 objects to delete
   const keysToDelete = [
     item.transcript_s3_key,
     item.jd_s3_key,
@@ -483,7 +578,7 @@ async function deleteInterview(id?: string) {
     item.report_s3_key,
   ].filter(Boolean);
 
-  // 3. Delete from S3 (Fail-safe: ignore "Not Found" errors)
+  // 2. Delete from S3 (Fail-safe: ignore "Not Found" errors)
   console.log(`Deleting ${keysToDelete.length} S3 objects for interview ${id}`);
   await Promise.all(keysToDelete.map(async (key) => {
     try {
@@ -496,7 +591,7 @@ async function deleteInterview(id?: string) {
     }
   }));
 
-  // 4. Delete from DynamoDB
+  // 3. Delete from DynamoDB
   await ddbDocClient.send(new DeleteCommand({
     TableName: TABLE_NAME,
     Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
@@ -514,30 +609,317 @@ async function getFileContent(bucket: string, key: string): Promise<string> {
   return await response.Body?.transformToString() || '';
 }
 
-async function getInterviewReport(id?: string) {
-  if (!id) return errorResponse(400, 'VALIDATION_ERROR', 'Missing id');
+async function getInterviewReport(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
 
-  const result = await ddbDocClient.send(new GetCommand({
+  if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
+  if (!item.result_s3_key) return errorResponse(404, 'NOT_FOUND', 'Evaluation result not found or not yet available');
+
+  const resultJson = await getFileContent(BUCKET_NAME, item.result_s3_key);
+  const parsedResult = JSON.parse(resultJson);
+  const reportKey = item.report_s3_key || `${userInterviewPrefix(item.owner_user_id, id!)}/processed/report.pdf`;
+  const pdfReport = await generateInterviewPdfReport(item, parsedResult);
+  await saveFileContent(BUCKET_NAME, reportKey, pdfReport, 'application/pdf');
+
+  await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
     Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+    UpdateExpression: 'SET report_s3_key = :report, updated_at = :now',
+    ExpressionAttributeValues: {
+      ':report': reportKey,
+      ':now': Date.now(),
+    },
   }));
-
-  const item = result.Item;
-  if (!item) return errorResponse(404, 'NOT_FOUND', 'Interview not found');
-  if (!item.report_s3_key) return errorResponse(404, 'NOT_FOUND', 'Report not found or not yet available');
 
   const safeName = item.metadata?.candidate_name?.replace(/[^a-zA-Z0-9]/g, '-') || 'Candidate';
   const filename = `interview-report-${safeName}.pdf`;
 
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
-    Key: item.report_s3_key,
+    Key: reportKey,
     ResponseContentDisposition: `attachment; filename="${filename}"`
   });
 
   const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
   
   return successResponse({ download_url: url });
+}
+
+async function createMom(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const result = CreateMomSchema.safeParse(body);
+
+  if (!result.success) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', result.error.format());
+  }
+
+  const momId = uuidv4();
+  const now = Date.now();
+  const item = {
+    mom_id: momId,
+    owner_user_id: userId,
+    status: 'CREATED',
+    created_at: now,
+    updated_at: now,
+    title: result.data.title,
+    source_type: result.data.source_type,
+  };
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: MOM_TABLE_NAME,
+    Item: item,
+  }));
+
+  return createdResponse({ mom_id: momId });
+}
+
+async function listMoms(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: MOM_TABLE_NAME,
+    FilterExpression: 'owner_user_id = :owner',
+    ExpressionAttributeValues: { ':owner': userId },
+    Limit: 50,
+  }));
+
+  const items = (result.Items || [])
+    .map(item => ({
+      mom_id: item.mom_id,
+      status: item.status,
+      title: item.title || 'Untitled meeting',
+      source_type: item.source_type || 'file',
+      created_at: item.created_at || item.updated_at || 0,
+      updated_at: item.updated_at || item.created_at || 0,
+      error_message: item.error_message,
+    }))
+    .filter(item => item.mom_id);
+
+  return successResponse({
+    items,
+    count: items.length,
+    last_evaluated_key: result.LastEvaluatedKey ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64') : null,
+  });
+}
+
+async function getMom(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomRecord(id, event);
+  if (response) return response;
+
+  return successResponse({
+    mom_id: item.mom_id,
+    status: item.status,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    title: item.title || 'Untitled meeting',
+    source_type: item.source_type || 'file',
+    transcript_uploaded: !!item.transcript_s3_key,
+    transcript_s3_key: item.transcript_s3_key,
+    result_s3_key: item.result_s3_key,
+    report_s3_key: item.report_s3_key,
+    error: item.error_message ? { message: item.error_message } : null,
+  });
+}
+
+async function getMomUploadUrl(id: string | undefined, event: APIGatewayProxyEvent) {
+  const owned = await getOwnedMomRecord(id, event);
+  if (owned.response) return owned.response;
+  const userId = owned.userId!;
+
+  const body = JSON.parse(event.body || '{}');
+  const result = MomUploadUrlSchema.safeParse(body);
+
+  if (!result.success) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', result.error.format());
+  }
+
+  const { file_name, content_type } = result.data;
+  const extension = file_name.split('.').pop();
+  const allowedExtensions = ['txt', 'pdf', 'docx'];
+  if (!extension || !allowedExtensions.includes(extension.toLowerCase())) {
+    return errorResponse(400, 'VALIDATION_ERROR', `Unsupported file extension: .${extension}`);
+  }
+
+  const s3Key = `${userMomPrefix(userId, id!)}/uploads/transcript-${Date.now()}.${extension}`;
+  const uploadUrl = await getPresignedUploadUrl(BUCKET_NAME, s3Key, content_type);
+
+  return successResponse({
+    upload_url: uploadUrl,
+    s3_key: s3Key,
+    file_type: 'transcript',
+  });
+}
+
+async function confirmMomUpload(id: string | undefined, event: APIGatewayProxyEvent) {
+  const owned = await getOwnedMomRecord(id, event);
+  if (owned.response) return owned.response;
+  const userId = owned.userId!;
+
+  const body = JSON.parse(event.body || '{}');
+  const result = ConfirmMomUploadSchema.safeParse(body);
+
+  if (!result.success) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', result.error.format());
+  }
+
+  const { s3_key } = result.data;
+  const expectedPrefix = `${userMomPrefix(userId, id!)}/uploads/`;
+  if (!s3_key.startsWith(expectedPrefix)) {
+    return errorResponse(403, 'ACCESS_DENIED', 'Upload key does not belong to this user');
+  }
+
+  try {
+    await s3Client.send(new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: s3_key,
+    }));
+  } catch {
+    return errorResponse(404, 'UPLOAD_ERROR', 'File not found in storage. Please upload first.');
+  }
+
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id! },
+    UpdateExpression: 'SET transcript_s3_key = :key, #st = :status, updated_at = :now, result_s3_key = :null, report_s3_key = :null, error_message = :null',
+    ExpressionAttributeNames: { '#st': 'status' },
+    ExpressionAttributeValues: {
+      ':key': s3_key,
+      ':status': 'CREATED',
+      ':now': Date.now(),
+      ':null': null,
+    },
+  }));
+
+  return successResponse({ status: 'CREATED' });
+}
+
+async function runMomAnalysis(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomRecord(id, event);
+  if (response) return response;
+
+  if (!item.transcript_s3_key) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'A transcript must be uploaded before MOM analysis.');
+  }
+
+  try {
+    await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: item.transcript_s3_key }));
+  } catch {
+    return errorResponse(400, 'UPLOAD_ERROR', 'Transcript file is missing in storage. Please upload again.');
+  }
+
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id! },
+    UpdateExpression: 'SET #st = :status, updated_at = :now, error_message = :null',
+    ExpressionAttributeNames: { '#st': 'status' },
+    ExpressionAttributeValues: {
+      ':status': 'PROCESSING',
+      ':now': Date.now(),
+      ':null': null,
+    },
+  }));
+
+  await sqsClient.send(new SendMessageCommand({
+    QueueUrl: MOM_QUEUE_URL,
+    MessageBody: JSON.stringify({ mom_id: id, owner_user_id: item.owner_user_id }),
+  }));
+
+  return acceptedResponse({ status: 'PROCESSING' });
+}
+
+async function getMomResult(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomRecord(id, event);
+  if (response) return response;
+
+  if (!item.result_s3_key) {
+    return errorResponse(404, 'NOT_FOUND', 'MOM result not found or not yet available');
+  }
+
+  try {
+    await s3Client.send(new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: item.result_s3_key,
+    }));
+  } catch {
+    return errorResponse(404, 'NOT_FOUND', 'Result file missing in storage');
+  }
+
+  const jsonContent = await getFileContent(BUCKET_NAME, item.result_s3_key);
+  return successResponse(JSON.parse(jsonContent));
+}
+
+async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomRecord(id, event);
+  if (response) return response;
+
+  if (!item.result_s3_key) {
+    return errorResponse(404, 'NOT_FOUND', 'MOM result not found or not yet available');
+  }
+
+  const jsonContent = await getFileContent(BUCKET_NAME, item.result_s3_key);
+  const parsed = JSON.parse(jsonContent);
+  const validation = MomResultSchema.safeParse(parsed);
+  if (!validation.success) {
+    return errorResponse(500, 'INTERNAL_ERROR', 'Stored MOM result could not be converted to PDF');
+  }
+
+  const reportKey = item.report_s3_key || `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
+  const pdfReport = await generateMomPdfReport(validation.data);
+  await saveFileContent(BUCKET_NAME, reportKey, pdfReport, 'application/pdf');
+
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id! },
+    UpdateExpression: 'SET report_s3_key = :report, updated_at = :now',
+    ExpressionAttributeValues: {
+      ':report': reportKey,
+      ':now': Date.now(),
+    },
+  }));
+
+  const safeName = (item.title || 'mom-report').replace(/[^a-zA-Z0-9]/g, '-');
+  const command = new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: reportKey,
+    ResponseContentDisposition: `attachment; filename="mom-report-${safeName}.pdf"`,
+  });
+
+  const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+  return successResponse({ download_url: url });
+}
+
+async function deleteMom(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomRecord(id, event);
+  if (response) return response;
+
+  const keysToDelete = [
+    item.transcript_s3_key,
+    item.result_s3_key,
+    item.report_s3_key,
+  ].filter(Boolean);
+
+  await Promise.all(keysToDelete.map(async (key) => {
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+      }));
+    } catch (err) {
+      console.warn(`Failed to delete S3 object ${key} (might already be gone):`, err);
+    }
+  }));
+
+  await ddbDocClient.send(new DeleteCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id! },
+  }));
+
+  return successResponse({ message: 'MOM deleted successfully' });
 }
 
 // --- NEW User Preference Handlers ---
@@ -552,7 +934,8 @@ async function getUserPreferences(event: APIGatewayProxyEvent) {
   }));
 
   return successResponse({
-    tour_completed: result.Item?.tour_completed === true
+    tour_completed: result.Item?.tour_completed === true,
+    completed_tours: result.Item?.completed_tours || {},
   });
 }
 
@@ -561,14 +944,29 @@ async function updateUserPreferences(event: APIGatewayProxyEvent) {
   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
 
   const body = JSON.parse(event.body || '{}');
-  const { tour_completed } = body;
+  const { tour_completed, tour_key, completed_tours } = body;
+
+  const existing = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `USER#${userId}`, SK: 'PREFERENCES' },
+  }));
+
+  const mergedTours = {
+    ...(existing.Item?.completed_tours || {}),
+    ...(completed_tours || {}),
+  };
+
+  if (typeof tour_key === 'string' && tour_key.trim()) {
+    mergedTours[tour_key.trim()] = true;
+  }
 
   await ddbDocClient.send(new PutCommand({
     TableName: TABLE_NAME,
     Item: {
       PK: `USER#${userId}`,
       SK: 'PREFERENCES',
-      tour_completed: tour_completed === true,
+      tour_completed: tour_completed === true || existing.Item?.tour_completed === true,
+      completed_tours: mergedTours,
       updated_at: Date.now(),
     },
   }));

@@ -11,7 +11,7 @@ export function Topbar() {
     : '';
 
   return (
-    <header className="h-14 border-b border-border bg-surface-elevated flex items-center justify-between px-6 flex-shrink-0 sticky top-0 z-10">
+    <header className="h-14 border-b border-border bg-surface-elevated/90 backdrop-blur-xl flex items-center justify-between px-6 flex-shrink-0 sticky top-0 z-10">
       <div className="flex items-center gap-4">
         <span className="text-sm font-medium text-text-secondary">
           {pageTitle}
