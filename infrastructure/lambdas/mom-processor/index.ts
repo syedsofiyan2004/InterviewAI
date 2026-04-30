@@ -61,7 +61,9 @@ async function runMomPipeline(id: string) {
   const result = await analyzeTranscript(item.title || 'Untitled meeting', transcript);
   const resultS3Key = `users/${item.owner_user_id}/moms/${id}/processed/result.json`;
   const reportS3Key = `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
-  const pdfReport = await generateMomPdfReport(result);
+  const pdfReport = await generateMomPdfReport(result, {
+    projectTitle: item.project_title || 'General',
+  });
 
   await saveFileContent(BUCKET_NAME, resultS3Key, JSON.stringify(result, null, 2));
   await saveFileContent(BUCKET_NAME, reportS3Key, pdfReport, 'application/pdf');
@@ -69,6 +71,8 @@ async function runMomPipeline(id: string) {
     result_s3_key: resultS3Key,
     report_s3_key: reportS3Key,
     title: result.title || item.title,
+    meeting_date: result.date || 'Not specified',
+    meeting_date_sort: parseMeetingDateToEpoch(result.date),
     error_message: null,
   });
 }
@@ -81,7 +85,7 @@ Analyze the transcript for facts, commitments, risks, blockers, owners, dates, a
 Return valid JSON only. The JSON must exactly match this shape:
 {
   "title": "string",
-  "date": "string",
+  "date": "YYYY-MM-DD or Not specified",
   "attendees": ["string"],
   "agenda_items": ["string"],
   "discussion_points": [
@@ -101,7 +105,8 @@ Return valid JSON only. The JSON must exactly match this shape:
 
 Rules:
 - Use the user-provided meeting title unless the transcript clearly gives a better title.
-- Use "Not specified" when a date, owner, role, agenda item, or field is unknown.
+- Use the date when the meeting was held for "date". Return it as YYYY-MM-DD when it is clearly stated; use "Not specified" when the meeting date is unknown.
+- Use "Not specified" when an owner, role, agenda item, or field is unknown.
 - Do not invent facts, deadlines, owners, attendees, costs, decisions, tools, or platforms that are not supported by the transcript.
 - Preserve important names, dates, products, cloud services, costs, environment names, and delivery commitments exactly when they are mentioned.
 - Keep "overall_summary" to 3-5 crisp sentences that explain what happened, why it matters, and the current state.
@@ -180,4 +185,20 @@ function normalizeText(value: string): string {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function parseMeetingDateToEpoch(value: string | undefined): number | null {
+  if (!value || value.trim().toLowerCase() === 'not specified') return null;
+
+  const trimmed = value.trim();
+  const isoMatch = trimmed.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return Date.UTC(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return null;
+  const date = new Date(parsed);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }

@@ -187,7 +187,10 @@ export class IepStack extends cdk.Stack {
 
     momTable.grantReadWriteData(momProcessor);
     filesBucket.grantReadWrite(momProcessor);
-    momProcessor.addEventSource(new SqsEventSource(momQueue));
+    momProcessor.addEventSource(new SqsEventSource(momQueue, {
+      batchSize: 1,
+      maxConcurrency: 20,
+    }));
     momProcessor.addToRolePolicy(bedrockPolicy);
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
@@ -245,10 +248,13 @@ export class IepStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     };
 
+    const apiHandlerIntegration = new apigateway.LambdaIntegration(apiHandler, {
+      allowTestInvoke: false,
+    });
 
     const interviewsSource = api.root.addResource('interviews');
-    interviewsSource.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
-    interviewsSource.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    interviewsSource.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    interviewsSource.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const singleInterview = interviewsSource.addResource('{id}', {
       defaultCorsPreflightOptions: {
@@ -258,27 +264,41 @@ export class IepStack extends cdk.Stack {
       }
     });
 
-    singleInterview.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
-    singleInterview.addMethod('DELETE', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    singleInterview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleInterview.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
     
     const uploadUrl = singleInterview.addResource('upload-url');
-    uploadUrl.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    uploadUrl.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const confirmUpload = singleInterview.addResource('confirm-upload');
-    confirmUpload.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    confirmUpload.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const analyze = singleInterview.addResource('analyze');
-    analyze.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    analyze.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const result = singleInterview.addResource('result');
-    result.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    result.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const report = singleInterview.addResource('report');
-    report.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    report.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const moms = api.root.addResource('moms');
-    moms.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
-    moms.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    moms.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    moms.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const momProjects = api.root.addResource('mom-projects');
+    momProjects.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    momProjects.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const singleMomProject = momProjects.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleMomProject.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleMomProject.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
 
     const singleMom = moms.addResource('{id}', {
       defaultCorsPreflightOptions: {
@@ -288,29 +308,29 @@ export class IepStack extends cdk.Stack {
       }
     });
 
-    singleMom.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
-    singleMom.addMethod('DELETE', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    singleMom.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleMom.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
 
     const momUploadUrl = singleMom.addResource('upload-url');
-    momUploadUrl.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    momUploadUrl.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const momConfirmUpload = singleMom.addResource('confirm-upload');
-    momConfirmUpload.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    momConfirmUpload.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const momAnalyze = singleMom.addResource('analyze');
-    momAnalyze.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    momAnalyze.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const momResult = singleMom.addResource('result');
-    momResult.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    momResult.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const momReport = singleMom.addResource('report');
-    momReport.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    momReport.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     // --- NEW User Preference Routes ---
     const user = api.root.addResource('user');
     const preferences = user.addResource('preferences');
-    preferences.addMethod('GET', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
-    preferences.addMethod('POST', new apigateway.LambdaIntegration(apiHandler), authMethodOptions);
+    preferences.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    preferences.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
 
     // Outputs

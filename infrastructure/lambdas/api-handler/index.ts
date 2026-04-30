@@ -31,6 +31,7 @@ import {
 } from '../../schema';
 import {
   ConfirmMomUploadSchema,
+  CreateMomProjectSchema,
   CreateMomSchema,
   MomResultSchema,
   MomUploadUrlSchema
@@ -68,6 +69,22 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'GET' && resource === '/moms') {
       return await listMoms(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/mom-projects') {
+      return await createMomProject(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/mom-projects') {
+      return await listMomProjects(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/mom-projects/{id}') {
+      return await getMomProject(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'DELETE' && resource === '/mom-projects/{id}') {
+      return await deleteMomProject(pathParameters?.id, event);
     }
 
     if (httpMethod === 'GET' && resource === '/moms/{id}') {
@@ -155,6 +172,10 @@ function userMomPrefix(userId: string, momId: string): string {
   return `users/${userId}/moms/${momId}`;
 }
 
+function momProjectKey(projectId: string): string {
+  return `PROJECT#${projectId}`;
+}
+
 function isOwnedBy(item: any, userId: string): boolean {
   return item?.owner_user_id === userId;
 }
@@ -208,6 +229,33 @@ async function getOwnedMomRecord(id: string | undefined, event: APIGatewayProxyE
 
   if (!isOwnedBy(item, userId)) {
     return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this MOM') };
+  }
+
+  return { item, userId };
+}
+
+async function getOwnedMomProjectRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: momProjectKey(id) },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'MOM project not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this MOM project') };
   }
 
   return { item, userId };
@@ -646,6 +694,189 @@ async function getInterviewReport(id: string | undefined, event: APIGatewayProxy
   return successResponse({ download_url: url });
 }
 
+async function createMomProject(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const result = CreateMomProjectSchema.safeParse(body);
+
+  if (!result.success) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', result.error.format());
+  }
+
+  const existing = await ddbDocClient.send(new ScanCommand({
+    TableName: MOM_TABLE_NAME,
+    FilterExpression: 'owner_user_id = :owner AND item_type = :type',
+    ExpressionAttributeValues: {
+      ':owner': userId,
+      ':type': 'PROJECT',
+    },
+    Limit: 100,
+  }));
+
+  const normalizedTitle = result.data.project_title.trim().toLowerCase();
+  const existingProject = (existing.Items || []).find((item) =>
+    (item.project_title || '').trim().toLowerCase() === normalizedTitle
+  );
+
+  if (existingProject?.project_id) {
+    return successResponse({
+      project_id: existingProject.project_id,
+      project_title: existingProject.project_title || result.data.project_title,
+    });
+  }
+
+  const projectId = uuidv4();
+  const now = Date.now();
+  const item = {
+    mom_id: momProjectKey(projectId),
+    project_id: projectId,
+    item_type: 'PROJECT',
+    owner_user_id: userId,
+    project_title: result.data.project_title,
+    created_at: now,
+    updated_at: now,
+  };
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: MOM_TABLE_NAME,
+    Item: item,
+  }));
+
+  return createdResponse({
+    project_id: projectId,
+    project_title: result.data.project_title,
+  });
+}
+
+async function listMomProjects(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: MOM_TABLE_NAME,
+    FilterExpression: 'owner_user_id = :owner',
+    ExpressionAttributeValues: { ':owner': userId },
+    Limit: 200,
+  }));
+
+  const projects = new Map<string, any>();
+  const momCounts = new Map<string, { count: number; completed: number; updated_at: number }>();
+
+  (result.Items || []).forEach((item) => {
+    if (item.item_type === 'PROJECT') {
+      projects.set(item.project_id, {
+        project_id: item.project_id,
+        project_title: item.project_title || 'Untitled project',
+        created_at: item.created_at || item.updated_at || 0,
+        updated_at: item.updated_at || item.created_at || 0,
+        mom_count: 0,
+        completed_count: 0,
+      });
+      return;
+    }
+
+    if (!item.mom_id || item.mom_id?.startsWith('PROJECT#')) return;
+    const key = item.project_id || `TITLE#${item.project_title || 'General'}`;
+    const current = momCounts.get(key) || { count: 0, completed: 0, updated_at: 0 };
+    current.count += 1;
+    if (item.status === 'COMPLETED') current.completed += 1;
+    current.updated_at = Math.max(current.updated_at, item.updated_at || item.created_at || 0);
+    momCounts.set(key, current);
+
+    if (!item.project_id && !projects.has(key)) {
+      projects.set(key, {
+        project_id: null,
+        project_title: item.project_title || 'General',
+        created_at: item.created_at || item.updated_at || 0,
+        updated_at: item.updated_at || item.created_at || 0,
+        mom_count: 0,
+        completed_count: 0,
+      });
+    }
+  });
+
+  for (const [key, counts] of momCounts.entries()) {
+    const project = projects.get(key);
+    if (project) {
+      project.mom_count = counts.count;
+      project.completed_count = counts.completed;
+      project.updated_at = Math.max(project.updated_at || 0, counts.updated_at);
+    }
+  }
+
+  const items = [...projects.values()]
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+
+  return successResponse({
+    items,
+    count: items.length,
+  });
+}
+
+async function getMomProject(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedMomProjectRecord(id, event);
+  if (response) return response;
+
+  return successResponse({
+    project_id: item.project_id,
+    project_title: item.project_title || 'Untitled project',
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+async function deleteMomProject(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item: project, response, userId } = await getOwnedMomProjectRecord(id, event);
+  if (response) return response;
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: MOM_TABLE_NAME,
+    FilterExpression: 'owner_user_id = :owner',
+    ExpressionAttributeValues: { ':owner': userId },
+    Limit: 200,
+  }));
+
+  const projectMoms = (result.Items || []).filter((item) =>
+    item.item_type !== 'PROJECT' &&
+    !item.mom_id?.startsWith('PROJECT#') &&
+    item.project_id === id
+  );
+
+  const keysToDelete = projectMoms.flatMap((item) => [
+    item.transcript_s3_key,
+    item.result_s3_key,
+    item.report_s3_key,
+  ]).filter(Boolean);
+
+  await Promise.all(keysToDelete.map(async (key) => {
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+      }));
+    } catch (err) {
+      console.warn(`Failed to delete S3 object ${key} (might already be gone):`, err);
+    }
+  }));
+
+  await Promise.all(projectMoms.map((mom) => ddbDocClient.send(new DeleteCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: mom.mom_id },
+  }))));
+
+  await ddbDocClient.send(new DeleteCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: project.mom_id },
+  }));
+
+  return successResponse({
+    message: 'MOM project deleted successfully',
+    deleted_moms: projectMoms.length,
+  });
+}
+
 async function createMom(event: APIGatewayProxyEvent) {
   const userId = getAuthenticatedUserId(event);
   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
@@ -659,14 +890,34 @@ async function createMom(event: APIGatewayProxyEvent) {
 
   const momId = uuidv4();
   const now = Date.now();
+  let projectId = result.data.project_id || null;
+  let projectTitle = result.data.project_title || 'General';
+
+  if (projectId) {
+    const project = await ddbDocClient.send(new GetCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: momProjectKey(projectId) },
+    }));
+    if (!project.Item) return errorResponse(404, 'NOT_FOUND', 'MOM project not found');
+    if (!isOwnedBy(project.Item, userId)) {
+      return errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this MOM project');
+    }
+    projectTitle = project.Item.project_title || projectTitle;
+  }
+
   const item = {
     mom_id: momId,
     owner_user_id: userId,
+    item_type: 'MOM',
     status: 'CREATED',
     created_at: now,
     updated_at: now,
     title: result.data.title,
+    project_id: projectId,
+    project_title: projectTitle,
     source_type: result.data.source_type,
+    source_file_name: result.data.source_file_name || null,
+    source_last_modified: result.data.source_last_modified || null,
   };
 
   await ddbDocClient.send(new PutCommand({
@@ -689,11 +940,18 @@ async function listMoms(event: APIGatewayProxyEvent) {
   }));
 
   const items = (result.Items || [])
+    .filter(item => item.item_type !== 'PROJECT' && !item.mom_id?.startsWith('PROJECT#'))
     .map(item => ({
       mom_id: item.mom_id,
       status: item.status,
       title: item.title || 'Untitled meeting',
+      project_id: item.project_id || null,
+      project_title: item.project_title || 'General',
       source_type: item.source_type || 'file',
+      source_file_name: item.source_file_name || null,
+      source_last_modified: item.source_last_modified || null,
+      meeting_date: item.meeting_date || null,
+      meeting_date_sort: item.meeting_date_sort || null,
       created_at: item.created_at || item.updated_at || 0,
       updated_at: item.updated_at || item.created_at || 0,
       error_message: item.error_message,
@@ -717,7 +975,13 @@ async function getMom(id: string | undefined, event: APIGatewayProxyEvent) {
     created_at: item.created_at,
     updated_at: item.updated_at,
     title: item.title || 'Untitled meeting',
+    project_id: item.project_id || null,
+    project_title: item.project_title || 'General',
     source_type: item.source_type || 'file',
+    source_file_name: item.source_file_name || null,
+    source_last_modified: item.source_last_modified || null,
+    meeting_date: item.meeting_date || null,
+    meeting_date_sort: item.meeting_date_sort || null,
     transcript_uploaded: !!item.transcript_s3_key,
     transcript_s3_key: item.transcript_s3_key,
     result_s3_key: item.result_s3_key,
@@ -869,7 +1133,9 @@ async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent)
   }
 
   const reportKey = item.report_s3_key || `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
-  const pdfReport = await generateMomPdfReport(validation.data);
+  const pdfReport = await generateMomPdfReport(validation.data, {
+    projectTitle: item.project_title || 'General',
+  });
   await saveFileContent(BUCKET_NAME, reportKey, pdfReport, 'application/pdf');
 
   await ddbDocClient.send(new UpdateCommand({
@@ -882,11 +1148,12 @@ async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent)
     },
   }));
 
+  const safeProject = (item.project_title || 'General').replace(/[^a-zA-Z0-9]/g, '-');
   const safeName = (item.title || 'mom-report').replace(/[^a-zA-Z0-9]/g, '-');
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
     Key: reportKey,
-    ResponseContentDisposition: `attachment; filename="mom-report-${safeName}.pdf"`,
+    ResponseContentDisposition: `attachment; filename="mom-report-${safeProject}-${safeName}.pdf"`,
   });
 
   const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });

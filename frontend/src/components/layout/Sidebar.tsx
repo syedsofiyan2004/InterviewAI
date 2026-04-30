@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CalendarClock, Home, LayoutDashboard, ListChecks, PlusCircle, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
+import { FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -23,8 +23,8 @@ const navSections = [
   {
     name: 'MOM Analyzer',
     items: [
-      { name: 'MOMs', href: '/mom', icon: ListChecks },
-      { name: 'New MOM', href: '/mom/new', icon: CalendarClock },
+      { name: 'Projects', href: '/mom', icon: ListChecks },
+      { name: 'New Project', href: '/mom/new', icon: FolderPlus },
     ],
   },
 ];
@@ -67,6 +67,7 @@ export function Sidebar() {
       
       <nav className="flex-1 px-3 py-6 space-y-6">
         <Link
+          id="tour-nav-home"
           href="/"
           className={cn(
             "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group text-sm font-medium",
@@ -91,6 +92,7 @@ export function Sidebar() {
 
                 return (
                   <Link
+                    id={`tour-nav-${item.href.replace(/\W+/g, '-').replace(/^-|-$/g, '') || 'home'}`}
                     key={item.name}
                     href={item.href}
                     className={cn(

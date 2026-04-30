@@ -9,9 +9,17 @@ export const MomStatus = z.enum([
 
 export type MomStatus = z.infer<typeof MomStatus>;
 
+export const CreateMomProjectSchema = z.object({
+  project_title: z.string().trim().min(1).max(120),
+});
+
 export const CreateMomSchema = z.object({
   title: z.string().trim().min(1).max(160),
+  project_id: z.string().uuid().optional(),
+  project_title: z.string().trim().min(1).max(120).optional(),
   source_type: z.enum(['file', 'text']),
+  source_file_name: z.string().trim().min(1).max(240).optional(),
+  source_last_modified: z.number().int().positive().optional(),
 });
 
 export const MomUploadUrlSchema = z.object({
@@ -32,7 +40,12 @@ export const MomRecordSchema = z.object({
   created_at: z.number(),
   updated_at: z.number(),
   title: z.string(),
+  project_title: z.string(),
   source_type: z.enum(['file', 'text']),
+  source_file_name: z.string().optional(),
+  source_last_modified: z.number().optional(),
+  meeting_date: z.string().optional(),
+  meeting_date_sort: z.number().nullable().optional(),
   transcript_s3_key: z.string().optional(),
   result_s3_key: z.string().optional(),
   report_s3_key: z.string().optional(),

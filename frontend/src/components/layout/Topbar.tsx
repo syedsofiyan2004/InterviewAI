@@ -21,7 +21,9 @@ export function Topbar() {
       <div className="flex items-center gap-2">
         <button
           onClick={() => {
-            localStorage.removeItem('minfy_tour_done');
+            Object.keys(localStorage)
+              .filter((key) => key.startsWith('minfy_tour_done'))
+              .forEach((key) => localStorage.removeItem(key));
             window.location.reload();
           }}
           className="p-1.5 rounded-md text-text-muted hover:text-accent transition-colors"

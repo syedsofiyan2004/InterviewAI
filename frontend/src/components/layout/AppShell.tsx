@@ -8,6 +8,7 @@ import { Topbar } from './Topbar';
 import { useAuth } from '@/contexts/AuthContext';
 
 import { TourProvider } from '@/contexts/TourContext';
+import { useTour, checkTourStatus } from '@/contexts/TourContext';
 import { TourOverlay } from '@/components/ui/TourOverlay';
 
 const PUBLIC_PATHS = ['/login'];
@@ -71,7 +72,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </div>
+      <AppOnboardingTour />
       <TourOverlay />
     </TourProvider>
   );
+}
+
+function AppOnboardingTour() {
+  const pathname = usePathname();
+  const { startTour, isActive } = useTour();
+
+  useEffect(() => {
+    if (isActive) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const done = await checkTourStatus('app-overview');
+      if (done || cancelled) return;
+
+      startTour([
+        {
+          targetId: 'tour-nav-home',
+          title: 'Your work hub',
+          body: 'Start here to choose between interview evaluation and meeting minutes analysis.',
+          position: 'right',
+        },
+        {
+          targetId: 'tour-nav-interviews',
+          title: 'Interview Evaluator',
+          body: 'Open evaluations to score candidates, review evidence, and download interview reports.',
+          position: 'right',
+        },
+        {
+          targetId: 'tour-nav-interviews-new',
+          title: 'Create an evaluation',
+          body: 'Use this when you want to upload a transcript, job description, and optional resume for a new candidate.',
+          position: 'right',
+        },
+        {
+          targetId: 'tour-nav-mom',
+          title: 'MOM projects',
+          body: 'Open project workspaces to keep meeting reports grouped by project.',
+          position: 'right',
+        },
+        {
+          targetId: 'tour-nav-mom-new',
+          title: 'Create a MOM project',
+          body: 'Create a project first, then add one transcript or bulk upload meeting files inside that project.',
+          position: 'right',
+        },
+      ], 'app-overview');
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [pathname, startTour, isActive]);
+
+  return null;
 }
