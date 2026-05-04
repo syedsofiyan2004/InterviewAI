@@ -163,6 +163,14 @@ export interface TfJobFile {
   content: string;
 }
 
+export interface TfGithubPullRequest {
+  repository: string;
+  branch: string;
+  commit_url: string;
+  pull_request_url?: string | null;
+  pull_request_number?: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Auth-aware fetch — attaches the Cognito ID token to every API call.
 // CognitoUserPoolsAuthorizer validates the ID token (not the access token).
@@ -388,6 +396,22 @@ export const api = {
   async runTfApply(id: string): Promise<TfJob> {
     const res = await authFetch(`${API_URL}/tf-jobs/${id}/apply`, {
       method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async createTfGithubPullRequest(data: {
+    repository_url: string;
+    branch: string;
+    github_token: string;
+    deployment_name: string;
+    primary_region: string;
+    files: TfJobFile[];
+  }): Promise<TfGithubPullRequest> {
+    const res = await authFetch(`${API_URL}/tf-github-pr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
     });
     return handleResponse(res);
   },

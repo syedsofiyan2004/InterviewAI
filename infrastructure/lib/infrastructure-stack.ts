@@ -411,6 +411,9 @@ export class IepStack extends cdk.Stack {
     const tfApply = singleTfJob.addResource('apply');
     tfApply.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
+    const tfGithubPr = api.root.addResource('tf-github-pr');
+    tfGithubPr.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
     // --- NEW User Preference Routes ---
     const user = api.root.addResource('user');
     const preferences = user.addResource('preferences');

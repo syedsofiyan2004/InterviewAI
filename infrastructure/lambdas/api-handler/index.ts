@@ -57,6 +57,11 @@ interface TfJobFileInput {
   content: string;
 }
 
+interface GithubRepoInfo {
+  owner: string;
+  repo: string;
+}
+
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   const { httpMethod, resource, pathParameters } = event;
@@ -89,6 +94,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/tf-jobs/{id}/apply') {
       return await runTfApply(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-github-pr') {
+      return await createTfGithubPullRequest(event);
     }
 
     if (httpMethod === 'POST' && resource === '/moms') {
@@ -594,6 +603,325 @@ function isTfBuildInFlight(status: string): boolean {
 function sanitizeText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, maxLength);
+}
+
+async function createTfGithubPullRequest(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const token = sanitizeText(body.github_token, 300);
+  const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
+  const branch = sanitizeBranchName(body.branch || 'terraform-network');
+  const baseBranch = sanitizeBranchName(body.base_branch || '');
+  const deploymentName = sanitizeText(body.deployment_name, 120) || 'Terraform network deployment';
+  const primaryRegion = sanitizeText(body.primary_region, 40) || 'us-east-1';
+  const files = Array.isArray(body.files) ? body.files : [];
+
+  if (!token) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'GitHub token is required to create a branch and pull request.');
+  }
+  if (!repoInfo) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Enter a valid GitHub repository URL such as https://github.com/org/repo.');
+  }
+  if (!branch) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Branch name is required.');
+  }
+  if (!files.length || files.length > TF_MAX_FILES) {
+    return errorResponse(400, 'VALIDATION_ERROR', `Upload between 1 and ${TF_MAX_FILES} Terraform files before creating a pull request.`);
+  }
+
+  const normalizedFiles = files.map((file: any) => ({
+    filename: sanitizeText(file?.filename, 120),
+    content: typeof file?.content === 'string' ? file.content : '',
+  }));
+  const invalidFile = normalizedFiles.find((file: TfJobFileInput) => !TF_FILE_NAME_PATTERN.test(file.filename) || !file.content.trim());
+  if (invalidFile) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Only non-empty .tf files with simple file names are accepted.');
+  }
+
+  const packageFiles = buildGithubTerraformPackage(normalizedFiles, {
+    deploymentName,
+    primaryRegion,
+  });
+  const result = await pushGithubPullRequest({
+    token,
+    repo: repoInfo,
+    branch,
+    baseBranch,
+    files: packageFiles,
+    deploymentName,
+  });
+
+  return successResponse(result);
+}
+
+function parseGithubRepository(value: string): GithubRepoInfo | null {
+  const trimmed = value.trim().replace(/\.git$/, '');
+  const httpsMatch = trimmed.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)$/i);
+  if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
+
+  const shorthandMatch = trimmed.match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (shorthandMatch) return { owner: shorthandMatch[1], repo: shorthandMatch[2] };
+
+  return null;
+}
+
+function sanitizeBranchName(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/[^a-zA-Z0-9._/-]+/g, '-')
+    .replace(/\/+/g, '/')
+    .replace(/^[-/.]+|[-/.]+$/g, '')
+    .slice(0, 120);
+}
+
+function buildGithubTerraformPackage(files: TfJobFileInput[], context: { deploymentName: string; primaryRegion: string }): TfJobFileInput[] {
+  const environmentPath = 'environments/network';
+  const transformedTerraformFiles = files.map((file) => ({
+    filename: `${environmentPath}/${file.filename}`,
+    content: terraformFileForGithubActions(file),
+  }));
+
+  return [
+    { filename: 'README.md', content: terraformRepoReadme(context.deploymentName) },
+    { filename: '.github/workflows/terraform-plan.yml', content: terraformGithubWorkflow(environmentPath, context.primaryRegion) },
+    { filename: `${environmentPath}/backend.hcl.example`, content: terraformBackendExample() },
+    { filename: `${environmentPath}/terraform.tfvars.example`, content: terraformTfvarsExample(context) },
+    ...transformedTerraformFiles,
+  ];
+}
+
+function providerForGithubActions(content: string): string {
+  return content.replace(/\n\s*assume_role\s*\{\s*\n\s*role_arn\s*=\s*var\.role_arn\s*\n\s*\}\s*\n/g, '\n');
+}
+
+function terraformFileForGithubActions(file: TfJobFileInput): string {
+  if (file.filename === 'provider.tf') return providerForGithubActions(file.content);
+  if (file.filename === 'variables.tf') {
+    return file.content.replace(/variable "role_arn" \{\n\s*type = string\n\}/, 'variable "role_arn" {\n  type    = string\n  default = ""\n}');
+  }
+  return file.content;
+}
+
+function terraformRepoReadme(deploymentName: string): string {
+  return `# ${deploymentName}
+
+Generated by Minfy AI TF Generator.
+
+## Workflow
+
+1. Review the Terraform files under \`environments/network\`.
+2. Configure GitHub Actions with AWS OIDC.
+3. Add repository secrets:
+   - \`AWS_ROLE_TO_ASSUME\`
+   - \`AWS_REGION\`
+   - \`TF_STATE_BUCKET\`
+   - \`TF_STATE_KEY\`
+   - \`TF_STATE_REGION\`
+4. Open a pull request and review the Terraform plan output.
+5. Apply only after approval.
+
+## Notes
+
+- Resource names are preserved from the Excel workbook where the workbook provides names.
+- Existing resources should be imported before apply if they already exist in the target AWS account.
+- Keep backend state in the client AWS account, not in the Minfy platform account.
+`;
+}
+
+function terraformGithubWorkflow(environmentPath: string, fallbackRegion: string): string {
+  return `name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - '${environmentPath}/**'
+      - '.github/workflows/terraform-plan.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${environmentPath}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: \${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: \${{ secrets.AWS_REGION || '${fallbackRegion}' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: |
+          terraform init \\
+            -backend-config="bucket=\${{ secrets.TF_STATE_BUCKET }}" \\
+            -backend-config="key=\${{ secrets.TF_STATE_KEY }}" \\
+            -backend-config="region=\${{ secrets.TF_STATE_REGION }}"
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false
+`;
+}
+
+function terraformBackendExample(): string {
+  return `bucket = "client-terraform-state-bucket"
+key    = "network/terraform.tfstate"
+region = "us-east-1"
+`;
+}
+
+function terraformTfvarsExample(context: { deploymentName: string; primaryRegion: string }): string {
+  return `deployment_name = ${JSON.stringify(context.deploymentName)}
+primary_region  = ${JSON.stringify(context.primaryRegion)}
+environment     = "prod"
+
+common_tags = {
+  ManagedBy   = "Terraform"
+  GeneratedBy = "Minfy AI TF Generator"
+}
+`;
+}
+
+async function pushGithubPullRequest(params: {
+  token: string;
+  repo: GithubRepoInfo;
+  branch: string;
+  baseBranch: string;
+  files: TfJobFileInput[];
+  deploymentName: string;
+}) {
+  const headers = {
+    Authorization: `Bearer ${params.token}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+    'User-Agent': 'Minfy-AI-TF-Generator',
+  };
+
+  const repoPath = `/repos/${encodeURIComponent(params.repo.owner)}/${encodeURIComponent(params.repo.repo)}`;
+  const repo = await githubRequest<any>('GET', repoPath, headers);
+  const baseBranch = params.baseBranch || repo.default_branch;
+  const baseRef = await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(baseBranch)}`, headers);
+  let targetRef = await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(params.branch)}`, headers, undefined, { allowNotFound: true });
+
+  if (!targetRef) {
+    targetRef = await githubRequest<any>('POST', `${repoPath}/git/refs`, headers, {
+      ref: `refs/heads/${params.branch}`,
+      sha: baseRef.object.sha,
+    });
+  }
+
+  const targetCommitSha = targetRef.object.sha;
+  const targetCommit = await githubRequest<any>('GET', `${repoPath}/git/commits/${targetCommitSha}`, headers);
+  const tree = await githubRequest<any>('POST', `${repoPath}/git/trees`, headers, {
+    base_tree: targetCommit.tree.sha,
+    tree: params.files.map((file) => ({
+      path: file.filename,
+      mode: '100644',
+      type: 'blob',
+      content: file.content,
+    })),
+  });
+  const commit = await githubRequest<any>('POST', `${repoPath}/git/commits`, headers, {
+    message: `Add Terraform network package for ${params.deploymentName}`,
+    tree: tree.sha,
+    parents: [targetCommitSha],
+  });
+
+  await githubRequest<any>('PATCH', `${repoPath}/git/refs/heads/${encodeURIComponent(params.branch)}`, headers, {
+    sha: commit.sha,
+    force: false,
+  });
+
+  const pull = await githubRequest<any>('POST', `${repoPath}/pulls`, headers, {
+    title: `Add Terraform network package for ${params.deploymentName}`,
+    head: params.branch,
+    base: baseBranch,
+    body: githubPullRequestBody(params.deploymentName),
+  }, { allowValidationError: true });
+
+  if (pull?.html_url) {
+    return {
+      repository: repo.html_url,
+      branch: params.branch,
+      commit_url: commit.html_url,
+      pull_request_url: pull.html_url,
+      pull_request_number: pull.number,
+    };
+  }
+
+  const existingPulls = await githubRequest<any[]>('GET', `${repoPath}/pulls?head=${encodeURIComponent(`${params.repo.owner}:${params.branch}`)}&base=${encodeURIComponent(baseBranch)}&state=open`, headers);
+  const existingPull = existingPulls?.[0];
+  return {
+    repository: repo.html_url,
+    branch: params.branch,
+    commit_url: commit.html_url,
+    pull_request_url: existingPull?.html_url || null,
+    pull_request_number: existingPull?.number || null,
+  };
+}
+
+function githubPullRequestBody(deploymentName: string): string {
+  return `## Terraform network package
+
+Generated by Minfy AI TF Generator for **${deploymentName}**.
+
+### Review checklist
+
+- [ ] Confirm VPC, subnet, and route table names match the approved workbook.
+- [ ] Confirm CIDR ranges do not overlap existing client networks.
+- [ ] Configure AWS OIDC repository secrets before relying on the plan workflow.
+- [ ] Review Terraform plan output before apply.
+`;
+}
+
+async function githubRequest<T>(
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body?: any,
+  options?: { allowNotFound?: boolean; allowValidationError?: boolean },
+): Promise<T | null> {
+  const response = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  if (options?.allowNotFound && response.status === 404) return null;
+  if (options?.allowValidationError && response.status === 422) return null;
+
+  if (!response.ok) {
+    const error: any = await response.json().catch(() => ({}));
+    const message = error?.message || `GitHub API request failed with ${response.status}`;
+    throw new Error(message);
+  }
+
+  if (response.status === 204) return null;
+  return await response.json() as T;
 }
 
 async function createInterview(event: APIGatewayProxyEvent) {

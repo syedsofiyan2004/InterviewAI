@@ -23,7 +23,8 @@ import {
   Upload,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { api, TfJob } from '@/lib/api';
+import { api } from '@/lib/api';
+import type { TfGithubPullRequest, TfJob } from '@/lib/api';
 import {
   generateTfReviewSummary,
   generateTerraformFiles,
@@ -49,6 +50,10 @@ export default function TfGeneratorPage() {
   const [runnerError, setRunnerError] = useState<string | null>(null);
   const [repoUrl, setRepoUrl] = useState('');
   const [targetBranch, setTargetBranch] = useState('terraform-network');
+  const [githubToken, setGithubToken] = useState('');
+  const [githubLoading, setGithubLoading] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const [githubResult, setGithubResult] = useState<TfGithubPullRequest | null>(null);
 
   const selected = files.find((file) => file.filename === selectedFile) || files[0];
   const hasErrors = messages.some((message) => message.severity === 'error');
@@ -120,6 +125,8 @@ export default function TfGeneratorPage() {
     setRoleArn('');
     setTfJob(null);
     setRunnerError(null);
+    setGithubError(null);
+    setGithubResult(null);
     setFileName(file.name);
 
     try {
@@ -174,6 +181,29 @@ export default function TfGeneratorPage() {
       setRunnerError(err.message || `Unable to ${action} Terraform job`);
     } finally {
       setRunnerLoading(false);
+    }
+  };
+
+  const createGithubPullRequest = async () => {
+    if (!manifest || !files.length) return;
+    setGithubLoading(true);
+    setGithubError(null);
+    setGithubResult(null);
+    try {
+      const result = await api.createTfGithubPullRequest({
+        repository_url: repoUrl.trim(),
+        branch: targetBranch.trim(),
+        github_token: githubToken.trim(),
+        deployment_name: manifest.deployment_name,
+        primary_region: manifest.primary_region,
+        files,
+      });
+      setGithubResult(result);
+      setGithubToken('');
+    } catch (err: any) {
+      setGithubError(err.message || 'Unable to create GitHub pull request');
+    } finally {
+      setGithubLoading(false);
     }
   };
 
@@ -264,6 +294,32 @@ export default function TfGeneratorPage() {
             </label>
           </div>
 
+          <div className="grid gap-4 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_220px]">
+            <label className="block">
+              <span className="text-sm font-semibold text-text-primary">GitHub access token</span>
+              <input
+                value={githubToken}
+                onChange={(event) => setGithubToken(event.target.value)}
+                type="password"
+                placeholder="Fine-grained token with repo write access"
+                className="mt-2 w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+              />
+              <span className="mt-2 block text-xs text-text-muted">Used once to create the branch, commit files, and open the PR. It is not stored.</span>
+            </label>
+
+            <div className="flex items-end">
+              <button
+                type="button"
+                disabled={!files.length || !repoUrl.trim() || !targetBranch.trim() || !githubToken.trim() || githubLoading}
+                onClick={createGithubPullRequest}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground shadow-sm shadow-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {githubLoading ? <RefreshCw size={16} className="animate-spin" /> : <GitBranch size={16} />}
+                Create PR
+              </button>
+            </div>
+          </div>
+
           <div className="px-5 pb-5">
             <div className="rounded-2xl border border-border bg-surface/60 p-4">
               <div className="flex items-start gap-3">
@@ -280,11 +336,37 @@ export default function TfGeneratorPage() {
             </div>
           </div>
 
+          {(githubError || githubResult) && (
+            <div className="px-5 pb-5">
+              {githubError && (
+                <Notice tone="error" title="GitHub PR could not be created" detail={githubError} />
+              )}
+              {githubResult && (
+                <div className="rounded-2xl border border-success/25 bg-success/5 px-4 py-3">
+                  <p className="text-sm font-semibold text-text-primary">Pull request ready</p>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    Branch <span className="font-mono">{githubResult.branch}</span> was updated.
+                  </p>
+                  {githubResult.pull_request_url && (
+                    <a
+                      href={githubResult.pull_request_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
+                    >
+                      Open pull request <ArrowRight size={14} />
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="border-t border-border bg-surface/50 px-5 py-4">
             <div className="grid gap-3 lg:grid-cols-3">
               <DeliveryCheck title="Repository package" detail="Terraform code, backend guidance, variables, and CI workflow." active={!!files.length} />
               <DeliveryCheck title="AWS access" detail="GitHub Actions assumes the client deploy role during plan and apply." active />
-              <DeliveryCheck title="Pull request" detail="PR creation is the next integration step for client repos." active={!!repoUrl.trim()} />
+              <DeliveryCheck title="Pull request" detail="The app creates the branch, commits files, and opens the PR." active={!!githubResult?.pull_request_url} />
             </div>
           </div>
         </div>
@@ -297,7 +379,7 @@ export default function TfGeneratorPage() {
           <div className="mt-5 space-y-3">
             <PathStep index="01" title="Upload Excel" detail="Parse accounts, VPCs, subnet names, CIDRs, NAT flags, and route intent." active={!!manifest} />
             <PathStep index="02" title="Generate repo code" detail="Create Terraform files that preserve workbook resource names." active={!!files.length} />
-            <PathStep index="03" title="Open GitHub PR" detail="Push to the client repo branch and run CI checks." active={false} />
+            <PathStep index="03" title="Open GitHub PR" detail="The app pushes to the client repo branch and opens a PR." active={!!githubResult?.pull_request_url} />
             <PathStep index="04" title="Plan in GitHub Actions" detail="The workflow authenticates to the client AWS account and produces plan output for review." active={false} />
             <PathStep index="05" title="Approve and apply" detail="Apply only after reviewed plan output and explicit approval." active={tfJob?.status === 'APPLY_SUCCEEDED'} />
           </div>
