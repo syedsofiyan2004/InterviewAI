@@ -88,8 +88,14 @@ export class IepStack extends cdk.Stack {
       },
     });
 
+    const terraformRunnerRole = new iam.Role(this, 'TerraformRunnerRole', {
+      roleName: getUniqueName('terraform-runner-role'),
+      assumedBy: new iam.ServicePrincipal('codebuild.amazonaws.com'),
+    });
+
     const terraformRunner = new codebuild.Project(this, 'TerraformRunner', {
       projectName: getUniqueName('terraform-runner'),
+      role: terraformRunnerRole,
       timeout: cdk.Duration.minutes(30),
       concurrentBuildLimit: 2,
       environment: {
@@ -417,6 +423,7 @@ export class IepStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'BucketName', { value: filesBucket.bucketName });
     new cdk.CfnOutput(this, 'TableName', { value: interviewsTable.tableName });
     new cdk.CfnOutput(this, 'MomTableName', { value: momTable.tableName });
+    new cdk.CfnOutput(this, 'TerraformRunnerRoleArn', { value: terraformRunnerRole.roleArn });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
 

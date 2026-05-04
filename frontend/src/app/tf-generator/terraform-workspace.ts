@@ -416,14 +416,13 @@ variable "common_tags" {
 function vpcTf(manifest: TfManifest) {
   return manifest.vpcs.map((vpc) => {
     const id = tfId(vpc.logical_name);
-    const name = resourceName(manifest, 'vpc', vpc.logical_name);
     return `resource "aws_vpc" "${id}" {
   cidr_block           = ${hclString(vpc.cidr)}
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   tags = merge(var.common_tags, {
-    Name = ${hclString(name)}
+    Name = ${hclString(vpc.logical_name)}
   })
 
   lifecycle {
@@ -437,14 +436,13 @@ function subnetsTf(manifest: TfManifest) {
   return manifest.subnets.map((subnet) => {
     const id = subnetResourceId(subnet);
     const vpcId = tfId(subnet.vpc_logical_name);
-    const name = resourceName(manifest, 'sn', subnet.logical_name);
     return `resource "aws_subnet" "${id}" {
   vpc_id            = aws_vpc.${vpcId}.id
   cidr_block        = ${hclString(subnet.cidr)}
   availability_zone = "\${var.primary_region}${subnet.az_label}"
 
   tags = merge(var.common_tags, {
-    Name = ${hclString(name)}
+    Name = ${hclString(subnet.logical_name)}
     Tier = ${hclString(subnet.route_type)}
   })
 
@@ -466,8 +464,8 @@ function routingTf(manifest: TfManifest) {
     const blocks: string[] = [];
 
     if (hasPublic) {
-      const igwName = resourceName(manifest, 'igw', vpc.logical_name);
-      const publicRouteName = resourceName(manifest, 'rt-public', vpc.logical_name);
+      const igwName = derivedAwsName(vpc.logical_name, 'igw');
+      const publicRouteName = derivedAwsName(vpc.logical_name, 'rt-public');
       blocks.push(`resource "aws_internet_gateway" "${id}" {
   vpc_id = aws_vpc.${id}.id
 
@@ -499,8 +497,8 @@ function routingTf(manifest: TfManifest) {
 
     if (shouldCreateNat) {
       const natSubnet = publicSubnets[0];
-      const eipName = resourceName(manifest, 'eip-nat', vpc.logical_name);
-      const natName = resourceName(manifest, 'nat', vpc.logical_name);
+      const eipName = derivedAwsName(vpc.logical_name, 'eip-nat');
+      const natName = derivedAwsName(vpc.logical_name, 'nat');
       blocks.push(`resource "aws_eip" "${id}_nat" {
   domain = "vpc"
 
@@ -524,7 +522,7 @@ function routingTf(manifest: TfManifest) {
     }
 
     if (privateSubnets.length) {
-      const privateRouteName = resourceName(manifest, 'rt-private', vpc.logical_name);
+      const privateRouteName = derivedAwsName(vpc.logical_name, 'rt-private');
       blocks.push(`resource "aws_route_table" "${id}_private" {
   vpc_id = aws_vpc.${id}.id
 ${shouldCreateNat ? `
@@ -654,12 +652,8 @@ function hclString(value: string) {
   return JSON.stringify(value);
 }
 
-function resourceName(manifest: TfManifest, type: string, name: string) {
-  return `${slug(manifest.deployment_name)}-\${var.environment}-${regionShort(manifest.primary_region)}-${type}-${slug(name)}`;
-}
-
-function regionShort(region: string) {
-  return region.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'region';
+function derivedAwsName(baseName: string, suffix: string) {
+  return `${baseName}-${suffix}`;
 }
 
 function slug(value: string) {
