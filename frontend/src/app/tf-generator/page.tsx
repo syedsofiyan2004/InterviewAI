@@ -28,7 +28,7 @@ import {
   TfReviewSummary,
   TfValidationMessage,
   validateTfManifest,
-} from './tf-local';
+} from './terraform-workspace';
 
 export default function TfGeneratorPage() {
   const [manifest, setManifest] = useState<TfManifest | null>(null);
@@ -129,7 +129,7 @@ export default function TfGeneratorPage() {
               Review infrastructure before it reaches AWS.
             </h1>
             <p className="mt-5 max-w-3xl text-base leading-7 text-text-secondary">
-              Convert prerequisite workbooks into a checked network manifest and Terraform files. The local build generates VPC, subnet, routing, and output code only; apply remains locked until plan approval is wired.
+              Convert prerequisite workbooks into a checked network manifest and Terraform files. The workspace generates VPC, subnet, routing, and output code for controlled plan review; apply remains locked until approval is configured.
             </p>
           </div>
 
@@ -140,7 +140,7 @@ export default function TfGeneratorPage() {
                 <p className="mt-2 text-xl font-semibold text-text-primary">{reviewState}</p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${hasErrors ? 'bg-danger/10 text-danger' : files.length ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
-                Local only
+                Production review
               </span>
             </div>
             <div className="mt-5 grid gap-2">
@@ -162,7 +162,7 @@ export default function TfGeneratorPage() {
               </span>
               <div>
                 <h2 className="text-base font-semibold text-text-primary">Workbook intake</h2>
-                <p className="text-xs text-text-muted">Client-side parsing for local testing.</p>
+                <p className="text-xs text-text-muted">Secure browser-side parsing before plan review.</p>
               </div>
             </div>
 
@@ -186,7 +186,7 @@ export default function TfGeneratorPage() {
             </div>
 
             {loading && (
-              <Notice tone="info" title="Parsing workbook" detail="Building the manifest and Terraform preview locally." />
+              <Notice tone="info" title="Parsing workbook" detail="Building the deployment manifest and Terraform review bundle." />
             )}
             {error && (
               <Notice tone="error" title="Workbook could not be parsed" detail={error} />
@@ -198,7 +198,7 @@ export default function TfGeneratorPage() {
                 <div>
                   <p className="text-sm font-semibold text-text-primary">Deployment guardrail</p>
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
-                    This version does not apply infrastructure. Real deployment should require Terraform plan output, role verification, and explicit approval.
+                    Infrastructure apply is locked until Terraform plan output, role verification, and explicit approval are connected to the deployment runner.
                   </p>
                 </div>
               </div>
@@ -303,7 +303,7 @@ export default function TfGeneratorPage() {
                 <Code2 size={18} className="text-accent" />
                 <h2 className="text-base font-semibold text-text-primary">Terraform review</h2>
               </div>
-              <p className="mt-1 text-xs text-text-muted">Generated locally for inspection. No AWS action is executed from this screen.</p>
+              <p className="mt-1 text-xs text-text-muted">Generated for source review. AWS changes require a controlled plan and approval workflow.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button

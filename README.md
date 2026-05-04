@@ -24,11 +24,11 @@ Minfy AI is a secure workspace for interview evaluation and meeting-minutes anal
 
 ### TF Generator
 
-- Upload AWS prerequisite Excel workbooks in a local-first Terraform workspace.
+- Upload AWS prerequisite Excel workbooks in a production review Terraform workspace.
 - Parse account context, VPCs, subnets, NAT intent, and routing intent into a deterministic network manifest.
 - Validate CIDR ranges, overlapping subnets, subnet containment, duplicate Terraform IDs, NAT/public subnet mismatches, and multi-region workbook issues before code generation.
 - Generate reviewable Terraform for VPCs, subnets, Internet Gateways, route tables, route associations, optional NAT Gateway/EIP, variables, locals, provider configuration, and outputs.
-- Download a selected Terraform file or a local bundle for controlled review.
+- Download a selected Terraform file or a review bundle for controlled review.
 - Keep deployment/apply locked until a backend Terraform runner, plan review, and human approval workflow are enabled.
 
 ### Security And Ownership
@@ -61,7 +61,7 @@ flowchart LR
   MomWorker --> S3
 ```
 
-The TF Generator currently runs in the browser as a safe preview and code-review workspace. Cross-account deployment is represented through generated Terraform `assume_role` provider configuration, but real plan/apply execution must be added through a controlled backend runner before production use.
+The TF Generator currently runs as a production review and code-generation workspace. Cross-account deployment is represented through generated Terraform `assume_role` provider configuration, while real plan/apply execution must be added through a controlled backend runner before live infrastructure changes are allowed.
 
 ## Repository Structure
 
