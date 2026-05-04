@@ -12,7 +12,6 @@ import {
   FileCheck2,
   FileSpreadsheet,
   GitBranch,
-  KeyRound,
   LockKeyhole,
   Network,
   Play,
@@ -50,7 +49,6 @@ export default function TfGeneratorPage() {
   const [runnerError, setRunnerError] = useState<string | null>(null);
   const [repoUrl, setRepoUrl] = useState('');
   const [targetBranch, setTargetBranch] = useState('terraform-network');
-  const [awsAuthMode, setAwsAuthMode] = useState<'oidc' | 'secrets'>('oidc');
 
   const selected = files.find((file) => file.filename === selectedFile) || files[0];
   const hasErrors = messages.some((message) => message.severity === 'error');
@@ -266,36 +264,26 @@ export default function TfGeneratorPage() {
             </label>
           </div>
 
-          <div className="grid gap-3 px-5 pb-5 lg:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => setAwsAuthMode('oidc')}
-              className={`rounded-2xl border p-4 text-left transition-colors ${awsAuthMode === 'oidc' ? 'border-accent bg-accent/10' : 'border-border bg-surface/60 hover:bg-surface-elevated'}`}
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={18} className="text-accent" />
-                <p className="text-sm font-semibold text-text-primary">GitHub OIDC</p>
+          <div className="px-5 pb-5">
+            <div className="rounded-2xl border border-border bg-surface/60 p-4">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <ShieldCheck size={18} />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">AWS access is configured in GitHub</p>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    The client repository should use GitHub Actions with AWS OIDC as the default setup. If a client only provides access keys, those can be handled as a controlled admin setup outside this screen.
+                  </p>
+                </div>
               </div>
-              <p className="mt-2 text-xs leading-5 text-text-secondary">Preferred for production. GitHub Actions assumes an AWS role without storing long-lived keys.</p>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setAwsAuthMode('secrets')}
-              className={`rounded-2xl border p-4 text-left transition-colors ${awsAuthMode === 'secrets' ? 'border-accent bg-accent/10' : 'border-border bg-surface/60 hover:bg-surface-elevated'}`}
-            >
-              <div className="flex items-center gap-2">
-                <KeyRound size={18} className="text-accent" />
-                <p className="text-sm font-semibold text-text-primary">GitHub Secrets</p>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-text-secondary">Supported when a client provides access keys. Rotate keys and restrict permissions before use.</p>
-            </button>
+            </div>
           </div>
 
           <div className="border-t border-border bg-surface/50 px-5 py-4">
             <div className="grid gap-3 lg:grid-cols-3">
               <DeliveryCheck title="Repository package" detail="Terraform code, backend guidance, variables, and CI workflow." active={!!files.length} />
-              <DeliveryCheck title="Credentials" detail={awsAuthMode === 'oidc' ? 'AWS_ROLE_TO_ASSUME and AWS_REGION.' : 'AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION.'} active />
+              <DeliveryCheck title="AWS access" detail="GitHub Actions assumes the client deploy role during plan and apply." active />
               <DeliveryCheck title="Pull request" detail="PR creation is the next integration step for client repos." active={!!repoUrl.trim()} />
             </div>
           </div>
@@ -310,7 +298,7 @@ export default function TfGeneratorPage() {
             <PathStep index="01" title="Upload Excel" detail="Parse accounts, VPCs, subnet names, CIDRs, NAT flags, and route intent." active={!!manifest} />
             <PathStep index="02" title="Generate repo code" detail="Create Terraform files that preserve workbook resource names." active={!!files.length} />
             <PathStep index="03" title="Open GitHub PR" detail="Push to the client repo branch and run CI checks." active={false} />
-            <PathStep index="04" title="Plan with AWS auth" detail={awsAuthMode === 'oidc' ? 'GitHub OIDC assumes the client deploy role.' : 'GitHub Actions reads client-provided secrets.'} active={false} />
+            <PathStep index="04" title="Plan in GitHub Actions" detail="The workflow authenticates to the client AWS account and produces plan output for review." active={false} />
             <PathStep index="05" title="Approve and apply" detail="Apply only after reviewed plan output and explicit approval." active={tfJob?.status === 'APPLY_SUCCEEDED'} />
           </div>
         </div>
