@@ -11,6 +11,8 @@ import {
   Download,
   FileCheck2,
   FileSpreadsheet,
+  GitBranch,
+  KeyRound,
   LockKeyhole,
   Network,
   Play,
@@ -46,6 +48,9 @@ export default function TfGeneratorPage() {
   const [tfJob, setTfJob] = useState<TfJob | null>(null);
   const [runnerLoading, setRunnerLoading] = useState(false);
   const [runnerError, setRunnerError] = useState<string | null>(null);
+  const [repoUrl, setRepoUrl] = useState('');
+  const [targetBranch, setTargetBranch] = useState('terraform-network');
+  const [awsAuthMode, setAwsAuthMode] = useState<'oidc' | 'secrets'>('oidc');
 
   const selected = files.find((file) => file.filename === selectedFile) || files[0];
   const hasErrors = messages.some((message) => message.severity === 'error');
@@ -191,10 +196,10 @@ export default function TfGeneratorPage() {
             </div>
 
             <h1 className="mt-7 max-w-4xl text-[clamp(34px,5vw,64px)] font-semibold leading-[0.98] tracking-tight text-text-primary">
-              Review infrastructure before it reaches AWS.
+              Prepare Terraform for client GitHub delivery.
             </h1>
             <p className="mt-5 max-w-3xl text-base leading-7 text-text-secondary">
-              Convert prerequisite workbooks into a checked network manifest and Terraform files. The workspace generates VPC, subnet, routing, and output code for controlled plan review.
+              Convert prerequisite workbooks into reviewed Terraform, then move it through a client-owned repository, GitHub Actions, AWS authentication, plan review, and approved apply.
             </p>
           </div>
 
@@ -211,9 +216,102 @@ export default function TfGeneratorPage() {
             <div className="mt-5 grid gap-2">
               <FlowItem active={!!manifest} label="Workbook" value={intakeState} />
               <FlowItem active={!!messages.length && !hasErrors} warning={hasWarnings} label="Validation" value={messages.length ? `${messages.length} checks returned` : 'Awaiting manifest'} />
-              <FlowItem active={!!files.length} label="Terraform" value={files.length ? `${files.length} files generated` : 'Locked until valid'} />
-              <FlowItem active={!!tfJob && !isTfJobFailed(tfJob.status)} warning={isTfJobFailed(tfJob?.status)} locked={!files.length} label="Deploy" value={deployState} />
+              <FlowItem active={!!files.length} label="Repo package" value={files.length ? `${files.length} Terraform files ready` : 'Locked until valid'} />
+              <FlowItem active={!!tfJob && !isTfJobFailed(tfJob.status)} warning={isTfJobFailed(tfJob?.status)} locked={!files.length} label="Plan / apply" value={deployState} />
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+        <div className="card overflow-hidden">
+          <div className="border-b border-border px-5 py-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <GitBranch size={18} className="text-accent" />
+                  <h2 className="text-base font-semibold text-text-primary">Client GitHub delivery</h2>
+                </div>
+                <p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">
+                  Use this path when the Terraform code must be committed to a client-owned repository before any AWS deployment.
+                </p>
+              </div>
+              <span className="w-fit rounded-full bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">
+                Recommended
+              </span>
+            </div>
+          </div>
+
+          <div className="grid gap-4 p-5 lg:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-semibold text-text-primary">Client repository</span>
+              <input
+                value={repoUrl}
+                onChange={(event) => setRepoUrl(event.target.value)}
+                placeholder="https://github.com/client/network-infra"
+                className="mt-2 w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+              />
+              <span className="mt-2 block text-xs text-text-muted">The generated repo package should land in a branch and PR, not directly on main.</span>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-semibold text-text-primary">Branch name</span>
+              <input
+                value={targetBranch}
+                onChange={(event) => setTargetBranch(event.target.value)}
+                placeholder="terraform-network"
+                className="mt-2 w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+              />
+              <span className="mt-2 block text-xs text-text-muted">A clean branch keeps review, plan output, and approvals auditable.</span>
+            </label>
+          </div>
+
+          <div className="grid gap-3 px-5 pb-5 lg:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setAwsAuthMode('oidc')}
+              className={`rounded-2xl border p-4 text-left transition-colors ${awsAuthMode === 'oidc' ? 'border-accent bg-accent/10' : 'border-border bg-surface/60 hover:bg-surface-elevated'}`}
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={18} className="text-accent" />
+                <p className="text-sm font-semibold text-text-primary">GitHub OIDC</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-text-secondary">Preferred for production. GitHub Actions assumes an AWS role without storing long-lived keys.</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAwsAuthMode('secrets')}
+              className={`rounded-2xl border p-4 text-left transition-colors ${awsAuthMode === 'secrets' ? 'border-accent bg-accent/10' : 'border-border bg-surface/60 hover:bg-surface-elevated'}`}
+            >
+              <div className="flex items-center gap-2">
+                <KeyRound size={18} className="text-accent" />
+                <p className="text-sm font-semibold text-text-primary">GitHub Secrets</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-text-secondary">Supported when a client provides access keys. Rotate keys and restrict permissions before use.</p>
+            </button>
+          </div>
+
+          <div className="border-t border-border bg-surface/50 px-5 py-4">
+            <div className="grid gap-3 lg:grid-cols-3">
+              <DeliveryCheck title="Repository package" detail="Terraform code, backend guidance, variables, and CI workflow." active={!!files.length} />
+              <DeliveryCheck title="Credentials" detail={awsAuthMode === 'oidc' ? 'AWS_ROLE_TO_ASSUME and AWS_REGION.' : 'AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION.'} active />
+              <DeliveryCheck title="Pull request" detail="PR creation is the next integration step for client repos." active={!!repoUrl.trim()} />
+            </div>
+          </div>
+        </div>
+
+        <div className="card p-5">
+          <div className="flex items-center gap-2">
+            <GitBranch size={18} className="text-accent" />
+            <h2 className="text-base font-semibold text-text-primary">Production path</h2>
+          </div>
+          <div className="mt-5 space-y-3">
+            <PathStep index="01" title="Upload Excel" detail="Parse accounts, VPCs, subnet names, CIDRs, NAT flags, and route intent." active={!!manifest} />
+            <PathStep index="02" title="Generate repo code" detail="Create Terraform files that preserve workbook resource names." active={!!files.length} />
+            <PathStep index="03" title="Open GitHub PR" detail="Push to the client repo branch and run CI checks." active={false} />
+            <PathStep index="04" title="Plan with AWS auth" detail={awsAuthMode === 'oidc' ? 'GitHub OIDC assumes the client deploy role.' : 'GitHub Actions reads client-provided secrets.'} active={false} />
+            <PathStep index="05" title="Approve and apply" detail="Apply only after reviewed plan output and explicit approval." active={tfJob?.status === 'APPLY_SUCCEEDED'} />
           </div>
         </div>
       </section>
@@ -366,9 +464,9 @@ export default function TfGeneratorPage() {
             <div>
               <div className="flex items-center gap-2">
                 <Rocket size={18} className="text-accent" />
-                <h2 className="text-base font-semibold text-text-primary">Controlled deployment</h2>
+                <h2 className="text-base font-semibold text-text-primary">Direct runner path</h2>
               </div>
-              <p className="mt-1 text-xs text-text-muted">Create a secured job, run Terraform plan, approve the result, then apply through the AWS runner.</p>
+              <p className="mt-1 text-xs text-text-muted">Use this when Minfy runs plan/apply from the platform runner. Client GitHub PR flow remains the recommended production handoff.</p>
             </div>
             <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${tfJob ? tfStatusClass(tfJob.status) : 'bg-surface text-text-secondary'}`}>
               {deployState}
@@ -389,7 +487,7 @@ export default function TfGeneratorPage() {
                   className="mt-2 w-full rounded-xl border border-border bg-surface px-4 py-3 font-mono text-sm text-text-primary outline-none transition-colors focus:border-accent"
                 />
                 <span className={`mt-2 block text-xs ${roleArn && !roleArnValid ? 'text-danger' : 'text-text-muted'}`}>
-                  Allowed roles: TerraformDeployRole or MinfyTerraformDeployRole in the target AWS account.
+                  For direct runner use. GitHub Actions can instead use OIDC or client-provided secrets in the client repository.
                 </span>
               </label>
 
@@ -635,6 +733,32 @@ function ValidationCard({ message }: { message: TfValidationMessage }) {
     <div className={`rounded-xl border px-4 py-3 ${toneClass}`}>
       <p className="text-sm font-semibold text-text-primary">{message.title}</p>
       <p className="mt-1 text-xs leading-5 text-text-secondary">{message.detail}</p>
+    </div>
+  );
+}
+
+function DeliveryCheck({ title, detail, active }: { title: string; detail: string; active: boolean }) {
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${active ? 'border-success/25 bg-success/5' : 'border-border bg-background/70'}`}>
+      <div className="flex items-center gap-2">
+        <span className={`h-2.5 w-2.5 rounded-full ${active ? 'bg-success' : 'bg-border'}`} />
+        <p className="text-sm font-semibold text-text-primary">{title}</p>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-text-secondary">{detail}</p>
+    </div>
+  );
+}
+
+function PathStep({ index, title, detail, active }: { index: string; title: string; detail: string; active: boolean }) {
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${active ? 'border-accent/30 bg-accent/10' : 'border-border bg-surface/60'}`}>
+      <div className="flex items-start gap-3">
+        <span className={`mt-0.5 font-mono text-xs font-semibold ${active ? 'text-accent' : 'text-text-muted'}`}>{index}</span>
+        <div>
+          <p className="text-sm font-semibold text-text-primary">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">{detail}</p>
+        </div>
+      </div>
     </div>
   );
 }
