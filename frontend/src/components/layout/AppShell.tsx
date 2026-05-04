@@ -124,7 +124,7 @@ function AppOnboardingTour() {
         {
           targetId: 'tour-nav-tf-generator',
           title: 'TF Generator',
-          body: 'Use this local-first workspace to parse AWS prerequisite workbooks, validate resources, and review Terraform before deployment is enabled.',
+          body: 'Use this production review workspace to parse AWS prerequisite workbooks, validate resources, and review Terraform before controlled deployment.',
           position: 'right',
         },
       ], 'app-overview');

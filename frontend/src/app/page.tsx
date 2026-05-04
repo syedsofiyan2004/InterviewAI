@@ -64,8 +64,8 @@ export default function HubPage() {
       description: 'Parse AWS prerequisite workbooks, validate manifests, and generate reviewable Terraform before deployment.',
       href: '/tf-generator',
       icon: CloudCog,
-      statLabel: 'Preview',
-      stat: 'Local',
+      statLabel: 'Review',
+      stat: 'Ready',
     },
   ], [stats.interviews, stats.moms]);
 

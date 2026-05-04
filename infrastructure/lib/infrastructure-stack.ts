@@ -11,6 +11,7 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as path from 'path';
 
@@ -87,6 +88,50 @@ export class IepStack extends cdk.Stack {
       },
     });
 
+    const terraformRunner = new codebuild.Project(this, 'TerraformRunner', {
+      projectName: getUniqueName('terraform-runner'),
+      timeout: cdk.Duration.minutes(30),
+      concurrentBuildLimit: 2,
+      environment: {
+        buildImage: codebuild.LinuxBuildImage.STANDARD_7_0,
+        computeType: codebuild.ComputeType.SMALL,
+        privileged: false,
+      },
+      buildSpec: codebuild.BuildSpec.fromObject({
+        version: '0.2',
+        phases: {
+          install: {
+            commands: [
+              'set -euo pipefail',
+              'yum install -y unzip >/dev/null',
+              'curl -fsSL -o /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip',
+              'unzip -o /tmp/terraform.zip -d /usr/local/bin >/dev/null',
+              'terraform version',
+            ],
+          },
+          pre_build: {
+            commands: [
+              'set -euo pipefail',
+              'mkdir -p /tmp/tfwork',
+              'aws s3 sync "s3://$TF_BUCKET/$TF_PREFIX" /tmp/tfwork --exclude "plan.txt" --exclude "apply.txt"',
+              'cd /tmp/tfwork',
+              'ls -la',
+            ],
+          },
+          build: {
+            commands: [
+              'set -euo pipefail',
+              'terraform fmt -check -recursive',
+              'terraform init -input=false -backend-config="bucket=$TF_BUCKET" -backend-config="key=$TF_PREFIX/state/terraform.tfstate" -backend-config="region=$AWS_DEFAULT_REGION"',
+              'terraform validate',
+              'if [ "$TF_ACTION" = "PLAN" ]; then terraform plan -input=false -out=tfplan | tee plan.txt; aws s3 cp plan.txt "s3://$TF_BUCKET/$TF_PREFIX/plan.txt"; fi',
+              'if [ "$TF_ACTION" = "APPLY" ]; then terraform plan -input=false -out=tfplan | tee plan.txt; terraform apply -input=false -auto-approve tfplan | tee apply.txt; aws s3 cp plan.txt "s3://$TF_BUCKET/$TF_PREFIX/plan.txt"; aws s3 cp apply.txt "s3://$TF_BUCKET/$TF_PREFIX/apply.txt"; fi',
+            ],
+          },
+        },
+      }),
+    });
+
     // 4. API Handler Lambda
     const apiHandler = new nodejs.NodejsFunction(this, 'ApiHandler', {
       functionName: getUniqueName('api-handler'),
@@ -102,6 +147,7 @@ export class IepStack extends cdk.Stack {
         QUEUE_URL: evaluationQueue.queueUrl,
         MOM_TABLE_NAME: momTable.tableName,
         MOM_QUEUE_URL: momQueue.queueUrl,
+        TERRAFORM_RUNNER_PROJECT_NAME: terraformRunner.projectName,
         // Standardized Model Sync (Sonnet 3.7 + Nova)
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
@@ -121,6 +167,10 @@ export class IepStack extends cdk.Stack {
     filesBucket.grantDelete(apiHandler);
     evaluationQueue.grantSendMessages(apiHandler);
     momQueue.grantSendMessages(apiHandler);
+    apiHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['codebuild:StartBuild', 'codebuild:BatchGetBuilds'],
+      resources: [terraformRunner.projectArn],
+    }));
     
     // Emergency Access Restoration: Revert to wildcard to restore Nova + Claude immediately
     const bedrockPolicy = new iam.PolicyStatement({
@@ -133,6 +183,14 @@ export class IepStack extends cdk.Stack {
       resources: ['*'], 
     });
     apiHandler.addToRolePolicy(bedrockPolicy);
+    filesBucket.grantReadWrite(terraformRunner);
+    terraformRunner.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sts:AssumeRole'],
+      resources: [
+        'arn:aws:iam::*:role/TerraformDeployRole',
+        'arn:aws:iam::*:role/MinfyTerraformDeployRole',
+      ],
+    }));
 
     // 5. Async Worker Lambda
     const asyncWorker = new nodejs.NodejsFunction(this, 'AsyncWorker', {
@@ -325,6 +383,27 @@ export class IepStack extends cdk.Stack {
 
     const momReport = singleMom.addResource('report');
     momReport.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const tfJobs = api.root.addResource('tf-jobs');
+    tfJobs.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const singleTfJob = tfJobs.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleTfJob.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const tfPlan = singleTfJob.addResource('plan');
+    tfPlan.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfApprove = singleTfJob.addResource('approve');
+    tfApprove.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfApply = singleTfJob.addResource('apply');
+    tfApply.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     // --- NEW User Preference Routes ---
     const user = api.root.addResource('user');

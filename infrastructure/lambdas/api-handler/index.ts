@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { v4 as uuidv4 } from 'uuid';
 import { S3Client, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { BatchGetBuildsCommand, CodeBuildClient, StartBuildCommand } from '@aws-sdk/client-codebuild';
 import { 
   PutCommand, 
   GetCommand, 
@@ -46,8 +47,15 @@ const BUCKET_NAME = process.env.BUCKET_NAME!;
 const QUEUE_URL = process.env.QUEUE_URL!;
 const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
 const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
+const TERRAFORM_RUNNER_PROJECT_NAME = process.env.TERRAFORM_RUNNER_PROJECT_NAME || '';
 
 const sqsClient = new SQSClient({});
+const codeBuildClient = new CodeBuildClient({});
+
+interface TfJobFileInput {
+  filename: string;
+  content: string;
+}
 
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
@@ -61,6 +69,26 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/user/preferences') {
       return await updateUserPreferences(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-jobs') {
+      return await createTfJob(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/tf-jobs/{id}') {
+      return await getTfJob(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-jobs/{id}/plan') {
+      return await runTfPlan(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-jobs/{id}/approve') {
+      return await approveTfJob(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-jobs/{id}/apply') {
+      return await runTfApply(pathParameters?.id, event);
     }
 
     if (httpMethod === 'POST' && resource === '/moms') {
@@ -172,6 +200,10 @@ function userMomPrefix(userId: string, momId: string): string {
   return `users/${userId}/moms/${momId}`;
 }
 
+function userTfJobPrefix(userId: string, jobId: string): string {
+  return `users/${userId}/tf-jobs/${jobId}`;
+}
+
 function momProjectKey(projectId: string): string {
   return `PROJECT#${projectId}`;
 }
@@ -259,6 +291,309 @@ async function getOwnedMomProjectRecord(id: string | undefined, event: APIGatewa
   }
 
   return { item, userId };
+}
+
+async function getOwnedTfJobRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFJOB#${id}`, SK: 'METADATA' },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'Terraform job not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this Terraform job') };
+  }
+
+  return { item, userId };
+}
+
+const TF_DEPLOY_ROLE_PATTERN = /^arn:aws:iam::\d{12}:role\/(TerraformDeployRole|MinfyTerraformDeployRole)$/;
+const TF_FILE_NAME_PATTERN = /^[a-zA-Z0-9._-]+\.tf$/;
+const TF_MAX_FILES = 20;
+const TF_MAX_TOTAL_BYTES = 600 * 1024;
+
+async function createTfJob(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+  if (!TERRAFORM_RUNNER_PROJECT_NAME) {
+    return errorResponse(503, 'RUNNER_NOT_CONFIGURED', 'Terraform deployment runner is not configured yet.');
+  }
+
+  const body = JSON.parse(event.body || '{}');
+  const deploymentName = sanitizeText(body.deployment_name, 120) || 'Terraform deployment';
+  const primaryRegion = sanitizeText(body.primary_region, 40) || 'us-east-1';
+  const roleArn = sanitizeText(body.role_arn, 180);
+  const files = Array.isArray(body.files) ? body.files : [];
+
+  if (!TF_DEPLOY_ROLE_PATTERN.test(roleArn)) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Use arn:aws:iam::<account-id>:role/TerraformDeployRole or arn:aws:iam::<account-id>:role/MinfyTerraformDeployRole.');
+  }
+
+  if (!files.length || files.length > TF_MAX_FILES) {
+    return errorResponse(400, 'VALIDATION_ERROR', `Upload between 1 and ${TF_MAX_FILES} Terraform files.`);
+  }
+
+  const normalizedFiles = files.map((file: any) => ({
+    filename: sanitizeText(file?.filename, 120),
+    content: typeof file?.content === 'string' ? file.content : '',
+  }));
+  const totalBytes = Buffer.byteLength(JSON.stringify(normalizedFiles), 'utf8');
+
+  if (totalBytes > TF_MAX_TOTAL_BYTES) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Terraform bundle is too large for the controlled runner.');
+  }
+
+  const invalidFile = normalizedFiles.find((file: TfJobFileInput) => !TF_FILE_NAME_PATTERN.test(file.filename) || !file.content.trim());
+  if (invalidFile) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Only non-empty .tf files with simple file names are accepted.');
+  }
+
+  const jobId = uuidv4();
+  const now = Date.now();
+  const prefix = userTfJobPrefix(userId, jobId);
+  const backendTf = `terraform {\n  backend "s3" {}\n}\n`;
+  const tfvars = JSON.stringify({
+    deployment_name: deploymentName,
+    primary_region: primaryRegion,
+    role_arn: roleArn,
+    environment: 'dev',
+    common_tags: {
+      Project: deploymentName,
+      ManagedBy: 'Terraform',
+      GeneratedBy: 'Minfy AI TF Generator',
+    },
+  }, null, 2);
+
+  await Promise.all([
+    ...normalizedFiles.map((file: TfJobFileInput) => saveFileContent(BUCKET_NAME, `${prefix}/${file.filename}`, file.content, 'text/plain')),
+    saveFileContent(BUCKET_NAME, `${prefix}/backend.tf`, backendTf, 'text/plain'),
+    saveFileContent(BUCKET_NAME, `${prefix}/terraform.auto.tfvars.json`, tfvars, 'application/json'),
+  ]);
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: TABLE_NAME,
+    Item: {
+      PK: `TFJOB#${jobId}`,
+      SK: 'METADATA',
+      owner_user_id: userId,
+      item_type: 'TF_JOB',
+      job_id: jobId,
+      status: 'CREATED',
+      deployment_name: deploymentName,
+      primary_region: primaryRegion,
+      role_arn: roleArn,
+      s3_prefix: prefix,
+      file_count: normalizedFiles.length,
+      created_at: now,
+      updated_at: now,
+    },
+  }));
+
+  return createdResponse(await formatTfJob({ job_id: jobId, status: 'CREATED', s3_prefix: prefix, deployment_name: deploymentName, primary_region: primaryRegion, role_arn: roleArn, file_count: normalizedFiles.length, created_at: now, updated_at: now }));
+}
+
+async function getTfJob(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfJobRecord(id, event);
+  if (response) return response;
+
+  const refreshed = await refreshTfJobStatus(item);
+  return successResponse(await formatTfJob(refreshed));
+}
+
+async function runTfPlan(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfJobRecord(id, event);
+  if (response) return response;
+
+  const refreshed = await refreshTfJobStatus(item);
+  if (isTfBuildInFlight(refreshed.status)) {
+    return errorResponse(409, 'JOB_IN_PROGRESS', 'A Terraform run is already in progress for this job.');
+  }
+
+  const buildId = await startTfBuild(refreshed, 'PLAN');
+  const now = Date.now();
+  const updated = await updateTfJob(id!, 'SET #st = :status, plan_build_id = :build, updated_at = :now, error_message = :null', {
+    '#st': 'status',
+  }, {
+    ':status': 'PLAN_QUEUED',
+    ':build': buildId,
+    ':now': now,
+    ':null': null,
+  });
+
+  return acceptedResponse(await formatTfJob(updated));
+}
+
+async function approveTfJob(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response, userId } = await getOwnedTfJobRecord(id, event);
+  if (response) return response;
+
+  const refreshed = await refreshTfJobStatus(item);
+  if (refreshed.status !== 'PLAN_SUCCEEDED') {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Run a successful Terraform plan before approval.');
+  }
+
+  const now = Date.now();
+  const updated = await updateTfJob(id!, 'SET #st = :status, approved_at = :now, approved_by = :user, updated_at = :now', {
+    '#st': 'status',
+  }, {
+    ':status': 'APPROVED',
+    ':now': now,
+    ':user': userId,
+  });
+
+  return successResponse(await formatTfJob(updated));
+}
+
+async function runTfApply(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfJobRecord(id, event);
+  if (response) return response;
+
+  const refreshed = await refreshTfJobStatus(item);
+  if (isTfBuildInFlight(refreshed.status)) {
+    return errorResponse(409, 'JOB_IN_PROGRESS', 'A Terraform run is already in progress for this job.');
+  }
+
+  if (!refreshed.approved_at || !['APPROVED', 'APPLY_FAILED'].includes(refreshed.status)) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Approve the latest successful plan before applying.');
+  }
+
+  const buildId = await startTfBuild(refreshed, 'APPLY');
+  const now = Date.now();
+  const updated = await updateTfJob(id!, 'SET #st = :status, apply_build_id = :build, updated_at = :now, error_message = :null', {
+    '#st': 'status',
+  }, {
+    ':status': 'APPLY_QUEUED',
+    ':build': buildId,
+    ':now': now,
+    ':null': null,
+  });
+
+  return acceptedResponse(await formatTfJob(updated));
+}
+
+async function startTfBuild(job: any, action: 'PLAN' | 'APPLY'): Promise<string> {
+  const response = await codeBuildClient.send(new StartBuildCommand({
+    projectName: TERRAFORM_RUNNER_PROJECT_NAME,
+    environmentVariablesOverride: [
+      { name: 'TF_ACTION', value: action, type: 'PLAINTEXT' },
+      { name: 'TF_BUCKET', value: BUCKET_NAME, type: 'PLAINTEXT' },
+      { name: 'TF_PREFIX', value: job.s3_prefix, type: 'PLAINTEXT' },
+      { name: 'TF_JOB_ID', value: job.job_id, type: 'PLAINTEXT' },
+      { name: 'TF_OWNER_ID', value: job.owner_user_id, type: 'PLAINTEXT' },
+    ],
+  }));
+
+  if (!response.build?.id) {
+    throw new Error('Terraform runner did not return a build id');
+  }
+
+  return response.build.id;
+}
+
+async function refreshTfJobStatus(job: any) {
+  const buildIds = [job.plan_build_id, job.apply_build_id].filter(Boolean);
+  if (!buildIds.length) return job;
+
+  const builds = await codeBuildClient.send(new BatchGetBuildsCommand({ ids: buildIds }));
+  const planBuild = builds.builds?.find((build) => build.id === job.plan_build_id);
+  const applyBuild = builds.builds?.find((build) => build.id === job.apply_build_id);
+
+  let status = job.status;
+  let errorMessage = job.error_message || null;
+
+  if (applyBuild && ['IN_PROGRESS', 'QUEUED'].includes(applyBuild.buildStatus || '')) {
+    status = 'APPLY_RUNNING';
+  } else if (applyBuild?.buildStatus === 'SUCCEEDED') {
+    status = 'APPLY_SUCCEEDED';
+  } else if (applyBuild && ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'].includes(applyBuild.buildStatus || '')) {
+    status = 'APPLY_FAILED';
+    errorMessage = applyBuild.buildStatus;
+  } else if (planBuild && ['IN_PROGRESS', 'QUEUED'].includes(planBuild.buildStatus || '')) {
+    status = 'PLAN_RUNNING';
+  } else if (planBuild?.buildStatus === 'SUCCEEDED' && ['PLAN_QUEUED', 'PLAN_RUNNING', 'CREATED', 'PLAN_FAILED'].includes(status)) {
+    status = 'PLAN_SUCCEEDED';
+  } else if (planBuild && ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'].includes(planBuild.buildStatus || '')) {
+    status = 'PLAN_FAILED';
+    errorMessage = planBuild.buildStatus;
+  }
+
+  if (status === job.status && errorMessage === (job.error_message || null)) {
+    return job;
+  }
+
+  return await updateTfJob(job.job_id, 'SET #st = :status, error_message = :error, updated_at = :now', {
+    '#st': 'status',
+  }, {
+    ':status': status,
+    ':error': errorMessage,
+    ':now': Date.now(),
+  });
+}
+
+async function updateTfJob(jobId: string, updateExpression: string, names: Record<string, string>, values: Record<string, any>) {
+  const result = await ddbDocClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFJOB#${jobId}`, SK: 'METADATA' },
+    UpdateExpression: updateExpression,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+    ReturnValues: 'ALL_NEW',
+  }));
+  return result.Attributes;
+}
+
+async function formatTfJob(job: any) {
+  const [plan_output, apply_output] = await Promise.all([
+    readOptionalTfOutput(job.s3_prefix, 'plan.txt'),
+    readOptionalTfOutput(job.s3_prefix, 'apply.txt'),
+  ]);
+
+  return {
+    job_id: job.job_id,
+    status: job.status,
+    deployment_name: job.deployment_name,
+    primary_region: job.primary_region,
+    role_arn: job.role_arn,
+    file_count: job.file_count || 0,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    approved_at: job.approved_at || null,
+    plan_build_id: job.plan_build_id || null,
+    apply_build_id: job.apply_build_id || null,
+    plan_output,
+    apply_output,
+    error_message: job.error_message || null,
+  };
+}
+
+async function readOptionalTfOutput(prefix: string, filename: string): Promise<string | null> {
+  try {
+    return await getFileContent(BUCKET_NAME, `${prefix}/${filename}`);
+  } catch {
+    return null;
+  }
+}
+
+function isTfBuildInFlight(status: string): boolean {
+  return ['PLAN_QUEUED', 'PLAN_RUNNING', 'APPLY_QUEUED', 'APPLY_RUNNING'].includes(status);
+}
+
+function sanitizeText(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxLength);
 }
 
 async function createInterview(event: APIGatewayProxyEvent) {

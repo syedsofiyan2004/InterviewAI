@@ -302,7 +302,6 @@ export function generateTerraformFiles(manifest: TfManifest): TfFile[] {
   return [
     { filename: 'provider.tf', content: providerTf(manifest) },
     { filename: 'variables.tf', content: variablesTf() },
-    { filename: 'locals.tf', content: localsTf(manifest) },
     { filename: 'vpc.tf', content: vpcTf(manifest) },
     { filename: 'subnets.tf', content: subnetsTf(manifest) },
     { filename: 'routing.tf', content: routingTf(manifest) },
@@ -343,7 +342,7 @@ export function generateTfReviewSummary(manifest: TfManifest, messages: TfValida
   const headline = errors.length
     ? `${errors.length} blocking issue${errors.length === 1 ? '' : 's'} must be fixed before Terraform is trusted.`
     : warnings.length
-      ? `Terraform can be previewed, but ${warnings.length} warning${warnings.length === 1 ? '' : 's'} should be reviewed before plan.`
+      ? `Terraform can be generated, but ${warnings.length} warning${warnings.length === 1 ? '' : 's'} should be reviewed before plan.`
       : 'Manifest passed workspace checks and is ready for Terraform plan validation.';
 
   return {
@@ -375,7 +374,12 @@ provider "aws" {
   }
 
   default_tags {
-    tags = local.common_tags
+    tags = {
+      Project     = var.deployment_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+      GeneratedBy = "Minfy AI TF Generator"
+    }
   }
 }
 
@@ -401,21 +405,10 @@ variable "environment" {
   type    = string
   default = "dev"
 }
-`;
-}
 
-function localsTf(manifest: TfManifest) {
-  return `locals {
-  naming_pattern = "{project}-{env}-{region_short}-{type}-{name}"
-  project         = ${hclString(slug(manifest.deployment_name))}
-  region_short    = replace(var.primary_region, "-", "")
-
-  common_tags = {
-    Project      = var.deployment_name
-    Environment  = var.environment
-    ManagedBy    = "Terraform"
-    GeneratedBy  = "Minfy AI TF Generator"
-  }
+variable "common_tags" {
+  type    = map(string)
+  default = {}
 }
 `;
 }
@@ -423,13 +416,14 @@ function localsTf(manifest: TfManifest) {
 function vpcTf(manifest: TfManifest) {
   return manifest.vpcs.map((vpc) => {
     const id = tfId(vpc.logical_name);
+    const name = resourceName(manifest, 'vpc', vpc.logical_name);
     return `resource "aws_vpc" "${id}" {
   cidr_block           = ${hclString(vpc.cidr)}
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-vpc-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(name)}
   })
 
   lifecycle {
@@ -443,13 +437,14 @@ function subnetsTf(manifest: TfManifest) {
   return manifest.subnets.map((subnet) => {
     const id = subnetResourceId(subnet);
     const vpcId = tfId(subnet.vpc_logical_name);
+    const name = resourceName(manifest, 'sn', subnet.logical_name);
     return `resource "aws_subnet" "${id}" {
   vpc_id            = aws_vpc.${vpcId}.id
   cidr_block        = ${hclString(subnet.cidr)}
   availability_zone = "\${var.primary_region}${subnet.az_label}"
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-sn-${slug(subnet.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(name)}
     Tier = ${hclString(subnet.route_type)}
   })
 
@@ -471,11 +466,13 @@ function routingTf(manifest: TfManifest) {
     const blocks: string[] = [];
 
     if (hasPublic) {
+      const igwName = resourceName(manifest, 'igw', vpc.logical_name);
+      const publicRouteName = resourceName(manifest, 'rt-public', vpc.logical_name);
       blocks.push(`resource "aws_internet_gateway" "${id}" {
   vpc_id = aws_vpc.${id}.id
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-igw-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(igwName)}
   })
 }`);
 
@@ -487,8 +484,8 @@ function routingTf(manifest: TfManifest) {
     gateway_id = aws_internet_gateway.${id}.id
   }
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-rt-public-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(publicRouteName)}
   })
 }`);
 
@@ -502,11 +499,13 @@ function routingTf(manifest: TfManifest) {
 
     if (shouldCreateNat) {
       const natSubnet = publicSubnets[0];
+      const eipName = resourceName(manifest, 'eip-nat', vpc.logical_name);
+      const natName = resourceName(manifest, 'nat', vpc.logical_name);
       blocks.push(`resource "aws_eip" "${id}_nat" {
   domain = "vpc"
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-eip-nat-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(eipName)}
   })
 
   depends_on = [aws_internet_gateway.${id}]
@@ -516,8 +515,8 @@ function routingTf(manifest: TfManifest) {
   allocation_id = aws_eip.${id}_nat.id
   subnet_id     = aws_subnet.${subnetResourceId(natSubnet)}.id
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-nat-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(natName)}
   })
 
   depends_on = [aws_internet_gateway.${id}]
@@ -525,6 +524,7 @@ function routingTf(manifest: TfManifest) {
     }
 
     if (privateSubnets.length) {
+      const privateRouteName = resourceName(manifest, 'rt-private', vpc.logical_name);
       blocks.push(`resource "aws_route_table" "${id}_private" {
   vpc_id = aws_vpc.${id}.id
 ${shouldCreateNat ? `
@@ -534,8 +534,8 @@ ${shouldCreateNat ? `
   }
 ` : ''}
 
-  tags = merge(local.common_tags, {
-    Name = "\${local.project}-\${var.environment}-\${local.region_short}-rt-private-${slug(vpc.logical_name)}"
+  tags = merge(var.common_tags, {
+    Name = ${hclString(privateRouteName)}
   })
 }`);
 
@@ -586,7 +586,7 @@ function architectureFindings(manifest: TfManifest): TfAdvisorFinding[] {
       findings.push({
         severity: 'warning',
         title: `Single NAT design for ${vpc.logical_name}`,
-        detail: 'The generated preview creates one NAT Gateway in the first public subnet for this VPC.',
+        detail: 'The generated Terraform creates one NAT Gateway in the first public subnet for this VPC.',
         recommendation: 'For production high availability, confirm whether one NAT per AZ is required before apply.',
       });
     }
@@ -652,6 +652,14 @@ function nextStepsFor(readiness: TfReviewSummary['readiness']) {
 
 function hclString(value: string) {
   return JSON.stringify(value);
+}
+
+function resourceName(manifest: TfManifest, type: string, name: string) {
+  return `${slug(manifest.deployment_name)}-\${var.environment}-${regionShort(manifest.primary_region)}-${type}-${slug(name)}`;
+}
+
+function regionShort(region: string) {
+  return region.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'region';
 }
 
 function slug(value: string) {
