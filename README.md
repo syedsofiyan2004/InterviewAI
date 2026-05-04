@@ -22,6 +22,15 @@ Minfy AI is a secure workspace for interview evaluation and meeting-minutes anal
 - Generate concise meeting summaries, attendees, agenda items, decisions, action items, risks, and next steps.
 - Download professional PDF reports with tables, colored section headers, callouts, and safe wrapping for long content.
 
+### TF Generator
+
+- Upload AWS prerequisite Excel workbooks in a local-first Terraform workspace.
+- Parse account context, VPCs, subnets, NAT intent, and routing intent into a deterministic network manifest.
+- Validate CIDR ranges, overlapping subnets, subnet containment, duplicate Terraform IDs, NAT/public subnet mismatches, and multi-region workbook issues before code generation.
+- Generate reviewable Terraform for VPCs, subnets, Internet Gateways, route tables, route associations, optional NAT Gateway/EIP, variables, locals, provider configuration, and outputs.
+- Download a selected Terraform file or a local bundle for controlled review.
+- Keep deployment/apply locked until a backend Terraform runner, plan review, and human approval workflow are enabled.
+
 ### Security And Ownership
 
 - Cognito authentication protects all application APIs.
@@ -51,6 +60,8 @@ flowchart LR
   EvalWorker --> S3
   MomWorker --> S3
 ```
+
+The TF Generator currently runs in the browser as a safe preview and code-review workspace. Cross-account deployment is represented through generated Terraform `assume_role` provider configuration, but real plan/apply execution must be added through a controlled backend runner before production use.
 
 ## Repository Structure
 
@@ -130,6 +141,17 @@ Important runtime values include:
 - `MOM_MODEL_ID`
 
 The frontend uses `NEXT_PUBLIC_API_BASE_URL` in `.env.local` for API calls.
+
+## TF Generator Safety Model
+
+The Terraform generation path is intentionally deterministic. AI-style assistance is used as an advisor layer for summaries, validation explanations, recommendations, and next checkpoints; the actual Terraform resources are produced from strict workbook parsing and validation rules.
+
+Current production guardrails:
+
+- Bad CIDRs, subnet ranges outside VPCs, overlapping subnets, duplicate Terraform IDs, multi-region manifests, and impossible NAT routing block generation.
+- SSO and AWS Organizations data are not deployed by this app; those workbook tabs remain outside Terraform scope.
+- The generated provider uses `assume_role`, but the app does not call AWS Terraform plan/apply yet.
+- Real deployment should be added only through `terraform fmt`, `terraform validate`, `terraform plan`, human approval, and a locked runner such as CodeBuild.
 
 ## Report Generation
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, ClipboardList, FileText, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ClipboardList, CloudCog, FileText, Loader2, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 
 type HubStats = {
@@ -59,6 +59,14 @@ export default function HubPage() {
       statLabel: 'MOMs',
       stat: stats.moms,
     },
+    {
+      title: 'TF Generator',
+      description: 'Parse AWS prerequisite workbooks, validate manifests, and generate reviewable Terraform before deployment.',
+      href: '/tf-generator',
+      icon: CloudCog,
+      statLabel: 'Preview',
+      stat: 'Local',
+    },
   ], [stats.interviews, stats.moms]);
 
   return (
@@ -107,7 +115,7 @@ export default function HubPage() {
           )}
         </header>
 
-        <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           {apps.map((app, index) => {
             const Icon = app.icon;
             return (

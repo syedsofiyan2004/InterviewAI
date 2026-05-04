@@ -8,6 +8,7 @@ export function Topbar() {
   const pageTitle = pathname === '/' ? 'Dashboard' 
     : pathname === '/interviews/new' ? 'New evaluation'
     : pathname.startsWith('/interviews/view') ? 'Evaluation details'
+    : pathname.startsWith('/tf-generator') ? 'TF Generator'
     : '';
 
   return (

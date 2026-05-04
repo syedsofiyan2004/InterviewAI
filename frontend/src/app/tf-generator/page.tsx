@@ -1,0 +1,486 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BrainCircuit,
+  CheckCircle2,
+  CloudCog,
+  Code2,
+  Download,
+  FileCheck2,
+  FileSpreadsheet,
+  LockKeyhole,
+  Network,
+  Route,
+  Server,
+  ShieldCheck,
+  Upload,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  generateTfReviewSummary,
+  generateTerraformFiles,
+  parseTfWorkbook,
+  TfFile,
+  TfManifest,
+  TfReviewSummary,
+  TfValidationMessage,
+  validateTfManifest,
+} from './tf-local';
+
+export default function TfGeneratorPage() {
+  const [manifest, setManifest] = useState<TfManifest | null>(null);
+  const [messages, setMessages] = useState<TfValidationMessage[]>([]);
+  const [files, setFiles] = useState<TfFile[]>([]);
+  const [selectedFile, setSelectedFile] = useState('provider.tf');
+  const [loading, setLoading] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const selected = files.find((file) => file.filename === selectedFile) || files[0];
+  const hasErrors = messages.some((message) => message.severity === 'error');
+  const hasWarnings = messages.some((message) => message.severity === 'warning');
+
+  const summary = useMemo(() => {
+    const regions = Array.from(new Set((manifest?.vpcs || []).map((vpc) => vpc.region).filter(Boolean)));
+    const publicSubnets = manifest?.subnets.filter((subnet) => subnet.route_type === 'public').length || 0;
+    const privateSubnets = manifest?.subnets.filter((subnet) => subnet.route_type === 'private').length || 0;
+    return {
+      accounts: manifest?.accounts.length || 0,
+      vpcs: manifest?.vpcs.length || 0,
+      subnets: manifest?.subnets.length || 0,
+      publicSubnets,
+      privateSubnets,
+      natEnabled: manifest?.vpcs.filter((vpc) => vpc.nat_gateway).length || 0,
+      regions,
+    };
+  }, [manifest]);
+
+  const intakeState = manifest ? 'Workbook parsed' : loading ? 'Reading workbook' : 'Waiting for workbook';
+  const reviewState = files.length ? 'Terraform ready' : hasErrors ? 'Fix validation issues' : 'Not generated yet';
+  const reviewSummary = useMemo(() => (
+    manifest ? generateTfReviewSummary(manifest, messages) : null
+  ), [manifest, messages]);
+
+  const downloadFile = (file: TfFile | undefined) => {
+    if (!file) return;
+    const blob = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadBundle = () => {
+    if (!files.length) return;
+    const content = files
+      .map((file) => `# ===== ${file.filename} =====\n${file.content.trim()}\n`)
+      .join('\n\n');
+    downloadFile({ filename: `${slugForDownload(manifest?.deployment_name || 'terraform-preview')}.tfbundle.txt`, content });
+  };
+
+  const handleUpload = async (file: File | null) => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    setFiles([]);
+    setMessages([]);
+    setManifest(null);
+    setFileName(file.name);
+
+    try {
+      const parsed = await parseTfWorkbook(file);
+      const validation = validateTfManifest(parsed);
+      setManifest(parsed);
+      setMessages(validation);
+      if (!validation.some((message) => message.severity === 'error')) {
+        const generated = generateTerraformFiles(parsed);
+        setFiles(generated);
+        setSelectedFile(generated[0]?.filename || '');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to parse workbook');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-6 pb-8">
+      <section className="relative overflow-hidden rounded-2xl border border-border bg-surface-elevated/80 px-6 py-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(16,185,129,0.16),transparent_28rem),radial-gradient(circle_at_92%_4%,rgba(79,70,229,0.14),transparent_26rem)]" />
+        <div className="relative z-10 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-accent-foreground shadow-lg shadow-accent/20">
+                <CloudCog size={23} />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Minfy AI TF Generator</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent">AWS network deployment console</p>
+              </div>
+            </div>
+
+            <h1 className="mt-7 max-w-4xl text-[clamp(34px,5vw,64px)] font-semibold leading-[0.98] tracking-tight text-text-primary">
+              Review infrastructure before it reaches AWS.
+            </h1>
+            <p className="mt-5 max-w-3xl text-base leading-7 text-text-secondary">
+              Convert prerequisite workbooks into a checked network manifest and Terraform files. The local build generates VPC, subnet, routing, and output code only; apply remains locked until plan approval is wired.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-background/70 p-4 backdrop-blur">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-text-muted">Control state</p>
+                <p className="mt-2 text-xl font-semibold text-text-primary">{reviewState}</p>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${hasErrors ? 'bg-danger/10 text-danger' : files.length ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+                Local only
+              </span>
+            </div>
+            <div className="mt-5 grid gap-2">
+              <FlowItem active={!!manifest} label="Workbook" value={intakeState} />
+              <FlowItem active={!!messages.length && !hasErrors} warning={hasWarnings} label="Validation" value={messages.length ? `${messages.length} checks returned` : 'Awaiting manifest'} />
+              <FlowItem active={!!files.length} label="Terraform" value={files.length ? `${files.length} files generated` : 'Locked until valid'} />
+              <FlowItem active={false} locked label="Deploy" value="Human approval required" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[390px_minmax(0,1fr)]">
+        <div className="space-y-5">
+          <div className="card p-5">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                <FileSpreadsheet size={20} />
+              </span>
+              <div>
+                <h2 className="text-base font-semibold text-text-primary">Workbook intake</h2>
+                <p className="text-xs text-text-muted">Client-side parsing for local testing.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-text-primary">{fileName || 'No workbook selected'}</p>
+                  <p className="mt-1 text-xs text-text-muted">Accepted: .xlsx</p>
+                </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-accent-foreground shadow-sm shadow-accent/20 transition-transform hover:-translate-y-0.5">
+                  <Upload size={16} />
+                  Upload
+                  <input
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    className="hidden"
+                    onChange={(event) => handleUpload(event.target.files?.[0] || null)}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {loading && (
+              <Notice tone="info" title="Parsing workbook" detail="Building the manifest and Terraform preview locally." />
+            )}
+            {error && (
+              <Notice tone="error" title="Workbook could not be parsed" detail={error} />
+            )}
+
+            <div className="mt-5 rounded-xl border border-warning/25 bg-warning/5 p-4">
+              <div className="flex gap-3">
+                <LockKeyhole size={18} className="mt-0.5 text-warning" />
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Deployment guardrail</p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                    This version does not apply infrastructure. Real deployment should require Terraform plan output, role verification, and explicit approval.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Metric title="Accounts" value={summary.accounts} icon={ShieldCheck} caption="Context only" />
+            <Metric title="Regions" value={summary.regions.length} icon={Server} caption={summary.regions[0] || 'None'} />
+            <Metric title="VPCs" value={summary.vpcs} icon={Network} caption={`${summary.natEnabled} NAT enabled`} />
+            <Metric title="Subnets" value={summary.subnets} icon={Route} caption={`${summary.publicSubnets} public / ${summary.privateSubnets} private`} />
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          {reviewSummary && (
+            <ReviewAssistant summary={reviewSummary} />
+          )}
+
+          <div className="card overflow-hidden">
+            <div className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-text-primary">Network manifest</h2>
+                <p className="mt-1 text-xs text-text-muted">Only VPC networking is generated. Non-network workbook tabs stay outside Terraform scope.</p>
+              </div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary">
+                <FileCheck2 size={14} />
+                {manifest ? manifest.deployment_name : 'Awaiting workbook'}
+              </span>
+            </div>
+
+            {manifest ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-surface/80">
+                      <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">Type</th>
+                      <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">Name</th>
+                      <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">CIDR</th>
+                      <th className="px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">Placement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {manifest.vpcs.map((vpc) => (
+                      <tr key={`vpc-${vpc.logical_name}`} className="border-b border-border/80">
+                        <td className="px-5 py-3 text-sm font-semibold text-text-primary">VPC</td>
+                        <td className="px-5 py-3 text-sm text-text-secondary">{vpc.logical_name}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-text-secondary">{vpc.cidr}</td>
+                        <td className="px-5 py-3 text-sm text-text-secondary">{vpc.region}</td>
+                      </tr>
+                    ))}
+                    {manifest.subnets.map((subnet) => (
+                      <tr key={`subnet-${subnet.logical_name}`} className="border-b border-border/80">
+                        <td className="px-5 py-3 text-sm font-semibold text-text-primary">Subnet</td>
+                        <td className="px-5 py-3 text-sm text-text-secondary">{subnet.logical_name}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-text-secondary">{subnet.cidr}</td>
+                        <td className="px-5 py-3 text-sm text-text-secondary">
+                          <span className="capitalize">{subnet.route_type}</span> / AZ {subnet.az_label.toUpperCase()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex min-h-[280px] items-center justify-center px-6 py-10">
+                <div className="max-w-md text-center">
+                  <Network className="mx-auto text-accent" size={32} />
+                  <p className="mt-4 text-base font-semibold text-text-primary">Upload a workbook to preview the deployment manifest</p>
+                  <p className="mt-2 text-sm leading-6 text-text-secondary">
+                    The preview will show accounts as context, then the VPCs and subnets that Terraform can generate.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {messages.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  {hasErrors ? <AlertTriangle size={18} className="text-danger" /> : <CheckCircle2 size={18} className="text-success" />}
+                  <h2 className="text-base font-semibold text-text-primary">Validation</h2>
+                </div>
+                <span className="text-xs font-medium text-text-muted">{hasErrors ? 'Action needed' : 'Ready for code review'}</span>
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {messages.map((message, index) => (
+                  <ValidationCard key={`${message.title}-${index}`} message={message} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {files.length > 0 && (
+        <section className="card overflow-hidden">
+          <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Code2 size={18} className="text-accent" />
+                <h2 className="text-base font-semibold text-text-primary">Terraform review</h2>
+              </div>
+              <p className="mt-1 text-xs text-text-muted">Generated locally for inspection. No AWS action is executed from this screen.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => downloadFile(selected)}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated"
+              >
+                <Download size={16} />
+                Download file
+              </button>
+              <button
+                type="button"
+                onClick={downloadBundle}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-sm shadow-accent/20"
+              >
+                <Download size={16} />
+                Download bundle
+              </button>
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-text-muted"
+              >
+                <LockKeyhole size={16} />
+                Apply locked
+              </button>
+            </div>
+          </div>
+          <div className="grid min-h-[500px] grid-cols-1 lg:grid-cols-[250px_1fr]">
+            <aside className="border-b border-border bg-surface/80 p-3 lg:border-b-0 lg:border-r">
+              <div className="space-y-1">
+                {files.map((file) => (
+                  <button
+                    key={file.filename}
+                    onClick={() => setSelectedFile(file.filename)}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${selected?.filename === file.filename ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'}`}
+                  >
+                    <span>{file.filename}</span>
+                    {selected?.filename === file.filename && <ArrowRight size={14} />}
+                  </button>
+                ))}
+              </div>
+            </aside>
+            <pre className="overflow-auto bg-[#07111f] p-5 text-xs leading-6 text-slate-100">
+              <code>{selected?.content || ''}</code>
+            </pre>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function ReviewAssistant({ summary }: { summary: TfReviewSummary }) {
+  const toneClass = summary.readiness === 'Blocked'
+    ? 'bg-danger/10 text-danger'
+    : summary.readiness === 'Review needed'
+      ? 'bg-warning/10 text-warning'
+      : 'bg-success/10 text-success';
+
+  const visibleFindings = summary.findings.slice(0, 4);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="border-b border-border px-5 py-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+              <BrainCircuit size={20} />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold text-text-primary">Deployment review assistant</h2>
+              <p className="mt-1 text-xs leading-5 text-text-muted">{summary.headline}</p>
+            </div>
+          </div>
+          <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${toneClass}`}>
+            {summary.readiness}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-0 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-text-muted">Resource plan</p>
+          <div className="mt-4 grid gap-2">
+            {summary.resource_plan.map((item) => (
+              <div key={item.label} className="rounded-xl border border-border bg-surface/70 px-3 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-sm font-semibold text-text-primary">{item.label}</p>
+                  <p className="font-mono text-lg font-semibold text-accent">{item.count}</p>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-text-muted">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-text-muted">Recommendations</p>
+          <div className="mt-4 space-y-3">
+            {visibleFindings.map((finding, index) => (
+              <div key={`${finding.title}-${index}`} className="rounded-xl border border-border bg-surface/60 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-text-primary">{finding.title}</p>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${finding.severity === 'error' ? 'bg-danger/10 text-danger' : finding.severity === 'warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>
+                    {finding.severity}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">{finding.recommendation}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 rounded-xl border border-border bg-background/60 px-4 py-3">
+            <p className="text-xs font-semibold text-text-primary">Next checkpoint</p>
+            <p className="mt-1 text-xs leading-5 text-text-secondary">{summary.next_steps[0]}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FlowItem({ active, warning, locked, label, value }: { active: boolean; warning?: boolean; locked?: boolean; label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface/70 px-3 py-2.5">
+      <div>
+        <p className="text-xs font-semibold text-text-primary">{label}</p>
+        <p className="mt-0.5 text-[11px] text-text-muted">{value}</p>
+      </div>
+      <span className={`h-2.5 w-2.5 rounded-full ${locked ? 'bg-text-muted' : warning ? 'bg-warning' : active ? 'bg-success' : 'bg-border'}`} />
+    </div>
+  );
+}
+
+function Metric({ title, value, icon: Icon, caption }: { title: string; value: number; icon: LucideIcon; caption: string }) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent">
+          <Icon size={18} />
+        </span>
+        <p className="text-2xl font-semibold text-text-primary">{value}</p>
+      </div>
+      <p className="mt-4 text-sm font-semibold text-text-primary">{title}</p>
+      <p className="mt-1 truncate text-xs text-text-muted">{caption}</p>
+    </div>
+  );
+}
+
+function Notice({ tone, title, detail }: { tone: 'info' | 'error'; title: string; detail: string }) {
+  const toneClass = tone === 'error'
+    ? 'border-danger/30 bg-danger/5 text-danger'
+    : 'border-accent/25 bg-accent/5 text-accent';
+
+  return (
+    <div className={`mt-4 rounded-lg border px-4 py-3 ${toneClass}`}>
+      <p className="text-sm font-semibold">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-text-secondary">{detail}</p>
+    </div>
+  );
+}
+
+function ValidationCard({ message }: { message: TfValidationMessage }) {
+  const toneClass = message.severity === 'error'
+    ? 'border-danger/30 bg-danger/5'
+    : message.severity === 'warning'
+      ? 'border-warning/30 bg-warning/5'
+      : 'border-success/25 bg-success/5';
+
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${toneClass}`}>
+      <p className="text-sm font-semibold text-text-primary">{message.title}</p>
+      <p className="mt-1 text-xs leading-5 text-text-secondary">{message.detail}</p>
+    </div>
+  );
+}
+
+function slugForDownload(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'terraform-preview';
+}

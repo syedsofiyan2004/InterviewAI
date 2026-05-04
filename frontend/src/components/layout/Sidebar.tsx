@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
+import { CloudCog, FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +25,12 @@ const navSections = [
     items: [
       { name: 'Projects', href: '/mom', icon: ListChecks },
       { name: 'New Project', href: '/mom/new', icon: FolderPlus },
+    ],
+  },
+  {
+    name: 'TF Generator',
+    items: [
+      { name: 'Workspace', href: '/tf-generator', icon: CloudCog },
     ],
   },
 ];

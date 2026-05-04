@@ -121,6 +121,12 @@ function AppOnboardingTour() {
           body: 'Create a project first, then add one transcript or bulk upload meeting files inside that project.',
           position: 'right',
         },
+        {
+          targetId: 'tour-nav-tf-generator',
+          title: 'TF Generator',
+          body: 'Use this local-first workspace to parse AWS prerequisite workbooks, validate resources, and review Terraform before deployment is enabled.',
+          position: 'right',
+        },
       ], 'app-overview');
     }, 900);
 
