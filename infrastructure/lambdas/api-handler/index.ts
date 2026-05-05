@@ -62,6 +62,16 @@ interface GithubRepoInfo {
   repo: string;
 }
 
+class GithubRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'GithubRequestError';
+    this.status = status;
+  }
+}
+
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   const { httpMethod, resource, pathParameters } = event;
@@ -824,7 +834,20 @@ async function pushGithubPullRequest(params: {
   const repoPath = `/repos/${encodeURIComponent(params.repo.owner)}/${encodeURIComponent(params.repo.repo)}`;
   const repo = await githubRequest<any>('GET', repoPath, headers);
   const baseBranch = params.baseBranch || repo.default_branch;
-  const baseRef = await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(baseBranch)}`, headers);
+  if (params.branch === baseBranch) {
+    throw new Error('Use a feature branch name that is different from the repository default branch.');
+  }
+
+  let baseRef: any;
+  try {
+    baseRef = await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(baseBranch)}`, headers);
+  } catch (error: any) {
+    if (error instanceof GithubRequestError && error.status === 409 && /empty/i.test(error.message)) {
+      baseRef = await initializeEmptyGithubRepository(repoPath, headers, baseBranch);
+    } else {
+      throw error;
+    }
+  }
   let targetRef = await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(params.branch)}`, headers, undefined, { allowNotFound: true });
 
   if (!targetRef) {
@@ -884,6 +907,26 @@ async function pushGithubPullRequest(params: {
   };
 }
 
+async function initializeEmptyGithubRepository(repoPath: string, headers: Record<string, string>, baseBranch: string) {
+  const tree = await githubRequest<any>('POST', `${repoPath}/git/trees`, headers, {
+    tree: [{
+      path: 'README.md',
+      mode: '100644',
+      type: 'blob',
+      content: '# Terraform Repository\n\nInitialized by Minfy AI TF Generator.\n',
+    }],
+  });
+  const commit = await githubRequest<any>('POST', `${repoPath}/git/commits`, headers, {
+    message: 'Initialize Terraform repository',
+    tree: tree.sha,
+    parents: [],
+  });
+  return await githubRequest<any>('POST', `${repoPath}/git/refs`, headers, {
+    ref: `refs/heads/${baseBranch}`,
+    sha: commit.sha,
+  });
+}
+
 function githubPullRequestBody(deploymentName: string): string {
   return `## Terraform network package
 
@@ -917,7 +960,7 @@ async function githubRequest<T>(
   if (!response.ok) {
     const error: any = await response.json().catch(() => ({}));
     const message = error?.message || `GitHub API request failed with ${response.status}`;
-    throw new Error(message);
+    throw new GithubRequestError(response.status, message);
   }
 
   if (response.status === 204) return null;
