@@ -30,7 +30,8 @@ const navSections = [
   {
     name: 'TF Generator',
     items: [
-      { name: 'Workspace', href: '/tf-generator', icon: CloudCog },
+      { name: 'Workspaces', href: '/tf-generator', icon: CloudCog },
+      { name: 'New Workspace', href: '/tf-generator?view=new', icon: FolderPlus },
     ],
   },
 ];

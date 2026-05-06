@@ -54,24 +54,95 @@ export const MomRecordSchema = z.object({
 
 export type MomRecord = z.infer<typeof MomRecordSchema>;
 
+const AttendeeSchema = z.object({
+  name: z.string(),
+  role: z.string().optional(),
+  organisation: z.string().optional(),
+});
+
+const AttendeeInputSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  const dashMatch = value.match(/^(.+?)\s+-\s+(.+)$/);
+  if (!dashMatch) return { name: value, role: undefined, organisation: undefined };
+  const [, name, roleAndOrg] = dashMatch;
+  const parts = roleAndOrg.split('/').map(part => part.trim()).filter(Boolean);
+  return { name: name.trim(), role: parts[0], organisation: parts.slice(1).join(' / ') || undefined };
+}, AttendeeSchema);
+
+const DecisionSchema = z.object({
+  decision: z.string(),
+  rationale: z.string().optional(),
+  decided_by: z.string().optional(),
+});
+
+const DecisionInputSchema = z.preprocess((value) => (
+  typeof value === 'string' ? { decision: value } : value
+), DecisionSchema);
+
+const ActionItemSchema = z.object({
+  owner: z.string(),
+  task: z.string(),
+  due_date: z.string(),
+  priority: z.enum(['High', 'Medium', 'Low']).default('Medium'),
+});
+
+const RiskSchema = z.object({
+  description: z.string(),
+  likelihood: z.enum(['H', 'M', 'L']).default('M'),
+  impact: z.enum(['H', 'M', 'L']).default('M'),
+  owner: z.string().optional(),
+  mitigation: z.string().optional(),
+  category: z.string().optional(),
+});
+
+const RiskInputSchema = z.preprocess((value) => (
+  typeof value === 'string'
+    ? { description: value, likelihood: 'M', impact: 'M', mitigation: 'To be determined' }
+    : value
+), RiskSchema);
+
+const DiscussionPointSchema = z.object({
+  topic: z.string(),
+  raised_by: z.string().optional(),
+  summary: z.string(),
+  decisions: z.array(DecisionInputSchema).default([]),
+  action_items: z.array(ActionItemSchema).default([]),
+});
+
+const NextMeetingSchema = z.object({
+  date: z.string().optional(),
+  purpose: z.string().optional(),
+  proposed_agenda: z.string().optional(),
+  prep_required: z.string().optional(),
+});
+
+const PreviousActionSchema = z.object({
+  ref: z.string().optional(),
+  action: z.string(),
+  owner: z.string().optional(),
+  status: z.string().optional(),
+});
+
 export const MomResultSchema = z.object({
   title: z.string(),
   date: z.string(),
-  attendees: z.array(z.string()),
-  agenda_items: z.array(z.string()),
-  discussion_points: z.array(z.object({
-    topic: z.string(),
-    summary: z.string(),
-    decisions: z.array(z.string()),
-    action_items: z.array(z.object({
-      owner: z.string(),
-      task: z.string(),
-      due_date: z.string(),
-    })),
-  })),
-  risks: z.array(z.string()),
-  next_steps: z.array(z.string()),
   overall_summary: z.string(),
+  attendees: z.array(AttendeeInputSchema),
+  agenda_items: z.array(z.string()),
+  discussion_points: z.array(DiscussionPointSchema),
+  risks: z.array(RiskInputSchema),
+  next_steps: z.array(z.string()),
+  reference_no: z.string().optional(),
+  report_type: z.string().optional(),
+  platform: z.string().optional(),
+  duration: z.string().optional(),
+  workstream: z.string().optional(),
+  facilitator: z.string().optional(),
+  scribe: z.string().optional(),
+  distribution: z.string().optional(),
+  issued_date: z.string().optional(),
+  next_meeting: NextMeetingSchema.optional(),
+  previous_actions: z.array(PreviousActionSchema).default([]),
 });
 
 export type MomResult = z.infer<typeof MomResultSchema>;

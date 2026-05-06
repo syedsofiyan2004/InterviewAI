@@ -164,9 +164,9 @@ function MomViewContent() {
           <section className="card p-6 space-y-4">
             <h2 className="text-lg font-semibold text-text-primary">Attendees</h2>
             <div className="flex flex-wrap gap-2">
-              {safeList(result.attendees).map((attendee) => (
-                <span key={attendee} className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-xs font-semibold">
-                  {attendee}
+              {safeAttendees(result.attendees).map((attendee) => (
+                <span key={`${attendee.name}-${attendee.role || ''}`} className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-xs font-semibold">
+                  {attendee.role ? `${attendee.name} · ${attendee.role}` : attendee.name}
                 </span>
               ))}
             </div>
@@ -182,7 +182,9 @@ function MomViewContent() {
                   <div className="mt-4">
                     <p className="text-xs font-semibold text-text-muted mb-2">Decisions</p>
                     <ul className="space-y-1 text-sm text-text-secondary">
-                      {point.decisions.map((decision) => <li key={decision}>- {decision}</li>)}
+                      {point.decisions.map((decision: any, decisionIndex) => (
+                        <li key={`${decision.decision || decision}-${decisionIndex}`}>- {typeof decision === 'string' ? decision : decision.decision}</li>
+                      ))}
                     </ul>
                   </div>
                 )}
@@ -215,7 +217,7 @@ function MomViewContent() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <ListSection title="Agenda Items" items={result.agenda_items} />
-            <ListSection title="Risks" items={result.risks} />
+            <ListSection title="Risks" items={result.risks.map((risk: any) => typeof risk === 'string' ? risk : risk.description)} />
           </div>
           <ListSection title="Next Steps" items={result.next_steps} numbered />
         </div>
@@ -225,7 +227,25 @@ function MomViewContent() {
 }
 
 function safeList(items: string[]) {
-  return items.filter(Boolean).length ? items.filter(Boolean) : ['Not specified'];
+  const cleaned = items
+    .filter(Boolean)
+    .map((item) => item.replace(/\s*[-–—]\s*(role\s+)?not specified\s*$/i, '').trim())
+    .filter(Boolean);
+  return cleaned.length ? cleaned : ['Not specified'];
+}
+
+function safeAttendees(items: any[]) {
+  const cleaned = (items || []).map((item) => {
+    if (typeof item === 'string') {
+      return { name: item.replace(/\s*[-–—]\s*(role\s+)?not specified\s*$/i, '').trim() };
+    }
+    return {
+      name: item?.name || 'Not specified',
+      role: item?.role && !/not specified/i.test(item.role) ? item.role : '',
+      organisation: item?.organisation,
+    };
+  }).filter((item) => item.name);
+  return cleaned.length ? cleaned : [{ name: 'Not specified' }];
 }
 
 function ListSection({ title, items, numbered = false }: { title: string; items: string[]; numbered?: boolean }) {

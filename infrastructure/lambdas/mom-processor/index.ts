@@ -79,46 +79,119 @@ async function runMomPipeline(id: string) {
 
 async function analyzeTranscript(title: string, transcript: string) {
   const prompt = `
-You are a senior delivery manager creating concise, executive-ready minutes of meeting.
-Analyze the transcript for facts, commitments, risks, blockers, owners, dates, and final decisions.
+You are a senior project manager producing a formal Minutes of Meeting document.
+Your task is to analyze the meeting transcript provided and extract structured,
+accurate information from it. You must not invent any names, dates, costs,
+decisions, tools, platforms, or technical details that are not explicitly
+supported by the transcript.
 
-Return valid JSON only. The JSON must exactly match this shape:
+The output will be used to generate a professional PDF report for any type
+of meeting - technical, governance, sales, HR, or operational. The structure
+of the output is always the same regardless of meeting type.
+
+Return ONLY valid JSON inside <mom_json>...</mom_json> tags.
+The JSON must match this exact shape:
+
 {
   "title": "string",
   "date": "YYYY-MM-DD or Not specified",
-  "attendees": ["string"],
+  "reference_no": "string",
+  "report_type": "string",
+  "platform": "string",
+  "duration": "string",
+  "workstream": "string",
+  "facilitator": "string",
+  "scribe": "string",
+  "distribution": "string",
+  "issued_date": "YYYY-MM-DD",
+  "overall_summary": "string",
+  "attendees": [
+    {
+      "name": "string",
+      "role": "string",
+      "organisation": "string"
+    }
+  ],
   "agenda_items": ["string"],
   "discussion_points": [
     {
       "topic": "string",
+      "raised_by": "string",
       "summary": "string",
-      "decisions": ["string"],
+      "decisions": [
+        {
+          "decision": "string",
+          "rationale": "string",
+          "decided_by": "string"
+        }
+      ],
       "action_items": [
-        { "owner": "string", "task": "string", "due_date": "string" }
+        {
+          "owner": "string",
+          "task": "string",
+          "due_date": "string",
+          "priority": "High | Medium | Low"
+        }
       ]
     }
   ],
-  "risks": ["string"],
+  "risks": [
+    {
+      "description": "string",
+      "likelihood": "H | M | L",
+      "impact": "H | M | L",
+      "owner": "string",
+      "mitigation": "string",
+      "category": "string"
+    }
+  ],
   "next_steps": ["string"],
-  "overall_summary": "string"
+  "next_meeting": {
+    "date": "string",
+    "purpose": "string",
+    "proposed_agenda": "string",
+    "prep_required": "string"
+  },
+  "previous_actions": [
+    {
+      "ref": "string",
+      "action": "string",
+      "owner": "string",
+      "status": "string"
+    }
+  ]
 }
 
-Rules:
+Field rules:
 - Use the user-provided meeting title unless the transcript clearly gives a better title.
-- Use the date when the meeting was held for "date". Return it as YYYY-MM-DD when it is clearly stated; use "Not specified" when the meeting date is unknown.
-- Use "Not specified" when an owner, role, agenda item, or field is unknown.
+- Use the date the meeting was held. Return YYYY-MM-DD if clearly stated. Return "Not specified" if the date cannot be determined from the transcript. Do not use today's date.
+- If no reference number is mentioned, generate "MOM-001".
+- Infer report_type from the meeting content, such as "Technical Working Session", "Governance Review", "Sprint Planning", "Client Review", "Architecture Discussion", "HR Review", or "Sales Call". Default to "Working Session".
+- Extract platform, duration, workstream, facilitator, and scribe only from transcript context. Use "Not specified" when unclear.
+- Use "All Attendees" for distribution unless additional recipients are explicitly mentioned.
+- Use the meeting date for issued_date unless a different issued date is explicitly mentioned.
+- Write overall_summary in exactly 3-5 executive-ready sentences covering purpose, decisions/conclusions, open risks/questions, and next steps.
+- List every person who spoke or was explicitly present. Attendees must be objects, never plain strings.
+- For attendee role, infer from context when possible. If role is genuinely unclear, use a neutral functional label such as "Participant", "Stakeholder", or "Team Member". Never write "role not specified" or "Not specified" for role.
+- For attendee organisation, use the company/team when mentioned. If not mentioned, use the project name if clear, otherwise use "-".
+- List 3-6 agenda_items as clear topic statements.
+- Group discussion_points into 5-9 logical themes or workstream areas. Each summary must be 2-5 sentences and outcome-focused.
+- Include raised_by only when the transcript supports it.
+- Decisions must be objects and must include only confirmed decisions, not opinions. Use [] when none exist.
+- Action items must be concrete, outcome-based, and prioritized. Use "Unassigned" only when no owner is clear. Use "TBD" when the task is real but no due date is stated.
+- Priority rules: High means blocking, critical path, or near deadline; Medium means important but not immediately blocking; Low means useful but deferrable.
+- Risks must be objects. Include every blocker, dependency, uncertainty, feasibility concern, approval dependency, escalation, compliance concern, and delivery risk.
+- Every risk description must begin with a category prefix, for example "Timeline Risk: ...", "Technical Risk: ...", or "Access Risk: ...".
+- Risk category must be one of Timeline, Technical, Delivery, Dependency, Access, Compliance, Commercial, or Resource.
+- Use likelihood H/M/L and impact H/M/L based on transcript language and project consequence.
+- Use "To be determined" for mitigation if no mitigation was discussed.
+- Write 4-8 next_steps as ordered, practical critical-path steps. Start each with the owner name when clear.
+- Include next_meeting only if a follow-up meeting was explicitly discussed or scheduled. Otherwise omit the entire field.
+- previous_actions should be [] unless the transcript includes review of actions from a previous meeting.
 - Do not invent facts, deadlines, owners, attendees, costs, decisions, tools, or platforms that are not supported by the transcript.
 - Preserve important names, dates, products, cloud services, costs, environment names, and delivery commitments exactly when they are mentioned.
-- Keep "overall_summary" to 3-5 crisp sentences that explain what happened, why it matters, and the current state.
-- Keep "agenda_items" to the main 3-6 business topics.
-- Keep "discussion_points" to 4-8 grouped themes. Avoid transcript-style narration.
-- For each discussion point, write a short outcome-focused summary.
-- Add only explicit decisions to "decisions"; if there are none, use an empty array.
-- Keep action items concrete and outcome based. Assign "Unassigned" only when no owner is clear.
-- Use "Not specified" for due_date unless a timeline or date is clearly stated.
-- Put blockers, dependencies, uncertainties, escalations, compliance concerns, and delivery risks in "risks".
-- Keep "next_steps" short, ordered, and practical. Do not repeat every action item.
-- Put the final JSON inside <mom_json>...</mom_json>.
+- Do not narrate the conversation. Write outcomes and conclusions.
+- Put the final JSON inside <mom_json>...</mom_json>. Do not include markdown or commentary outside the tags.
 
 Meeting title provided by user: ${title}
 

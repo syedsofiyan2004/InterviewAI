@@ -112,20 +112,58 @@ export interface DetailedMom extends Mom {
 export interface MomResult {
   title: string;
   date: string;
-  attendees: string[];
+  reference_no?: string;
+  report_type?: string;
+  platform?: string;
+  duration?: string;
+  workstream?: string;
+  facilitator?: string;
+  scribe?: string;
+  distribution?: string;
+  issued_date?: string;
+  attendees: Array<{
+    name: string;
+    role?: string;
+    organisation?: string;
+  }>;
   agenda_items: string[];
   discussion_points: Array<{
     topic: string;
+    raised_by?: string;
     summary: string;
-    decisions: string[];
+    decisions: Array<{
+      decision: string;
+      rationale?: string;
+      decided_by?: string;
+    }>;
     action_items: Array<{
       owner: string;
       task: string;
       due_date: string;
+      priority?: 'High' | 'Medium' | 'Low';
     }>;
   }>;
-  risks: string[];
+  risks: Array<{
+    description: string;
+    likelihood?: 'H' | 'M' | 'L';
+    impact?: 'H' | 'M' | 'L';
+    owner?: string;
+    mitigation?: string;
+    category?: string;
+  }>;
   next_steps: string[];
+  next_meeting?: {
+    date?: string;
+    purpose?: string;
+    proposed_agenda?: string;
+    prep_required?: string;
+  };
+  previous_actions?: Array<{
+    ref?: string;
+    action: string;
+    owner?: string;
+    status?: string;
+  }>;
   overall_summary: string;
 }
 
@@ -169,6 +207,66 @@ export interface TfGithubPullRequest {
   commit_url: string;
   pull_request_url?: string | null;
   pull_request_number?: number | null;
+}
+
+export interface TfGithubTokenVerification {
+  valid: boolean;
+  repository?: string | null;
+  default_branch?: string | null;
+  is_empty: boolean;
+  checks: {
+    repository: boolean;
+    contents_write: boolean;
+    pull_requests_write: boolean;
+    workflows_write: boolean;
+    secrets_access: boolean;
+    actions_write: boolean;
+  };
+  required_secrets_present: boolean;
+  existing_required_secrets: string[];
+  missing_permissions: string[];
+  message: string;
+}
+
+export interface TfGithubSecretsResult {
+  repository: string;
+  updated_secrets: string[];
+  message: string;
+}
+
+export interface TfGithubApplyResult {
+  repository: string;
+  ref: string;
+  workflow: string;
+  actions_url: string;
+  message: string;
+}
+
+export interface TfProject {
+  project_id: string;
+  project_name: string;
+  description?: string | null;
+  workspace_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface TfWorkspace {
+  workspace_id: string;
+  project_id?: string | null;
+  deployment_name: string;
+  primary_region: string;
+  repository_url?: string | null;
+  branch?: string | null;
+  file_count: number;
+  summary?: Record<string, unknown>;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface DetailedTfWorkspace extends TfWorkspace {
+  manifest?: Record<string, any>;
+  files: TfJobFile[];
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +472,94 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getTfWorkspaces(): Promise<{ items: TfWorkspace[]; count: number }> {
+    const res = await authFetch(`${API_URL}/tf-workspaces`);
+    return handleResponse(res);
+  },
+
+  async getTfProjects(): Promise<{ items: TfProject[]; count: number }> {
+    const res = await authFetch(`${API_URL}/tf-projects`);
+    return handleResponse(res);
+  },
+
+  async createTfProject(data: { project_name: string; description?: string }): Promise<TfProject> {
+    const res = await authFetch(`${API_URL}/tf-projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async updateTfProject(id: string, data: { project_name: string; description?: string }): Promise<TfProject> {
+    const res = await authFetch(`${API_URL}/tf-projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteTfProject(id: string): Promise<{ message: string; deleted_workspaces: number }> {
+    const res = await authFetch(`${API_URL}/tf-projects/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async getTfProject(id: string): Promise<TfProject> {
+    const res = await authFetch(`${API_URL}/tf-projects/${id}`);
+    return handleResponse(res);
+  },
+
+  async getTfProjectWorkspaces(projectId: string): Promise<{ items: TfWorkspace[]; count: number }> {
+    const res = await authFetch(`${API_URL}/tf-workspaces?project_id=${encodeURIComponent(projectId)}`);
+    return handleResponse(res);
+  },
+
+  async getTfWorkspace(id: string): Promise<DetailedTfWorkspace> {
+    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`);
+    return handleResponse(res);
+  },
+
+  async createTfWorkspace(data: {
+    project_id: string;
+    deployment_name: string;
+    primary_region: string;
+    repository_url?: string;
+    branch?: string;
+    files: TfJobFile[];
+    summary?: Record<string, unknown>;
+    source_manifest?: Record<string, unknown>;
+  }): Promise<TfWorkspace> {
+    const res = await authFetch(`${API_URL}/tf-workspaces`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async updateTfWorkspace(id: string, data: {
+    deployment_name: string;
+    repository_url?: string;
+    branch?: string;
+  }): Promise<TfWorkspace> {
+    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteTfWorkspace(id: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
   async getTfJob(id: string): Promise<TfJob> {
     const res = await authFetch(`${API_URL}/tf-jobs/${id}`);
     return handleResponse(res);
@@ -409,6 +595,59 @@ export const api = {
     files: TfJobFile[];
   }): Promise<TfGithubPullRequest> {
     const res = await authFetch(`${API_URL}/tf-github-pr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async dispatchTfGithubApply(data: {
+    repository_url: string;
+    github_token: string;
+    ref?: string;
+  }): Promise<TfGithubApplyResult> {
+    const res = await authFetch(`${API_URL}/tf-github-apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async dispatchTfGithubDestroy(data: {
+    repository_url: string;
+    github_token: string;
+    confirmation: string;
+    ref?: string;
+  }): Promise<TfGithubApplyResult> {
+    const res = await authFetch(`${API_URL}/tf-github-destroy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async verifyTfGithubToken(data: {
+    repository_url: string;
+    github_token: string;
+  }): Promise<TfGithubTokenVerification> {
+    const res = await authFetch(`${API_URL}/tf-github-token/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async updateTfGithubSecrets(data: {
+    repository_url: string;
+    github_token: string;
+    aws_access_key_id: string;
+    aws_secret_access_key: string;
+  }): Promise<TfGithubSecretsResult> {
+    const res = await authFetch(`${API_URL}/tf-github-secrets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),

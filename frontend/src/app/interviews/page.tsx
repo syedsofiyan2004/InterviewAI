@@ -65,7 +65,17 @@ export default function Dashboard() {
     async function loadData() {
       try {
         const data = await api.getInterviews();
-        const sorted = [...data.items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        const normalized = (data.items || [])
+          .filter((item) => item && item.interview_id)
+          .map((item) => ({
+            ...item,
+            candidate_name: item.candidate_name || 'Unknown candidate',
+            position: item.position || 'Unknown position',
+            status: item.status || 'CREATED',
+            created_at: Number.isFinite(item.created_at) ? item.created_at : Date.now(),
+            updated_at: Number.isFinite(item.updated_at) ? item.updated_at : Date.now(),
+          }));
+        const sorted = normalized.sort((a, b) => b.created_at - a.created_at);
         setInterviews(sorted);
         
         const summary = sorted.reduce((acc, curr) => {
@@ -92,7 +102,17 @@ export default function Dashboard() {
       setInterviews(prev => prev.filter(i => i.interview_id !== id));
       // Refresh stats
       const data = await api.getInterviews();
-      const sorted = [...data.items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const sorted = (data.items || [])
+        .filter((item) => item && item.interview_id)
+        .map((item) => ({
+          ...item,
+          candidate_name: item.candidate_name || 'Unknown candidate',
+          position: item.position || 'Unknown position',
+          status: item.status || 'CREATED',
+          created_at: Number.isFinite(item.created_at) ? item.created_at : Date.now(),
+          updated_at: Number.isFinite(item.updated_at) ? item.updated_at : Date.now(),
+        }))
+        .sort((a, b) => b.created_at - a.created_at);
       const summary = sorted.reduce((acc, curr) => {
         acc.total++;
         if (curr.status === 'COMPLETED') acc.completed++;

@@ -393,6 +393,34 @@ export class IepStack extends cdk.Stack {
     const tfJobs = api.root.addResource('tf-jobs');
     tfJobs.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
+    const tfProjects = api.root.addResource('tf-projects');
+    tfProjects.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    tfProjects.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    const singleTfProject = tfProjects.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleTfProject.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleTfProject.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
+    singleTfProject.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
+
+    const tfWorkspaces = api.root.addResource('tf-workspaces');
+    tfWorkspaces.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    tfWorkspaces.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    const singleTfWorkspace = tfWorkspaces.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleTfWorkspace.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleTfWorkspace.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
+    singleTfWorkspace.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
+
     const singleTfJob = tfJobs.addResource('{id}', {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
@@ -413,6 +441,19 @@ export class IepStack extends cdk.Stack {
 
     const tfGithubPr = api.root.addResource('tf-github-pr');
     tfGithubPr.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfGithubApply = api.root.addResource('tf-github-apply');
+    tfGithubApply.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfGithubDestroy = api.root.addResource('tf-github-destroy');
+    tfGithubDestroy.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfGithubToken = api.root.addResource('tf-github-token');
+    const tfGithubTokenVerify = tfGithubToken.addResource('verify');
+    tfGithubTokenVerify.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const tfGithubSecrets = api.root.addResource('tf-github-secrets');
+    tfGithubSecrets.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     // --- NEW User Preference Routes ---
     const user = api.root.addResource('user');

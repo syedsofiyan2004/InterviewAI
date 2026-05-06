@@ -1,6 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { v4 as uuidv4 } from 'uuid';
-import { S3Client, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, HeadObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { BatchGetBuildsCommand, CodeBuildClient, StartBuildCommand } from '@aws-sdk/client-codebuild';
 import { 
@@ -39,6 +39,7 @@ import {
 } from '../../schema/mom.js';
 import { generateMomPdfReport } from '../shared/mom-report.js';
 import { generateInterviewPdfReport } from '../processor/index.js';
+import sodium from 'libsodium-wrappers';
 
 validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL', 'MOM_TABLE_NAME', 'MOM_QUEUE_URL']);
 
@@ -90,6 +91,46 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await createTfJob(event);
     }
 
+    if (httpMethod === 'GET' && resource === '/tf-projects') {
+      return await listTfProjects(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-projects') {
+      return await createTfProject(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/tf-projects/{id}') {
+      return await getTfProject(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'PATCH' && resource === '/tf-projects/{id}') {
+      return await updateTfProject(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'DELETE' && resource === '/tf-projects/{id}') {
+      return await deleteTfProject(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/tf-workspaces') {
+      return await listTfWorkspaces(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-workspaces') {
+      return await createTfWorkspace(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/tf-workspaces/{id}') {
+      return await getTfWorkspace(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'PATCH' && resource === '/tf-workspaces/{id}') {
+      return await updateTfWorkspace(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'DELETE' && resource === '/tf-workspaces/{id}') {
+      return await deleteTfWorkspace(pathParameters?.id, event);
+    }
+
     if (httpMethod === 'GET' && resource === '/tf-jobs/{id}') {
       return await getTfJob(pathParameters?.id, event);
     }
@@ -108,6 +149,22 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/tf-github-pr') {
       return await createTfGithubPullRequest(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-github-apply') {
+      return await dispatchTfGithubApply(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-github-destroy') {
+      return await dispatchTfGithubDestroy(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-github-token/verify') {
+      return await verifyTfGithubToken(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/tf-github-secrets') {
+      return await updateTfGithubSecrets(event);
     }
 
     if (httpMethod === 'POST' && resource === '/moms') {
@@ -339,10 +396,65 @@ async function getOwnedTfJobRecord(id: string | undefined, event: APIGatewayProx
   return { item, userId };
 }
 
+async function getOwnedTfProjectRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing project id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFPROJECT#${id}`, SK: 'METADATA' },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'Terraform project not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this Terraform project') };
+  }
+
+  return { item, userId };
+}
+
+async function getOwnedTfWorkspaceRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing workspace id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFWORKSPACE#${id}`, SK: 'METADATA' },
+  }));
+
+  const item = result.Item;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'Terraform workspace not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this Terraform workspace') };
+  }
+
+  return { item, userId };
+}
+
 const TF_DEPLOY_ROLE_PATTERN = /^arn:aws:iam::\d{12}:role\/(TerraformDeployRole|MinfyTerraformDeployRole)$/;
 const TF_FILE_NAME_PATTERN = /^[a-zA-Z0-9._-]+\.tf$/;
 const TF_MAX_FILES = 20;
 const TF_MAX_TOTAL_BYTES = 600 * 1024;
+const TF_MAX_MANIFEST_BYTES = 300 * 1024;
 
 async function createTfJob(event: APIGatewayProxyEvent) {
   const userId = getAuthenticatedUserId(event);
@@ -392,7 +504,7 @@ async function createTfJob(event: APIGatewayProxyEvent) {
     common_tags: {
       Project: deploymentName,
       ManagedBy: 'Terraform',
-      GeneratedBy: 'Minfy AI TF Generator',
+      GeneratedBy: 'Terraform Generator',
     },
   }, null, 2);
 
@@ -422,6 +534,333 @@ async function createTfJob(event: APIGatewayProxyEvent) {
   }));
 
   return createdResponse(await formatTfJob({ job_id: jobId, status: 'CREATED', s3_prefix: prefix, deployment_name: deploymentName, primary_region: primaryRegion, role_arn: roleArn, file_count: normalizedFiles.length, created_at: now, updated_at: now }));
+}
+
+async function createTfProject(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const projectName = sanitizeText(body.project_name, 120);
+  const description = sanitizeText(body.description, 240);
+
+  if (!projectName) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Project name is required.');
+  }
+
+  const projectId = uuidv4();
+  const now = Date.now();
+  const item = {
+    PK: `TFPROJECT#${projectId}`,
+    SK: 'METADATA',
+    owner_user_id: userId,
+    item_type: 'TF_PROJECT',
+    project_id: projectId,
+    project_name: projectName,
+    description: description || null,
+    workspace_count: 0,
+    created_at: now,
+    updated_at: now,
+  };
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: TABLE_NAME,
+    Item: item,
+  }));
+
+  return createdResponse(formatTfProject(item));
+}
+
+async function listTfProjects(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: TABLE_NAME,
+    FilterExpression: 'SK = :sk AND item_type = :type AND owner_user_id = :owner',
+    ExpressionAttributeValues: {
+      ':sk': 'METADATA',
+      ':type': 'TF_PROJECT',
+      ':owner': userId,
+    },
+    Limit: 50,
+  }));
+
+  const items = (result.Items || [])
+    .map(formatTfProject)
+    .sort((a, b) => b.updated_at - a.updated_at);
+
+  return successResponse({ items, count: items.length });
+}
+
+async function getTfProject(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfProjectRecord(id, event);
+  if (response) return response;
+
+  return successResponse(formatTfProject(item));
+}
+
+async function updateTfProject(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { response } = await getOwnedTfProjectRecord(id, event);
+  if (response) return response;
+
+  const body = JSON.parse(event.body || '{}');
+  const projectName = sanitizeText(body.project_name, 120);
+  const description = sanitizeText(body.description, 240);
+  if (!projectName) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Project name is required.');
+  }
+
+  const result = await ddbDocClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFPROJECT#${id}`, SK: 'METADATA' },
+    UpdateExpression: 'SET project_name = :name, description = :description, updated_at = :now',
+    ExpressionAttributeValues: {
+      ':name': projectName,
+      ':description': description || null,
+      ':now': Date.now(),
+    },
+    ReturnValues: 'ALL_NEW',
+  }));
+
+  return successResponse(formatTfProject(result.Attributes));
+}
+
+async function deleteTfProject(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item: project, response, userId } = await getOwnedTfProjectRecord(id, event);
+  if (response) return response;
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: TABLE_NAME,
+    FilterExpression: 'SK = :sk AND item_type = :type AND owner_user_id = :owner AND project_id = :project',
+    ExpressionAttributeValues: {
+      ':sk': 'METADATA',
+      ':type': 'TF_WORKSPACE',
+      ':owner': userId,
+      ':project': project.project_id,
+    },
+  }));
+  const projectWorkspaces = result.Items || [];
+
+  await Promise.all(projectWorkspaces.map((workspace) => deleteTfWorkspaceByItem(workspace)));
+  await ddbDocClient.send(new DeleteCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFPROJECT#${project.project_id}`, SK: 'METADATA' },
+  }));
+
+  return successResponse({ message: 'Terraform project deleted', deleted_workspaces: projectWorkspaces.length });
+}
+
+async function createTfWorkspace(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const projectId = sanitizeText(body.project_id, 80);
+  const deploymentName = sanitizeText(body.deployment_name, 120) || 'Terraform deployment';
+  const primaryRegion = sanitizeText(body.primary_region, 40) || 'us-east-1';
+  const repositoryUrl = sanitizeText(body.repository_url, 240);
+  const branch = sanitizeBranchName(body.branch || '');
+  const files = Array.isArray(body.files) ? body.files : [];
+  const summary = typeof body.summary === 'object' && body.summary ? body.summary : {};
+  const sourceManifest = typeof body.source_manifest === 'object' && body.source_manifest ? body.source_manifest : null;
+
+  if (!projectId) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Create or select a Terraform project before saving a workspace.');
+  }
+
+  const projectResult = await getOwnedTfProjectRecord(projectId, event);
+  if (projectResult.response) return projectResult.response;
+
+  if (!files.length || files.length > TF_MAX_FILES) {
+    return errorResponse(400, 'VALIDATION_ERROR', `Save between 1 and ${TF_MAX_FILES} Terraform files.`);
+  }
+
+  const normalizedFiles = files.map((file: any) => ({
+    filename: sanitizeText(file?.filename, 120),
+    content: typeof file?.content === 'string' ? file.content : '',
+  }));
+  const totalBytes = Buffer.byteLength(JSON.stringify(normalizedFiles), 'utf8');
+  if (totalBytes > TF_MAX_TOTAL_BYTES) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Terraform workspace is too large to store.');
+  }
+  const manifestBytes = Buffer.byteLength(JSON.stringify(sourceManifest || {}), 'utf8');
+  if (manifestBytes > TF_MAX_MANIFEST_BYTES) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Workbook manifest is too large to store with this workspace.');
+  }
+
+  const invalidFile = normalizedFiles.find((file: TfJobFileInput) => !TF_FILE_NAME_PATTERN.test(file.filename) || !file.content.trim());
+  if (invalidFile) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Only non-empty .tf files with simple file names are accepted.');
+  }
+
+  const workspaceId = uuidv4();
+  const now = Date.now();
+  const prefix = `users/${userId}/tf-projects/${projectId}/workspaces/${workspaceId}`;
+  await Promise.all([
+    ...normalizedFiles.map((file: TfJobFileInput) => saveFileContent(BUCKET_NAME, `${prefix}/files/${file.filename}`, file.content, 'text/plain')),
+    saveFileContent(BUCKET_NAME, `${prefix}/manifest.json`, JSON.stringify({
+      project_id: projectId,
+      deployment_name: deploymentName,
+      primary_region: primaryRegion,
+      repository_url: repositoryUrl || null,
+      branch: branch || null,
+      summary,
+      source_manifest: sourceManifest,
+      files: normalizedFiles.map((file: TfJobFileInput) => file.filename),
+      saved_at: now,
+    }, null, 2), 'application/json'),
+  ]);
+
+  const item = {
+    PK: `TFWORKSPACE#${workspaceId}`,
+    SK: 'METADATA',
+    owner_user_id: userId,
+    item_type: 'TF_WORKSPACE',
+    workspace_id: workspaceId,
+    project_id: projectId,
+    deployment_name: deploymentName,
+    primary_region: primaryRegion,
+    repository_url: repositoryUrl || null,
+    branch: branch || null,
+    s3_prefix: prefix,
+    file_count: normalizedFiles.length,
+    summary,
+    created_at: now,
+    updated_at: now,
+  };
+
+  await ddbDocClient.send(new PutCommand({
+    TableName: TABLE_NAME,
+    Item: item,
+  }));
+
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFPROJECT#${projectId}`, SK: 'METADATA' },
+    UpdateExpression: 'SET updated_at = :now ADD workspace_count :one',
+    ExpressionAttributeValues: {
+      ':now': now,
+      ':one': 1,
+    },
+  }));
+
+  return createdResponse(formatTfWorkspace(item));
+}
+
+async function listTfWorkspaces(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+  const projectId = sanitizeText(event.queryStringParameters?.project_id, 80);
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: TABLE_NAME,
+    FilterExpression: projectId
+      ? 'SK = :sk AND item_type = :type AND owner_user_id = :owner AND project_id = :project'
+      : 'SK = :sk AND item_type = :type AND owner_user_id = :owner',
+    ExpressionAttributeValues: {
+      ':sk': 'METADATA',
+      ':type': 'TF_WORKSPACE',
+      ':owner': userId,
+      ...(projectId ? { ':project': projectId } : {}),
+    },
+    Limit: 50,
+  }));
+
+  const items = (result.Items || [])
+    .map(formatTfWorkspace)
+    .sort((a, b) => b.updated_at - a.updated_at);
+
+  return successResponse({ items, count: items.length });
+}
+
+async function getTfWorkspace(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfWorkspaceRecord(id, event);
+  if (response) return response;
+
+  const manifestText = await readOptionalTfOutput(item.s3_prefix, 'manifest.json');
+  const manifest = manifestText ? JSON.parse(manifestText) : {};
+  const fileNames = Array.isArray(manifest.files) ? manifest.files : [];
+  const files = await Promise.all(fileNames.map(async (filename: string) => ({
+    filename,
+    content: await readOptionalTfOutput(`${item.s3_prefix}/files`, filename) || '',
+  })));
+
+  return successResponse({
+    ...formatTfWorkspace(item),
+    manifest,
+    files: files.filter((file) => file.filename && file.content),
+  });
+}
+
+async function updateTfWorkspace(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfWorkspaceRecord(id, event);
+  if (response) return response;
+
+  const body = JSON.parse(event.body || '{}');
+  const deploymentName = sanitizeText(body.deployment_name, 120) || item.deployment_name;
+  const repositoryUrl = sanitizeText(body.repository_url, 240);
+  const branch = sanitizeBranchName(body.branch || '');
+  const now = Date.now();
+
+  const result = await ddbDocClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFWORKSPACE#${id}`, SK: 'METADATA' },
+    UpdateExpression: 'SET deployment_name = :name, repository_url = :repo, branch = :branch, updated_at = :now',
+    ExpressionAttributeValues: {
+      ':name': deploymentName,
+      ':repo': repositoryUrl || null,
+      ':branch': branch || null,
+      ':now': now,
+    },
+    ReturnValues: 'ALL_NEW',
+  }));
+
+  const manifestText = await readOptionalTfOutput(item.s3_prefix, 'manifest.json');
+  if (manifestText) {
+    try {
+      const manifest = JSON.parse(manifestText);
+      manifest.deployment_name = deploymentName;
+      manifest.repository_url = repositoryUrl || null;
+      manifest.branch = branch || null;
+      manifest.updated_at = now;
+      await saveFileContent(BUCKET_NAME, `${item.s3_prefix}/manifest.json`, JSON.stringify(manifest, null, 2), 'application/json');
+    } catch (err) {
+      console.warn('Unable to update Terraform workspace manifest file:', err);
+    }
+  }
+
+  return successResponse(formatTfWorkspace(result.Attributes));
+}
+
+async function deleteTfWorkspace(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedTfWorkspaceRecord(id, event);
+  if (response) return response;
+
+  await deleteTfWorkspaceByItem(item);
+  if (item.project_id) {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `TFPROJECT#${item.project_id}`, SK: 'METADATA' },
+      UpdateExpression: 'SET updated_at = :now ADD workspace_count :minusOne',
+      ExpressionAttributeValues: {
+        ':now': Date.now(),
+        ':minusOne': -1,
+      },
+    })).catch((err) => console.warn('Unable to decrement Terraform project workspace count:', err));
+  }
+
+  return successResponse({ message: 'Terraform workspace deleted' });
+}
+
+async function deleteTfWorkspaceByItem(item: any) {
+  if (item.s3_prefix) {
+    await deleteS3Prefix(item.s3_prefix);
+  }
+  await ddbDocClient.send(new DeleteCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: `TFWORKSPACE#${item.workspace_id}`, SK: 'METADATA' },
+  }));
 }
 
 async function getTfJob(id: string | undefined, event: APIGatewayProxyEvent) {
@@ -598,12 +1037,63 @@ async function formatTfJob(job: any) {
   };
 }
 
+function formatTfProject(item: any) {
+  return {
+    project_id: item.project_id,
+    project_name: item.project_name,
+    description: item.description || null,
+    workspace_count: item.workspace_count || 0,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  };
+}
+
+function formatTfWorkspace(item: any) {
+  return {
+    workspace_id: item.workspace_id,
+    project_id: item.project_id || null,
+    deployment_name: item.deployment_name,
+    primary_region: item.primary_region,
+    repository_url: item.repository_url || null,
+    branch: item.branch || null,
+    file_count: item.file_count || 0,
+    summary: item.summary || {},
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  };
+}
+
 async function readOptionalTfOutput(prefix: string, filename: string): Promise<string | null> {
   try {
     return await getFileContent(BUCKET_NAME, `${prefix}/${filename}`);
   } catch {
     return null;
   }
+}
+
+async function deleteS3Prefix(prefix: string) {
+  let continuationToken: string | undefined;
+  do {
+    const listed = await s3Client.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix.endsWith('/') ? prefix : `${prefix}/`,
+      ContinuationToken: continuationToken,
+    }));
+
+    const objects = (listed.Contents || [])
+      .map((object) => object.Key)
+      .filter(Boolean)
+      .map((Key) => ({ Key: Key! }));
+
+    if (objects.length) {
+      await s3Client.send(new DeleteObjectsCommand({
+        Bucket: BUCKET_NAME,
+        Delete: { Objects: objects },
+      }));
+    }
+
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
 }
 
 function isTfBuildInFlight(status: string): boolean {
@@ -624,7 +1114,7 @@ async function createTfGithubPullRequest(event: APIGatewayProxyEvent) {
   const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
   const branch = sanitizeBranchName(body.branch || 'terraform-network');
   const baseBranch = sanitizeBranchName(body.base_branch || '');
-  const deploymentName = sanitizeText(body.deployment_name, 120) || 'Terraform network deployment';
+  const deploymentName = githubDeploymentLabel(sanitizeText(body.deployment_name, 120));
   const primaryRegion = sanitizeText(body.primary_region, 40) || 'us-east-1';
   const files = Array.isArray(body.files) ? body.files : [];
 
@@ -666,6 +1156,259 @@ async function createTfGithubPullRequest(event: APIGatewayProxyEvent) {
   return successResponse(result);
 }
 
+async function verifyTfGithubToken(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const token = sanitizeText(body.github_token, 300);
+  const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
+
+  if (!token) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'GitHub token is required.');
+  }
+  if (!repoInfo) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Enter a valid GitHub repository URL such as https://github.com/org/repo.');
+  }
+
+  const headers = githubHeaders(token);
+  const repoPath = githubRepoPath(repoInfo);
+  const missingPermissions: string[] = [];
+  const checks = {
+    repository: false,
+    contents_write: false,
+    pull_requests_write: false,
+    workflows_write: false,
+    secrets_access: false,
+    actions_write: false,
+  };
+  let existingRequiredSecrets: string[] = [];
+
+  let repo: any;
+  try {
+    repo = await githubRequest<any>('GET', repoPath, headers);
+    checks.repository = true;
+  } catch (error: any) {
+    const message = githubTokenAccessMessage(error);
+    return successResponse({
+      valid: false,
+      repository: null,
+      default_branch: null,
+      is_empty: false,
+      checks,
+      missing_permissions: ['Repository access'],
+      message,
+    });
+  }
+
+  const defaultBranch = repo.default_branch || 'main';
+  let isEmpty = false;
+  try {
+    await githubRequest<any>('GET', `${repoPath}/git/ref/heads/${encodeURIComponent(defaultBranch)}`, headers);
+  } catch (error: any) {
+    isEmpty = error instanceof GithubRequestError && (error.status === 409 || error.status === 404);
+  }
+
+  const contentsProbe = await githubPermissionProbe('POST', `${repoPath}/git/trees`, headers, {
+    tree: [{
+      path: `.minfy-token-check-${Date.now()}.txt`,
+      mode: '100644',
+      type: 'blob',
+      content: 'Minfy AI token permission check\n',
+    }],
+  }, [201]);
+  checks.contents_write = contentsProbe.ok;
+  if (!contentsProbe.ok) missingPermissions.push('Repository permissions > Contents: Read and write');
+
+  const workflowProbe = await githubPermissionProbe('PUT', `${repoPath}/contents/.github/workflows/minfy-token-check.yml`, headers, {
+    message: 'Minfy token permission check',
+    branch: `minfy-token-check-${Date.now()}`,
+    content: Buffer.from('name: Minfy token check\non: workflow_dispatch\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n').toString('base64'),
+  }, [404, 409, 422]);
+  checks.workflows_write = workflowProbe.ok;
+  if (!workflowProbe.ok) missingPermissions.push('Repository permissions > Workflows: Read and write');
+
+  const pullProbe = await githubPermissionProbe('POST', `${repoPath}/pulls`, headers, {
+    title: 'Minfy token permission check',
+    head: `minfy-token-check-${Date.now()}`,
+    base: defaultBranch,
+    body: 'Permission check only. This request should fail validation and must not create a pull request.',
+  }, [422]);
+  checks.pull_requests_write = pullProbe.ok;
+  if (!pullProbe.ok) missingPermissions.push('Repository permissions > Pull requests: Read and write');
+
+  const actionsProbe = await githubPermissionProbe('POST', `${repoPath}/actions/workflows/minfy-token-check.yml/dispatches`, headers, {
+    ref: defaultBranch,
+  }, [404, 422]);
+  checks.actions_write = actionsProbe.ok;
+
+  const secretsProbe = await githubPermissionProbe('GET', `${repoPath}/actions/secrets?per_page=100`, headers, undefined, [200]);
+  checks.secrets_access = secretsProbe.ok;
+  if (checks.secrets_access) {
+    const secretsData = secretsProbe.data as { secrets?: Array<{ name?: string }> } | null;
+    existingRequiredSecrets = (secretsData?.secrets || [])
+      .map((secret: any) => secret?.name)
+      .filter((name: string) => ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(name));
+  } else {
+    missingPermissions.push('Repository permissions > Secrets: Read and write');
+  }
+
+  const requiredSecretsPresent = existingRequiredSecrets.includes('AWS_ACCESS_KEY_ID') && existingRequiredSecrets.includes('AWS_SECRET_ACCESS_KEY');
+  const valid = checks.repository && checks.contents_write && checks.pull_requests_write && checks.workflows_write && checks.secrets_access;
+  return successResponse({
+    valid,
+    repository: repo.html_url,
+    default_branch: defaultBranch,
+    is_empty: isEmpty,
+    checks,
+    required_secrets_present: requiredSecretsPresent,
+    existing_required_secrets: existingRequiredSecrets,
+    missing_permissions: missingPermissions,
+    message: valid
+      ? requiredSecretsPresent
+        ? 'Token is valid and required AWS secrets are already present in this repository.'
+        : (isEmpty ? 'Token is valid. This empty repository will be initialized before the PR is created.' : 'Token is valid for this repository.')
+      : `Token can read the repository, but ${missingPermissions.length} required permission${missingPermissions.length === 1 ? ' is' : 's are'} missing.`,
+  });
+}
+
+async function updateTfGithubSecrets(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const token = sanitizeText(body.github_token, 300);
+  const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
+  const accessKeyId = sanitizeText(body.aws_access_key_id, 180);
+  const secretAccessKey = sanitizeText(body.aws_secret_access_key, 260);
+
+  if (!token) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'GitHub token is required.');
+  }
+  if (!repoInfo) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Enter a valid GitHub repository URL such as https://github.com/org/repo.');
+  }
+  if (!accessKeyId || !secretAccessKey) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'AWS access key ID and secret access key are required.');
+  }
+
+  const headers = githubHeaders(token);
+  const repoPath = githubRepoPath(repoInfo);
+  try {
+    const publicKey = await githubRequest<any>('GET', `${repoPath}/actions/secrets/public-key`, headers);
+    if (!publicKey?.key || !publicKey?.key_id) {
+      throw new Error('GitHub repository public key was not available. Check token access to Actions secrets.');
+    }
+
+    await putGithubActionsSecret(repoPath, headers, publicKey, 'AWS_ACCESS_KEY_ID', accessKeyId);
+    await putGithubActionsSecret(repoPath, headers, publicKey, 'AWS_SECRET_ACCESS_KEY', secretAccessKey);
+  } catch (error: any) {
+    if (error instanceof GithubRequestError && [401, 403, 404].includes(error.status)) {
+      return errorResponse(400, 'GITHUB_SECRET_ACCESS_ERROR', 'GitHub token needs repository access plus Secrets: Read and write permission to update Actions secrets.');
+    }
+    throw error;
+  }
+
+  return successResponse({
+    repository: `https://github.com/${repoInfo.owner}/${repoInfo.repo}`,
+    updated_secrets: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
+    message: 'AWS secrets were encrypted and updated in the GitHub repository.',
+  });
+}
+
+async function dispatchTfGithubApply(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const token = sanitizeText(body.github_token, 300);
+  const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
+  const requestedRef = sanitizeBranchName(body.ref || '');
+
+  if (!token) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'GitHub token is required to trigger apply.');
+  }
+  if (!repoInfo) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Enter a valid GitHub repository URL such as https://github.com/org/repo.');
+  }
+
+  const headers = githubHeaders(token);
+  const repoPath = githubRepoPath(repoInfo);
+  const repo = await githubRequest<any>('GET', repoPath, headers);
+  const ref = requestedRef || repo.default_branch || 'main';
+
+  try {
+    await githubRequest<any>('POST', `${repoPath}/actions/workflows/terraform-apply.yml/dispatches`, headers, {
+      ref,
+    });
+  } catch (error: any) {
+    if (error instanceof GithubRequestError && [401, 403].includes(error.status)) {
+      return errorResponse(400, 'GITHUB_APPLY_PERMISSION_ERROR', 'GitHub token needs Repository permissions > Actions: Read and write to start the Terraform Apply workflow from the app.');
+    }
+    if (error instanceof GithubRequestError && [404, 422].includes(error.status)) {
+      return errorResponse(400, 'GITHUB_APPLY_NOT_READY', 'Terraform apply workflow was not found on the selected branch. Merge the generated PR first, then trigger apply from the app.');
+    }
+    throw error;
+  }
+
+  return successResponse({
+    repository: repo.html_url,
+    ref,
+    workflow: 'terraform-apply.yml',
+    actions_url: `${repo.html_url}/actions/workflows/terraform-apply.yml`,
+    message: 'Terraform apply workflow was started in GitHub Actions.',
+  });
+}
+
+async function dispatchTfGithubDestroy(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = JSON.parse(event.body || '{}');
+  const token = sanitizeText(body.github_token, 300);
+  const repoInfo = parseGithubRepository(sanitizeText(body.repository_url, 240));
+  const requestedRef = sanitizeBranchName(body.ref || '');
+  const confirmation = sanitizeText(body.confirmation, 80);
+
+  if (confirmation !== 'DESTROY') {
+    return errorResponse(400, 'DESTROY_CONFIRMATION_REQUIRED', 'Type DESTROY to confirm this destructive Terraform workflow.');
+  }
+  if (!token) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'GitHub token is required to trigger destroy.');
+  }
+  if (!repoInfo) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Enter a valid GitHub repository URL such as https://github.com/org/repo.');
+  }
+
+  const headers = githubHeaders(token);
+  const repoPath = githubRepoPath(repoInfo);
+  const repo = await githubRequest<any>('GET', repoPath, headers);
+  const ref = requestedRef || repo.default_branch || 'main';
+
+  try {
+    await githubRequest<any>('POST', `${repoPath}/actions/workflows/terraform-destroy.yml/dispatches`, headers, {
+      ref,
+      inputs: { confirmation: 'DESTROY' },
+    });
+  } catch (error: any) {
+    if (error instanceof GithubRequestError && [401, 403].includes(error.status)) {
+      return errorResponse(400, 'GITHUB_DESTROY_PERMISSION_ERROR', 'GitHub token needs Repository permissions > Actions: Read and write to start the Terraform Destroy workflow from the app.');
+    }
+    if (error instanceof GithubRequestError && [404, 422].includes(error.status)) {
+      return errorResponse(400, 'GITHUB_DESTROY_NOT_READY', 'Terraform destroy workflow was not found on the selected branch. Create and merge the latest generated PR first.');
+    }
+    throw error;
+  }
+
+  return successResponse({
+    repository: repo.html_url,
+    ref,
+    workflow: 'terraform-destroy.yml',
+    actions_url: `${repo.html_url}/actions/workflows/terraform-destroy.yml`,
+    message: 'Terraform destroy workflow was started in GitHub Actions.',
+  });
+}
+
 function parseGithubRepository(value: string): GithubRepoInfo | null {
   const trimmed = value.trim().replace(/\.git$/, '');
   const httpsMatch = trimmed.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)$/i);
@@ -690,18 +1433,29 @@ function sanitizeBranchName(value: unknown): string {
 
 function buildGithubTerraformPackage(files: TfJobFileInput[], context: { deploymentName: string; primaryRegion: string }): TfJobFileInput[] {
   const environmentPath = 'environments/network';
+  const deploymentName = githubDeploymentLabel(context.deploymentName);
   const transformedTerraformFiles = files.map((file) => ({
     filename: `${environmentPath}/${file.filename}`,
     content: terraformFileForGithubActions(file),
   }));
 
   return [
-    { filename: 'README.md', content: terraformRepoReadme(context.deploymentName) },
+    { filename: 'README.md', content: terraformRepoReadme(deploymentName) },
     { filename: '.github/workflows/terraform-plan.yml', content: terraformGithubWorkflow(environmentPath, context.primaryRegion) },
+    { filename: '.github/workflows/terraform-apply.yml', content: terraformGithubApplyWorkflow(environmentPath, context.primaryRegion) },
+    { filename: '.github/workflows/terraform-destroy.yml', content: terraformGithubDestroyWorkflow(environmentPath, context.primaryRegion) },
+    { filename: 'scripts/preflight-existing-resources.sh', content: terraformExistingResourceGuardScript(transformedTerraformFiles) },
+    { filename: `${environmentPath}/backend.tf`, content: terraformBackendTf() },
     { filename: `${environmentPath}/backend.hcl.example`, content: terraformBackendExample() },
-    { filename: `${environmentPath}/terraform.tfvars.example`, content: terraformTfvarsExample(context) },
+    { filename: `${environmentPath}/terraform.tfvars`, content: terraformTfvars({ ...context, deploymentName }) },
     ...transformedTerraformFiles,
   ];
+}
+
+function githubDeploymentLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 64) return 'Terraform network deployment';
+  return trimmed;
 }
 
 function providerForGithubActions(content: string): string {
@@ -719,26 +1473,30 @@ function terraformFileForGithubActions(file: TfJobFileInput): string {
 function terraformRepoReadme(deploymentName: string): string {
   return `# ${deploymentName}
 
-Generated by Minfy AI TF Generator.
+Terraform workspace for AWS network infrastructure.
 
 ## Workflow
 
 1. Review the Terraform files under \`environments/network\`.
-2. Configure GitHub Actions with AWS OIDC.
+2. Configure GitHub Actions with AWS access keys from the target account.
 3. Add repository secrets:
-   - \`AWS_ROLE_TO_ASSUME\`
-   - \`AWS_REGION\`
-   - \`TF_STATE_BUCKET\`
-   - \`TF_STATE_KEY\`
-   - \`TF_STATE_REGION\`
+   - \`AWS_ACCESS_KEY_ID\`
+   - \`AWS_SECRET_ACCESS_KEY\`
 4. Open a pull request and review the Terraform plan output.
-5. Apply only after approval.
+5. Merge only after review, then trigger the manual Terraform Apply workflow.
+
+## Safety controls
+
+- Pull request plans fail when Terraform proposes update, delete, or replacement actions.
+- Apply runs a fresh plan and uses the same update/delete/replace guard before applying.
+- Destroy is a separate manual workflow and should not be used for client environments unless explicitly approved.
 
 ## Notes
 
 - Resource names are preserved from the Excel workbook where the workbook provides names.
 - Existing resources should be imported before apply if they already exist in the target AWS account.
-- Keep backend state in the client AWS account, not in the Minfy platform account.
+- The workflows bootstrap an encrypted S3 backend and DynamoDB lock table in the target AWS account.
+- Terraform state is kept in the target AWS account.
 `;
 }
 
@@ -750,10 +1508,10 @@ on:
     paths:
       - '${environmentPath}/**'
       - '.github/workflows/terraform-plan.yml'
+      - 'scripts/**'
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
   pull-requests: write
 
@@ -767,11 +1525,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check required GitHub secrets
+        env:
+          AWS_ACCESS_KEY_ID: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=0
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "\${!name}" ]; then
+              echo "::error title=Missing GitHub secret::$name is required before Terraform plan can run."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "Add the missing values in GitHub repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: \${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: \${{ secrets.AWS_REGION || '${fallbackRegion}' }}
+          aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${fallbackRegion}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -779,40 +1555,418 @@ jobs:
           terraform_version: 1.8.5
 
       - name: Terraform fmt
-        run: terraform fmt -check -recursive
+        run: terraform fmt -recursive
+
+      - name: Prepare S3 backend
+        run: |
+${terraformBackendBootstrapScript(fallbackRegion)}
 
       - name: Terraform init
-        run: |
-          terraform init \\
-            -backend-config="bucket=\${{ secrets.TF_STATE_BUCKET }}" \\
-            -backend-config="key=\${{ secrets.TF_STATE_KEY }}" \\
-            -backend-config="region=\${{ secrets.TF_STATE_REGION }}"
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Detect unmanaged existing resources
+        run: bash ../../scripts/preflight-existing-resources.sh
 
       - name: Terraform validate
         run: terraform validate
 
       - name: Terraform plan
-        run: terraform plan -input=false
+        run: terraform plan -input=false -var-file=terraform.tfvars -out=tfplan
+
+      - name: Block update/delete/replace actions
+        run: |
+${terraformPlanSafetyGuardScript()}
 `;
+}
+
+function terraformGithubApplyWorkflow(environmentPath: string, fallbackRegion: string): string {
+  return `name: Terraform Apply
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+jobs:
+  terraform-apply:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${environmentPath}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required GitHub secrets
+        env:
+          AWS_ACCESS_KEY_ID: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=0
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "\${!name}" ]; then
+              echo "::error title=Missing GitHub secret::$name is required before Terraform apply can run."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "Add the missing values in GitHub repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${fallbackRegion}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform fmt
+        run: terraform fmt -recursive
+
+      - name: Prepare S3 backend
+        run: |
+${terraformBackendBootstrapScript(fallbackRegion)}
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Detect unmanaged existing resources
+        run: bash ../../scripts/preflight-existing-resources.sh
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var-file=terraform.tfvars -out=tfplan
+
+      - name: Block update/delete/replace actions
+        run: |
+${terraformPlanSafetyGuardScript()}
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Verify remote state
+        run: |
+${terraformStateVerificationScript()}
+`;
+}
+
+function terraformGithubDestroyWorkflow(environmentPath: string, fallbackRegion: string): string {
+  return `name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DESTROY to confirm this destructive run'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-destroy
+  cancel-in-progress: false
+
+jobs:
+  terraform-destroy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${environmentPath}
+    steps:
+      - name: Confirm destructive workflow
+        if: \${{ github.event.inputs.confirmation != 'DESTROY' }}
+        run: |
+          echo "::error title=Destroy confirmation missing::Type DESTROY to run this workflow."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required GitHub secrets
+        env:
+          AWS_ACCESS_KEY_ID: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=0
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "\${!name}" ]; then
+              echo "::error title=Missing GitHub secret::$name is required before Terraform destroy can run."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "Add the missing values in GitHub repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${fallbackRegion}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Remove runtime prevent_destroy guards
+        run: |
+          find . -name "*.tf" -type f -print0 | xargs -0 perl -0pi -e 's/\\n\\s*lifecycle\\s*\\{\\s*prevent_destroy\\s*=\\s*true\\s*\\}\\s*//g'
+
+      - name: Prepare S3 backend
+        run: |
+${terraformBackendBootstrapScript(fallbackRegion)}
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform destroy plan
+        run: terraform plan -destroy -input=false -var-file=terraform.tfvars -out=tfdestroy
+
+      - name: Terraform destroy
+        run: terraform apply -input=false -auto-approve tfdestroy
+`;
+}
+
+function terraformStateVerificationScript(): string {
+  return `          set -euo pipefail
+          STATE_BUCKET=$(awk -F '"' '/bucket/ { print $2 }' backend.hcl)
+          STATE_KEY=$(awk -F '"' '/key/ { print $2 }' backend.hcl)
+          if [ -z "$STATE_BUCKET" ] || [ -z "$STATE_KEY" ]; then
+            echo "::error title=Terraform state check failed::The generated backend.hcl did not contain bucket and key values."
+            exit 1
+          fi
+          if ! aws s3api head-object --bucket "$STATE_BUCKET" --key "$STATE_KEY" >/dev/null 2>&1; then
+            echo "::error title=Terraform state file was not written::Apply finished without finding s3://$STATE_BUCKET/$STATE_KEY. Check the apply logs for backend initialization or provider errors."
+            exit 1
+          fi
+          echo "Terraform state is stored at s3://$STATE_BUCKET/$STATE_KEY"`;
+}
+
+function terraformPlanSafetyGuardScript(): string {
+  return `          terraform show -json tfplan > tfplan.json
+          blocked=$(jq -r '[.resource_changes[]? | select((.change.actions | index("delete")) or (.change.actions | index("update"))) | "\\(.address): \\(.change.actions | join(","))"] | .[]' tfplan.json)
+          if [ -n "$blocked" ]; then
+            echo "::error title=Terraform plan blocked::This workflow only permits create/no-op actions. Import existing resources or open a reviewed change workflow before modifying or destroying infrastructure."
+            echo "$blocked"
+            exit 1
+          fi`;
+}
+
+function terraformExistingResourceGuardScript(files: TfJobFileInput[]): string {
+  const fileMap = new Map(files.map((file) => [file.filename, file.content]));
+  const vpcs = extractTerraformNamedResources(fileMap.get('environments/network/vpc.tf') || '', 'aws_vpc')
+    .map((resource) => ({
+      id: resource.name,
+      cidr: extractHclString(resource.body, 'cidr_block'),
+      awsName: extractHclMapString(resource.body, 'Name'),
+    }))
+    .filter((resource) => resource.cidr && resource.awsName);
+  const subnets = extractTerraformNamedResources(fileMap.get('environments/network/subnets.tf') || '', 'aws_subnet')
+    .map((resource) => ({
+      id: resource.name,
+      cidr: extractHclString(resource.body, 'cidr_block'),
+      awsName: extractHclMapString(resource.body, 'Name'),
+    }))
+    .filter((resource) => resource.cidr && resource.awsName);
+
+  const vpcChecks = vpcs
+    .map((resource) => `check_vpc ${shellSingleQuote(`aws_vpc.${resource.id}`)} ${shellSingleQuote(resource.awsName)} ${shellSingleQuote(resource.cidr)}`)
+    .join('\n');
+  const subnetChecks = subnets
+    .map((resource) => `check_subnet ${shellSingleQuote(`aws_subnet.${resource.id}`)} ${shellSingleQuote(resource.awsName)} ${shellSingleQuote(resource.cidr)}`)
+    .join('\n');
+
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+blocked=0
+
+is_managed() {
+  terraform state show "$1" >/dev/null 2>&1
+}
+
+check_vpc() {
+  local address="$1"
+  local name="$2"
+  local cidr="$3"
+  if is_managed "$address"; then
+    return 0
+  fi
+
+  local existing
+  existing=$(aws ec2 describe-vpcs \\
+    --filters "Name=tag:Name,Values=$name" "Name=cidr-block,Values=$cidr" \\
+    --query 'Vpcs[0].VpcId' \\
+    --output text 2>/dev/null || true)
+
+  if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+    echo "::error title=Existing VPC is not in Terraform state::$address matches existing VPC $existing (Name=$name, CIDR=$cidr). Import it into this workspace state before applying, otherwise Terraform may create duplicate infrastructure."
+    blocked=1
+  fi
+}
+
+check_subnet() {
+  local address="$1"
+  local name="$2"
+  local cidr="$3"
+  if is_managed "$address"; then
+    return 0
+  fi
+
+  local existing
+  existing=$(aws ec2 describe-subnets \\
+    --filters "Name=tag:Name,Values=$name" "Name=cidr-block,Values=$cidr" \\
+    --query 'Subnets[0].SubnetId' \\
+    --output text 2>/dev/null || true)
+
+  if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+    echo "::error title=Existing subnet is not in Terraform state::$address matches existing subnet $existing (Name=$name, CIDR=$cidr). Import it into this workspace state before applying."
+    blocked=1
+  fi
+}
+
+${vpcChecks || '# No generated VPC resources to preflight.'}
+${subnetChecks || '# No generated subnet resources to preflight.'}
+
+if [ "$blocked" -eq 1 ]; then
+  echo "Detected existing AWS resources that are not managed by this Terraform state. Import them first, or use a clean workbook/name range."
+  exit 1
+fi
+`;
+}
+
+function extractTerraformNamedResources(content: string, type: string): Array<{ name: string; body: string }> {
+  const resources: Array<{ name: string; body: string }> = [];
+  const regex = new RegExp(`resource\\s+"${type}"\\s+"([^"]+)"\\s+\\{`, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(content))) {
+    const bodyStart = regex.lastIndex;
+    let depth = 1;
+    let cursor = bodyStart;
+    while (cursor < content.length && depth > 0) {
+      const char = content[cursor++];
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+    }
+    resources.push({ name: match[1], body: content.slice(bodyStart, cursor - 1) });
+    regex.lastIndex = cursor;
+  }
+  return resources;
+}
+
+function extractHclString(content: string, key: string): string {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = content.match(new RegExp(`${escapedKey}\\s*=\\s*"([^"]+)"`));
+  return match?.[1] || '';
+}
+
+function extractHclMapString(content: string, key: string): string {
+  return extractHclString(content, key);
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function terraformBackendBootstrapScript(region: string): string {
+  return `          set -euo pipefail
+          TF_REGION="${region}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REPO_SAFE=$(echo "\${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-//;s/-$//' | cut -c1-28)
+          STATE_BUCKET="tf-state-\${ACCOUNT_ID}-\${TF_REGION}-\${REPO_SAFE}"
+          LOCK_TABLE="tf-lock-\${REPO_SAFE}"
+
+          if ! aws s3api head-bucket --bucket "\${STATE_BUCKET}" 2>/dev/null; then
+            if [ "\${TF_REGION}" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "\${STATE_BUCKET}" --region "\${TF_REGION}"
+            else
+              aws s3api create-bucket --bucket "\${STATE_BUCKET}" --region "\${TF_REGION}" --create-bucket-configuration LocationConstraint="\${TF_REGION}"
+            fi
+          fi
+
+          aws s3api put-public-access-block --bucket "\${STATE_BUCKET}" --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          aws s3api put-bucket-versioning --bucket "\${STATE_BUCKET}" --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket "\${STATE_BUCKET}" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+          if ! aws dynamodb describe-table --table-name "\${LOCK_TABLE}" --region "\${TF_REGION}" >/dev/null 2>&1; then
+            aws dynamodb create-table \\
+              --table-name "\${LOCK_TABLE}" \\
+              --attribute-definitions AttributeName=LockID,AttributeType=S \\
+              --key-schema AttributeName=LockID,KeyType=HASH \\
+              --billing-mode PAY_PER_REQUEST \\
+              --region "\${TF_REGION}"
+            aws dynamodb wait table-exists --table-name "\${LOCK_TABLE}" --region "\${TF_REGION}"
+          fi
+
+          {
+            echo "bucket         = \\"\${STATE_BUCKET}\\""
+            echo "key            = \\"network/terraform.tfstate\\""
+            echo "region         = \\"\${TF_REGION}\\""
+            echo "dynamodb_table = \\"\${LOCK_TABLE}\\""
+            echo "encrypt        = true"
+          } > backend.hcl`;
 }
 
 function terraformBackendExample(): string {
   return `bucket = "client-terraform-state-bucket"
 key    = "network/terraform.tfstate"
 region = "us-east-1"
+dynamodb_table = "client-terraform-locks"
+encrypt = true
 `;
 }
 
-function terraformTfvarsExample(context: { deploymentName: string; primaryRegion: string }): string {
+function terraformBackendTf(): string {
+  return `terraform {
+  backend "s3" {}
+}
+`;
+}
+
+function terraformTfvars(context: { deploymentName: string; primaryRegion: string }): string {
   return `deployment_name = ${JSON.stringify(context.deploymentName)}
 primary_region  = ${JSON.stringify(context.primaryRegion)}
 environment     = "prod"
 
 common_tags = {
   ManagedBy   = "Terraform"
-  GeneratedBy = "Minfy AI TF Generator"
+  GeneratedBy = "Terraform Generator"
 }
 `;
+}
+
+function githubHeaders(token: string) {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+    'User-Agent': 'Minfy-AI-TF-Generator',
+  };
+}
+
+function githubRepoPath(repo: GithubRepoInfo) {
+  return `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
 }
 
 async function pushGithubPullRequest(params: {
@@ -823,15 +1977,9 @@ async function pushGithubPullRequest(params: {
   files: TfJobFileInput[];
   deploymentName: string;
 }) {
-  const headers = {
-    Authorization: `Bearer ${params.token}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Content-Type': 'application/json',
-    'User-Agent': 'Minfy-AI-TF-Generator',
-  };
+  const headers = githubHeaders(params.token);
 
-  const repoPath = `/repos/${encodeURIComponent(params.repo.owner)}/${encodeURIComponent(params.repo.repo)}`;
+  const repoPath = githubRepoPath(params.repo);
   const repo = await githubRequest<any>('GET', repoPath, headers);
   const baseBranch = params.baseBranch || repo.default_branch;
   if (params.branch === baseBranch) {
@@ -913,7 +2061,7 @@ async function initializeEmptyGithubRepository(repoPath: string, headers: Record
       path: 'README.md',
       mode: '100644',
       type: 'blob',
-      content: '# Terraform Repository\n\nInitialized by Minfy AI TF Generator.\n',
+      content: '# Terraform Infrastructure\n\nRepository initialized for infrastructure-as-code workflows.\n',
     }],
   });
   const commit = await githubRequest<any>('POST', `${repoPath}/git/commits`, headers, {
@@ -936,9 +2084,66 @@ Generated by Minfy AI TF Generator for **${deploymentName}**.
 
 - [ ] Confirm VPC, subnet, and route table names match the approved workbook.
 - [ ] Confirm CIDR ranges do not overlap existing client networks.
-- [ ] Configure AWS OIDC repository secrets before relying on the plan workflow.
-- [ ] Review Terraform plan output before apply.
+- [ ] Confirm AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY Actions secrets point to the intended target account.
+- [ ] Review Terraform plan output before merge.
+- [ ] Trigger Terraform Apply from the Minfy app only after the PR is merged.
 `;
+}
+
+function githubTokenAccessMessage(error: any) {
+  if (error instanceof GithubRequestError) {
+    if (error.status === 401) return 'Token is invalid or expired. Generate a new token and try again.';
+    if (error.status === 403) return 'Token is valid, but it is not allowed to access this repository.';
+    if (error.status === 404) return 'Repository was not found or this fine-grained token was not granted access to it.';
+  }
+  return error?.message || 'Unable to verify GitHub token.';
+}
+
+async function putGithubActionsSecret(
+  repoPath: string,
+  headers: Record<string, string>,
+  publicKey: { key: string; key_id: string },
+  name: string,
+  value: string,
+) {
+  const encryptedValue = await encryptGithubSecret(value, publicKey.key);
+  await githubRequest<any>('PUT', `${repoPath}/actions/secrets/${encodeURIComponent(name)}`, headers, {
+    encrypted_value: encryptedValue,
+    key_id: publicKey.key_id,
+  });
+}
+
+async function encryptGithubSecret(value: string, publicKey: string): Promise<string> {
+  await sodium.ready;
+  const publicKeyBytes = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+  const valueBytes = sodium.from_string(value);
+  const encryptedBytes = sodium.crypto_box_seal(valueBytes, publicKeyBytes);
+  return sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
+}
+
+async function githubPermissionProbe(
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body: any,
+  acceptableStatuses: number[],
+) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (acceptableStatuses.includes(response.status)) {
+    const data = await response.json().catch(() => null);
+    return { ok: true, status: response.status, message: null, data };
+  }
+  const error: any = await response.json().catch(() => ({}));
+  return {
+    ok: false,
+    status: response.status,
+    message: error?.message || `GitHub API request failed with ${response.status}`,
+    data: null,
+  };
 }
 
 async function githubRequest<T>(
@@ -1007,8 +2212,8 @@ async function listInterviews(event: APIGatewayProxyEvent) {
 
   const result = await ddbDocClient.send(new ScanCommand({
     TableName: TABLE_NAME,
-    FilterExpression: 'SK = :sk AND owner_user_id = :owner',
-    ExpressionAttributeValues: { ':sk': 'METADATA', ':owner': userId },
+    FilterExpression: 'begins_with(PK, :pkPrefix) AND SK = :sk AND owner_user_id = :owner',
+    ExpressionAttributeValues: { ':pkPrefix': 'INTERVIEW#', ':sk': 'METADATA', ':owner': userId },
     Limit: 50,
   }));
 
