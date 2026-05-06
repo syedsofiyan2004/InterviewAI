@@ -1,25 +1,47 @@
 'use client';
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { api } from '@/lib/api';
+import { getCurrentSession } from '@/lib/auth';
 
-export async function checkTourStatus(): Promise<boolean> {
+const DEFAULT_TOUR_KEY = 'global';
+
+async function getTourUserScope() {
   try {
-    const data = await api.getUserPreferences();
-    return data.tour_completed === true;
+    const session = await getCurrentSession();
+    const payload = session?.getIdToken().decodePayload();
+    return (payload?.sub as string) || (payload?.email as string) || 'anonymous';
   } catch {
-    // Fallback to localStorage if API fails
-    return typeof window !== 'undefined' && localStorage.getItem('minfy_tour_done') === 'true';
+    return 'anonymous';
   }
 }
 
-export async function markTourDone(): Promise<void> {
+async function tourStorageKey(tourKey: string) {
+  const userScope = await getTourUserScope();
+  return `minfy_tour_done_${userScope}_${tourKey}`;
+}
+
+export async function checkTourStatus(tourKey = DEFAULT_TOUR_KEY): Promise<boolean> {
   try {
-    await api.updateUserPreferences({ tour_completed: true });
+    const data = await api.getUserPreferences();
+    return data.completed_tours?.[tourKey] === true
+      || ((tourKey === DEFAULT_TOUR_KEY || tourKey === 'app-overview') && data.tour_completed === true);
+  } catch {
+    if (typeof window === 'undefined') return false;
+    const key = await tourStorageKey(tourKey);
+    return localStorage.getItem(key) === 'true';
+  }
+}
+
+export async function markTourDone(tourKey = DEFAULT_TOUR_KEY): Promise<void> {
+  if (typeof window !== 'undefined') {
+    const key = await tourStorageKey(tourKey);
+    localStorage.setItem(key, 'true');
+  }
+
+  try {
+    await api.updateUserPreferences({ tour_key: tourKey });
   } catch {
     // Fallback
-  }
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('minfy_tour_done', 'true');
   }
 }
 
@@ -34,7 +56,7 @@ type TourContextType = {
   steps: TourStep[];
   currentStep: number;
   isActive: boolean;
-  startTour: (steps: TourStep[]) => void;
+  startTour: (steps: TourStep[], tourKey?: string) => void;
   nextStep: () => void;
   prevStep: () => void;
   endTour: () => void;
@@ -46,23 +68,27 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const [steps, setSteps] = useState<TourStep[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [isActive, setIsActive] = useState(false);
+  const [activeTourKey, setActiveTourKey] = useState(DEFAULT_TOUR_KEY);
 
-  const startTour = useCallback((newSteps: TourStep[]) => {
+  const startTour = useCallback((newSteps: TourStep[], tourKey = DEFAULT_TOUR_KEY) => {
+    if (isActive) return;
+    if (!newSteps.length) return;
     setSteps(newSteps);
     setCurrentStep(0);
+    setActiveTourKey(tourKey);
     setIsActive(true);
-  }, []);
+  }, [isActive]);
 
   const nextStep = useCallback(() => {
     setCurrentStep(prev => {
       if (prev >= steps.length - 1) {
         setIsActive(false);
-        markTourDone(); // calls API + localStorage
+        markTourDone(activeTourKey); // calls API + localStorage
         return 0;
       }
       return prev + 1;
     });
-  }, [steps.length]);
+  }, [steps.length, activeTourKey]);
 
   const prevStep = useCallback(() => {
     setCurrentStep(prev => Math.max(0, prev - 1));
@@ -70,8 +96,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const endTour = useCallback(() => {
     setIsActive(false);
-    markTourDone(); // calls API + localStorage
-  }, []);
+    markTourDone(activeTourKey); // calls API + localStorage
+  }, [activeTourKey]);
 
   return (
     <TourContext.Provider value={{ steps, currentStep, isActive, startTour, nextStep, prevStep, endTour }}>

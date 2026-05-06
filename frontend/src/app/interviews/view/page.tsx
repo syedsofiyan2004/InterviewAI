@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, DetailedInterview, EvaluationResult } from '@/lib/api';
 import { 
@@ -22,6 +22,7 @@ import { twMerge } from 'tailwind-merge';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast, type ToastType } from '@/components/ui/Toast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useTour, checkTourStatus } from '@/contexts/TourContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -38,6 +39,8 @@ function InterviewDetailsContent() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const { startTour } = useTour();
+  const startedToursRef = useRef<Set<string>>(new Set());
 
   const getFriendlyError = (err: string) => {
     if (err.includes('AI_MALFORMED_OUTPUT')) return "The AI had trouble formatting the result. This often happens if the transcript is very messy. Please try clicking 'Retry Analysis'.";
@@ -80,7 +83,7 @@ function InterviewDetailsContent() {
     try {
       setLoading(true);
       await api.deleteInterview(id);
-      router.push('/');
+      router.push('/interviews');
     } catch (err) {
       setToast({ message: 'Failed to delete interview', type: 'error' });
       setLoading(false);
@@ -139,6 +142,107 @@ function InterviewDetailsContent() {
     return () => clearTimeout(timer);
   }, [id, fetchInterview]);
 
+  useEffect(() => {
+    if (!interview || loading) return;
+
+    const tourKey = result
+      ? 'interviews-view-results'
+      : interview.status === 'QUEUED' || interview.status === 'PROCESSING'
+        ? 'interviews-view-processing'
+        : 'interviews-view-setup';
+
+    if (startedToursRef.current.has(tourKey)) return;
+    startedToursRef.current.add(tourKey);
+
+    const timer = setTimeout(async () => {
+      const done = await checkTourStatus(tourKey);
+      if (done) return;
+
+      if (tourKey === 'interviews-view-results') {
+        startTour([
+          {
+            targetId: 'tour-result-header',
+            title: 'Evaluation summary',
+            body: 'This area shows the candidate, role, status, and the final score once analysis is complete.',
+            position: 'bottom',
+          },
+          {
+            targetId: 'tour-download-report',
+            title: 'Download the PDF report',
+            body: 'Use this button to download the shareable interview evaluation report.',
+            position: 'left',
+          },
+          {
+            targetId: 'tour-dimensions',
+            title: 'Dimension breakdown',
+            body: 'Each score is based on evidence found in the transcript against the job description.',
+            position: 'top',
+          },
+          {
+            targetId: 'tour-evidence',
+            title: 'Direct evidence',
+            body: 'These quotes explain why the system reached its scoring decisions.',
+            position: 'top',
+          },
+          {
+            targetId: 'tour-recommendation',
+            title: 'Recommendation panel',
+            body: 'Review the final recommendation, fit score, technical depth, confidence, strengths, and risk areas here.',
+            position: 'left',
+          },
+        ], tourKey);
+        return;
+      }
+
+      if (tourKey === 'interviews-view-processing') {
+        startTour([
+          {
+            targetId: 'tour-processing',
+            title: 'Analysis in progress',
+            body: 'The evaluation runs in the background. This page refreshes automatically until results are ready.',
+            position: 'bottom',
+          },
+        ], tourKey);
+        return;
+      }
+
+      startTour([
+        {
+          targetId: 'tour-document-enrollment',
+          title: 'Upload required documents',
+          body: 'Upload the job description and interview transcript. Both are required before analysis can start.',
+          position: 'bottom',
+        },
+        {
+          targetId: 'tour-jd-upload-view',
+          title: 'Job description',
+          body: 'This file defines the role, requirements, and scoring rubric for the evaluation.',
+          position: 'bottom',
+        },
+        {
+          targetId: 'tour-transcript-upload-view',
+          title: 'Interview transcript',
+          body: 'Upload the full interview conversation so the evaluation can cite direct evidence.',
+          position: 'bottom',
+        },
+        {
+          targetId: 'tour-readiness-gate',
+          title: 'Readiness gate',
+          body: 'This checklist confirms whether the required documents are present and aligned.',
+          position: 'left',
+        },
+        {
+          targetId: 'tour-start-assessment',
+          title: 'Start assessment',
+          body: 'Once the checklist is ready, start the AI evaluation from here.',
+          position: 'top',
+        },
+      ], tourKey);
+    }, 900);
+
+    return () => clearTimeout(timer);
+  }, [interview, loading, result, startTour]);
+
   if (loading && !interview) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
@@ -156,7 +260,7 @@ function InterviewDetailsContent() {
         </div>
         <h3 className="text-xl font-semibold text-text-primary">Failed to load</h3>
         <p className="text-text-secondary">{error}</p>
-        <Link href="/" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-semibold rounded-md">
+        <Link href="/interviews" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-semibold rounded-md">
           Back to Dashboard
         </Link>
       </div>
@@ -168,7 +272,7 @@ function InterviewDetailsContent() {
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
+        <Link href="/interviews" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
           <ArrowLeft size={16} />
           Back to Dashboard
         </Link>
@@ -187,7 +291,7 @@ function InterviewDetailsContent() {
         </div>
       </div>
 
-      <header className="space-y-4">
+      <header id="tour-result-header" className="space-y-4">
         <div className="flex items-end justify-between">
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold text-text-primary">{interview?.metadata.candidate_name}</h1>
@@ -197,6 +301,7 @@ function InterviewDetailsContent() {
           {result && interview?.report_s3_key && (
             <div className="flex items-center gap-4">
               <button
+                id="tour-download-report"
                 onClick={handleDownloadReport}
                 className="flex items-center gap-2 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition-all shadow-lg shadow-accent/20"
               >
@@ -218,7 +323,7 @@ function InterviewDetailsContent() {
 
       {!result && !isInFlight && interview?.status !== 'FAILED' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
+          <div id="tour-document-enrollment" className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                  <FileText size={20} className="text-accent" />
@@ -230,6 +335,7 @@ function InterviewDetailsContent() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FileUploadSection 
+                   id="tour-jd-upload-view"
                    type="jd" 
                    interviewId={id} 
                    isUploaded={!!interview?.jd_s3_key} 
@@ -237,6 +343,7 @@ function InterviewDetailsContent() {
                    setToast={setToast}
                 />
                 <FileUploadSection 
+                   id="tour-transcript-upload-view"
                    type="transcript" 
                    interviewId={id} 
                    isUploaded={!!interview?.transcript_s3_key} 
@@ -246,7 +353,7 @@ function InterviewDetailsContent() {
             </div>
           </div>
 
-          <div className="space-y-6">
+          <div id="tour-readiness-gate" className="space-y-6">
             <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                <ShieldCheck size={20} className="text-accent" />
                2. Readiness Gate
@@ -302,6 +409,7 @@ function InterviewDetailsContent() {
                </div>
 
                <button
+                  id="tour-start-assessment"
                   onClick={handleManualAnalyze}
                   disabled={!interview?.jd_s3_key || !interview?.transcript_s3_key || loading || (interview as any).is_mismatched}
                   className="w-full py-4 bg-accent text-accent-foreground font-semibold uppercase tracking-widest text-xs rounded-lg hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2 shadow-xl shadow-accent/20"
@@ -319,7 +427,7 @@ function InterviewDetailsContent() {
       )}
 
       {isInFlight && (
-        <div className="card p-12 text-center space-y-6">
+        <div id="tour-processing" className="card p-12 text-center space-y-6">
           <div className="relative w-20 h-20 mx-auto">
              <div className="absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent animate-spin" />
              <div className="absolute inset-0 flex items-center justify-center text-accent">
@@ -357,7 +465,7 @@ function InterviewDetailsContent() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-8">
             {/* Dimension Breakdown */}
-            <section className="space-y-4">
+            <section id="tour-dimensions" className="space-y-4">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <ShieldCheck size={20} className="text-accent" />
                 Dimension Breakdown
@@ -388,7 +496,7 @@ function InterviewDetailsContent() {
             </section>
 
             {/* Evidence Items */}
-            <section className="space-y-4">
+            <section id="tour-evidence" className="space-y-4">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <FileText size={20} className="text-accent" />
                 Direct Evidence
@@ -411,7 +519,7 @@ function InterviewDetailsContent() {
             </section>
           </div>
 
-          <div className="space-y-8">
+          <div id="tour-recommendation" className="space-y-8">
             {/* Recommendation Card */}
             <div className="card p-6 bg-surface-elevated text-text-primary border-2 border-accent space-y-4">
               <div className="flex items-center justify-between">
@@ -523,12 +631,14 @@ function CheckItem({ label, done, warn }: { label: string, done: boolean, warn?:
 
 
 function FileUploadSection({ 
+  id,
   type, 
   interviewId, 
   isUploaded, 
   onSuccess,
   setToast
 }: { 
+  id?: string,
   type: 'jd' | 'transcript', 
   interviewId: string, 
   isUploaded: boolean, 
@@ -575,7 +685,7 @@ function FileUploadSection({
   };
 
   return (
-    <div className={cn(
+    <div id={id} className={cn(
       "card p-5 border-dashed flex flex-col items-center justify-center gap-3 transition-all",
       isUploaded ? "bg-success/5 border-success/30 shadow-inner" : "bg-surface/50 border-border hover:border-accent/40"
     )}>

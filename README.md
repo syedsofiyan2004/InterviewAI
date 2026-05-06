@@ -1,0 +1,197 @@
+# Minfy AI Work Clarity Suite
+
+Minfy AI is a secure workspace for interview evaluation and meeting-minutes analysis. It helps teams turn uploaded transcripts and documents into structured, downloadable reports while keeping every record scoped to the authenticated Cognito user.
+
+## Features
+
+### Interview Evaluator
+
+- Create interview evaluations with candidate, role, and interview metadata.
+- Upload interview transcripts, job descriptions, and optional resumes.
+- Store files under user-scoped S3 prefixes.
+- Run asynchronous AI evaluation through Amazon Bedrock.
+- Generate structured interview results with scores, strengths, risks, evidence, and recommendations.
+- Download regenerated PDF reports with safe text wrapping for long fields.
+- New-user tour guidance across evaluation list, setup, upload, processing, and results pages.
+
+### MOM Analyzer
+
+- Create MOM analysis records for meeting transcripts.
+- Upload meeting transcript files in PDF, DOCX, or TXT format.
+- Run asynchronous MOM analysis through Amazon Bedrock using the configured MOM model.
+- Generate concise meeting summaries, attendees, agenda items, decisions, action items, risks, and next steps.
+- Download professional PDF reports with tables, colored section headers, callouts, and safe wrapping for long content.
+
+### TF Generator
+
+- Upload AWS prerequisite Excel workbooks in a production review Terraform workspace.
+- Parse account context, VPCs, subnets, NAT intent, and routing intent into a deterministic network manifest.
+- Validate CIDR ranges, overlapping subnets, subnet containment, duplicate Terraform IDs, NAT/public subnet mismatches, and multi-region workbook issues before code generation.
+- Generate reviewable Terraform for VPCs, subnets, Internet Gateways, route tables, route associations, optional NAT Gateway/EIP, variables, locals, provider configuration, and outputs.
+- Download a selected Terraform file or a review bundle for controlled review.
+- Keep deployment/apply locked until a backend Terraform runner, plan review, and human approval workflow are enabled.
+
+### Security And Ownership
+
+- Cognito authentication protects all application APIs.
+- Interview and MOM records include `owner_user_id`.
+- List, read, upload, analyze, download, and delete operations verify the authenticated owner.
+- S3 objects are written under user-specific prefixes rather than separate buckets per user.
+- User tour completion is stored per authenticated user and per tour key.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  User["Browser User"] --> CloudFront["CloudFront + S3 Static Frontend"]
+  CloudFront --> NextApp["Next.js Static App"]
+  NextApp --> Cognito["Amazon Cognito"]
+  NextApp --> Api["API Gateway"]
+  Api --> LambdaApi["API Handler Lambda"]
+  LambdaApi --> DDBInterviews["DynamoDB Interviews Table"]
+  LambdaApi --> DDBMoms["DynamoDB MOM Table"]
+  LambdaApi --> S3["Private S3 Files Bucket"]
+  LambdaApi --> EvalQueue["Interview SQS Queue"]
+  LambdaApi --> MomQueue["MOM SQS Queue"]
+  EvalQueue --> EvalWorker["Interview Processor Lambda"]
+  MomQueue --> MomWorker["MOM Processor Lambda"]
+  EvalWorker --> Bedrock["Amazon Bedrock"]
+  MomWorker --> Bedrock
+  EvalWorker --> S3
+  MomWorker --> S3
+```
+
+The TF Generator currently runs as a production review and code-generation workspace. Cross-account deployment is represented through generated Terraform `assume_role` provider configuration, while real plan/apply execution must be added through a controlled backend runner before live infrastructure changes are allowed.
+
+## Repository Structure
+
+```text
+frontend/
+  src/app/                 Next.js routes
+  src/components/          Layout and reusable UI components
+  src/contexts/            Auth and tour context providers
+  src/lib/                 API and Cognito helpers
+
+infrastructure/
+  lib/                     CDK stack
+  lambdas/api-handler/     API Gateway Lambda handler
+  lambdas/processor/       Interview evaluation worker
+  lambdas/mom-processor/   MOM analysis worker
+  lambdas/shared/          Shared AWS/PDF/report utilities
+  schema/                  Shared validation schemas
+```
+
+## Local Development
+
+### Prerequisites
+
+- Node.js
+- npm
+- AWS CLI configured for the target AWS account
+- AWS CDK access
+- Amazon Bedrock model access for the configured inference profiles
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+For production build:
+
+```bash
+cd frontend
+npm run build
+```
+
+### Infrastructure
+
+```bash
+cd infrastructure
+npm install
+npm run build
+npx cdk deploy --all --require-approval never
+```
+
+The CDK stack deploys:
+
+- S3 files bucket
+- DynamoDB interview and MOM tables
+- SQS queues and DLQs
+- API Gateway
+- Cognito user pool and client
+- Lambda workers
+- S3 + CloudFront frontend hosting
+
+## Environment Notes
+
+Most runtime environment variables are injected by CDK. The `.env.template` file documents local Lambda/SAM-style variables.
+
+Important runtime values include:
+
+- `TABLE_NAME`
+- `MOM_TABLE_NAME`
+- `BUCKET_NAME`
+- `QUEUE_URL`
+- `MOM_QUEUE_URL`
+- `BEDROCK_SONNET_PROFILE_ARN`
+- `BEDROCK_NOVA_PROFILE_ARN`
+- `MOM_MODEL_ID`
+
+The frontend uses `NEXT_PUBLIC_API_BASE_URL` in `.env.local` for API calls.
+
+## TF Generator Safety Model
+
+The Terraform generation path is intentionally deterministic. AI-style assistance is used as an advisor layer for summaries, validation explanations, recommendations, and next checkpoints; the actual Terraform resources are produced from strict workbook parsing and validation rules.
+
+Current production guardrails:
+
+- Bad CIDRs, subnet ranges outside VPCs, overlapping subnets, duplicate Terraform IDs, multi-region manifests, and impossible NAT routing block generation.
+- SSO and AWS Organizations data are not deployed by this app; those workbook tabs remain outside Terraform scope.
+- The generated provider uses `assume_role`, but the app does not call AWS Terraform plan/apply yet.
+- Real deployment should be added only through `terraform fmt`, `terraform validate`, `terraform plan`, human approval, and a locked runner such as CodeBuild.
+
+## Report Generation
+
+PDF reports are generated server-side with `pdf-lib`.
+
+- Interview reports are generated by `generateInterviewPdfReport`.
+- MOM reports are generated by `generateMomPdfReport`.
+- Report downloads regenerate PDFs from stored JSON so older completed records receive the latest layout fixes.
+- Text wrapping is generic and handles long names, IDs, URLs, cloud resources, and unbroken strings.
+
+## Tour Guide Behavior
+
+Tours are designed for new users and show once per user per tour key.
+
+Current interview tour keys:
+
+- `interviews-list`
+- `interviews-new-details`
+- `interviews-new-upload`
+- `interviews-view-setup`
+- `interviews-view-processing`
+- `interviews-view-results`
+
+Completion is persisted in user preferences and mirrored locally as a fallback.
+
+## Deployment Outputs
+
+CDK prints the key deployment outputs after a successful deploy:
+
+- Frontend URL
+- API URL
+- S3 bucket name
+- DynamoDB table names
+- Cognito user pool ID
+- Cognito user pool client ID
+
+## Operational Notes
+
+- Keep `main` stable.
+- Use feature branches for review and deployment changes.
+- Do not remove owner checks from interview or MOM APIs.
+- Do not expose the files bucket publicly.
+- When report layouts change, download endpoints regenerate PDFs from stored JSON.

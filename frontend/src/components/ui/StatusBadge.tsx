@@ -14,6 +14,7 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeProps) {
+  const normalizedStatus = typeof status === 'string' && status.trim() ? status : 'CREATED';
   const pillStyles: Record<string, string> = {
     CREATED: "text-text-muted border-border bg-surface/30",
     FILES_UPLOADED: "text-blue-600 bg-blue-50/50 border-blue-100 dark:text-blue-400 dark:bg-blue-900/10 dark:border-blue-900/30",
@@ -32,10 +33,10 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     FAILED: "text-red-500",
   };
 
-  const label = status.replace('_', ' ');
+  const label = normalizedStatus.replace(/_/g, ' ');
 
   if (variant === 'pill') {
-    const currentStyle = pillStyles[status] || pillStyles.CREATED;
+    const currentStyle = pillStyles[normalizedStatus] || pillStyles.CREATED;
     return (
       <span className={cn(
         "px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wide",
@@ -47,7 +48,7 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     );
   }
 
-  const currentStyle = dotStyles[status] || dotStyles.CREATED;
+  const currentStyle = dotStyles[normalizedStatus] || dotStyles.CREATED;
   return (
     <span className={cn(
       "flex items-center gap-1.5 text-xs font-semibold",

@@ -2,6 +2,8 @@
 node_modules/
 dist/
 lib/
+!infrastructure/lib/
+!infrastructure/lib/*.ts
 *.d.ts
 *.js
 !jest.config.js

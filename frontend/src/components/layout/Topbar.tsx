@@ -8,10 +8,11 @@ export function Topbar() {
   const pageTitle = pathname === '/' ? 'Dashboard' 
     : pathname === '/interviews/new' ? 'New evaluation'
     : pathname.startsWith('/interviews/view') ? 'Evaluation details'
+    : pathname.startsWith('/tf-generator') ? 'TF Generator'
     : '';
 
   return (
-    <header className="h-14 border-b border-border bg-surface-elevated flex items-center justify-between px-6 flex-shrink-0 sticky top-0 z-10">
+    <header className="h-14 border-b border-border bg-surface-elevated/90 backdrop-blur-xl flex items-center justify-between px-6 flex-shrink-0 sticky top-0 z-10">
       <div className="flex items-center gap-4">
         <span className="text-sm font-medium text-text-secondary">
           {pageTitle}
@@ -21,7 +22,9 @@ export function Topbar() {
       <div className="flex items-center gap-2">
         <button
           onClick={() => {
-            localStorage.removeItem('minfy_tour_done');
+            Object.keys(localStorage)
+              .filter((key) => key.startsWith('minfy_tour_done'))
+              .forEach((key) => localStorage.removeItem(key));
             window.location.reload();
           }}
           className="p-1.5 rounded-md text-text-muted hover:text-accent transition-colors"

@@ -45,7 +45,7 @@ export default function NewInterview() {
   
   useEffect(() => {
     if (step === 'CREATE') {
-      checkTourStatus().then(done => {
+      checkTourStatus('interviews-new-details').then(done => {
         if (!done) {
           setTimeout(() => {
             startTour([
@@ -67,7 +67,7 @@ export default function NewInterview() {
                 body: 'Claude 3.7 Sonnet gives the most accurate evaluation. Nova Pro is faster but less nuanced. Recommended: Claude 3.7 Sonnet.',
                 position: 'right',
               },
-            ]);
+            ], 'interviews-new-details');
           }, 1000);
         }
       });
@@ -76,7 +76,7 @@ export default function NewInterview() {
 
   useEffect(() => {
     if (step === 'UPLOAD') {
-      checkTourStatus().then(done => {
+      checkTourStatus('interviews-new-upload').then(done => {
         if (!done) {
           setTimeout(() => {
             startTour([
@@ -104,7 +104,7 @@ export default function NewInterview() {
                 body: 'Once transcript and JD are uploaded, click here. Analysis takes 60–90 seconds. You will be redirected automatically.',
                 position: 'top',
               },
-            ]);
+            ], 'interviews-new-upload');
           }, 800);
         }
       });
@@ -182,7 +182,7 @@ export default function NewInterview() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
-      <Link href="/" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium">
+      <Link href="/interviews" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium">
         <ArrowLeft size={16} />
         Back to Dashboard
       </Link>
