@@ -3,7 +3,6 @@
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  ShieldCheck,
   Mail,
   Lock,
   Eye,
@@ -42,14 +41,14 @@ function LoginContent() {
   const stories = [
     {
       label: 'Interviews',
-      title: 'Evaluate candidates with confidence.',
-      body: 'Scores, evidence, and clear recommendations from interview conversations.',
+      title: 'Stop rewriting interview notes.',
+      body: 'Upload the transcript and the job description. You get a scored report with quotes from the actual conversation.',
       icon: <ClipboardList size={17} />,
     },
     {
       label: 'Meetings',
-      title: 'Understand meetings without replaying them.',
-      body: 'Summaries, decisions, risks, next steps, and owner-wise action items.',
+      title: 'Meeting notes that write themselves.',
+      body: "Paste the transcript. Get a PDF with every decision, action item, and risk - with the person's name on each one.",
       icon: <FileText size={17} />,
     },
   ];
@@ -159,33 +158,25 @@ function LoginContent() {
       }}
       style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
     >
-      <div className="login-grid" />
-      <div className="login-scanline" />
-      <div className="login-pointer-field" />
-      <div className="login-orbit login-orbit-one" />
-      <div className="login-orbit login-orbit-two" />
-
       <div className="relative z-10 grid h-full grid-cols-1 gap-9 px-[clamp(24px,3.8vw,58px)] py-[clamp(24px,4.5vh,48px)] lg:grid-cols-[minmax(0,1fr)_minmax(430px,540px)]">
         <section className="hidden min-h-0 flex-col justify-between lg:flex">
           <div className="flex items-center justify-between">
             <div className="relative flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#6EE7B7] text-[#071018]">
-                <ShieldCheck size={20} />
-              </div>
+              <img src="/minfy-ai-logo.png" alt="" className="h-11 w-11 rounded-lg object-contain" />
               <span className="text-lg font-semibold tracking-tight text-white">Minfy AI</span>
             </div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6EE7B7]">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">
               Interview intelligence / Meeting clarity
             </div>
           </div>
 
           <div className="grid grid-cols-[minmax(0,1fr)_clamp(76px,10vw,148px)] items-end gap-7">
             <div className="max-w-[720px] space-y-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#93C5FD]">Work clarity suite</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent">Work clarity suite</p>
               <div>
                 <h2 className="text-[clamp(46px,5vw,82px)] font-semibold leading-[0.94] tracking-tight text-white">
                   Conversations,
-                  <span className="block text-[#6EE7B7]">understood.</span>
+                  <span className="block text-accent">understood.</span>
                 </h2>
                 <div className="mt-5 h-[34px] overflow-hidden text-[28px] font-semibold tracking-tight text-white/80">
                   <div className="login-kinetic-stack">
@@ -218,10 +209,10 @@ function LoginContent() {
                   className={`login-capability text-left ${activeStory === index ? 'is-active' : ''}`}
                 >
                   <div className="flex items-center gap-4">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6EE7B7]">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
                       0{index + 1}
                     </span>
-                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white/[0.06] text-[#6EE7B7]">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white/[0.06] text-accent">
                       {story.icon}
                     </div>
                   </div>
@@ -292,7 +283,7 @@ function LoginContent() {
                     <button
                       type="button"
                       onClick={() => { setMode('signup'); clearMessages(); }}
-                      className="font-semibold text-[#6EE7B7] hover:underline"
+                      className="font-semibold text-accent hover:underline"
                     >
                       Sign up
                     </button>
@@ -337,7 +328,7 @@ function LoginContent() {
                     <button
                       type="button"
                       onClick={() => { setMode('signin'); clearMessages(); }}
-                      className="font-semibold text-[#6EE7B7] hover:underline"
+                      className="font-semibold text-accent hover:underline"
                     >
                       Sign in
                     </button>
@@ -359,7 +350,7 @@ function LoginContent() {
                       value={verifyCode}
                       onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
                       placeholder="000000"
-                      className="w-full h-14 rounded-xl border border-white/10 bg-white/[0.08] px-4 text-center text-2xl font-bold tracking-[0.5em] text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
+                      className="w-full h-14 rounded-xl border border-white/10 bg-white/[0.08] px-4 text-center text-2xl font-bold tracking-[0.5em] text-white outline-none transition-all placeholder:text-slate-500 focus:border-accent focus:ring-2 focus:ring-ring"
                     />
                   </div>
                   <SubmitButton loading={loading} label="Verify Account" />
@@ -417,7 +408,7 @@ function InputField({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-4 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
+          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-4 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-accent focus:ring-2 focus:ring-ring"
         />
       </div>
     </div>
@@ -454,7 +445,7 @@ function PasswordField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
-          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-10 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-[#6EE7B7] focus:ring-2 focus:ring-[#6EE7B7]/20"
+          className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] pl-10 pr-10 text-base text-white outline-none transition-all placeholder:text-slate-500 focus:border-accent focus:ring-2 focus:ring-ring"
         />
         <button
           type="button"
@@ -474,7 +465,7 @@ function SubmitButton({ loading, label }: { loading: boolean; label: string }) {
     <button
       type="submit"
       disabled={loading}
-      className="w-full h-12 rounded-lg bg-[#6EE7B7] text-base font-semibold text-[#071018] shadow-[0_16px_44px_rgba(110,231,183,0.22)] transition-all hover:bg-[#8CF3CB] disabled:opacity-50 active:scale-[0.98] flex items-center justify-center gap-2"
+      className="login-primary-button w-full h-12 text-base font-semibold disabled:opacity-50 active:scale-[0.98] flex items-center justify-center gap-2"
     >
       {loading ? (
         <Loader2 className="animate-spin" size={18} />

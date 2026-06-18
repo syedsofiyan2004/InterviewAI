@@ -8,8 +8,8 @@ type Rect = { top: number; left: number; width: number; height: number; right: n
 
 const TOOLTIP_W = 300;
 const TOOLTIP_H = 180;
-const GAP = 14;
-const PULSE_COLOR = '#4F46E5';
+const GAP = 12;
+const PULSE_COLOR = '#267A6B';
 
 export function TourOverlay() {
   const { steps, currentStep, isActive, nextStep, prevStep, endTour } = useTour();
@@ -31,12 +31,29 @@ export function TourOverlay() {
       }
       .tour-pulse-target {
         outline: 2px solid ${PULSE_COLOR} !important;
-        outline-offset: 4px !important;
-        border-radius: 8px !important;
-        animation: tourPulseRing 1.6s ease-in-out infinite !important;
+        outline-offset: 5px !important;
+        border-radius: 10px !important;
+        animation: tourPulseRing 1.15s ease-in-out infinite !important;
         position: relative !important;
         z-index: 9999 !important;
-        transition: outline 0.2s !important;
+        transition: outline 120ms ease, box-shadow 120ms ease !important;
+      }
+      .tour-tooltip-card {
+        opacity: 0;
+        transform: translate3d(0, 8px, 0) scale(0.985);
+        animation: tourTooltipIn 160ms cubic-bezier(.2,.8,.2,1) forwards;
+        transition: top 140ms cubic-bezier(.2,.8,.2,1), left 140ms cubic-bezier(.2,.8,.2,1);
+      }
+      .tour-vignette {
+        opacity: 0;
+        animation: tourVignetteIn 140ms ease-out forwards;
+        transition: background 140ms ease-out;
+      }
+      @keyframes tourTooltipIn {
+        to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+      }
+      @keyframes tourVignetteIn {
+        to { opacity: 1; }
       }
     `;
     document.head.appendChild(style);
@@ -107,13 +124,13 @@ export function TourOverlay() {
         // Element not in DOM yet — retry
         if (attempts < 15) {
           attempts++;
-          timer = setTimeout(tryFindElement, 200);
+          timer = setTimeout(tryFindElement, 80);
         }
         return;
       }
 
       // Element found — add highlight
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       el.classList.add('tour-pulse-target');
       prevElRef.current = el;
 
@@ -126,7 +143,7 @@ export function TourOverlay() {
           if (attempts < 15) {
             attempts++;
             el.classList.remove('tour-pulse-target');
-            timer = setTimeout(tryFindElement, 200);
+            timer = setTimeout(tryFindElement, 80);
           }
           return;
         }
@@ -141,11 +158,10 @@ export function TourOverlay() {
         };
         setTargetRect(r);
         setTooltipPos(calcTooltipPos(r, step.position));
-      }, 400);
+      }, 40);
     };
 
-    // Start first attempt after short delay
-    timer = setTimeout(tryFindElement, 300);
+    timer = setTimeout(tryFindElement, 40);
 
     return () => {
       clearTimeout(timer);
@@ -200,6 +216,7 @@ export function TourOverlay() {
     <>
       {/* Subtle radial vignette — NO full dark overlay */}
       <div
+        className="tour-vignette"
         style={{
           position: 'fixed',
           inset: 0,
@@ -216,16 +233,17 @@ export function TourOverlay() {
 
       {/* Tooltip card */}
       <div
+        className="tour-tooltip-card"
         style={{
           position: 'fixed',
           top: finalTooltipPos.top,
           left: finalTooltipPos.left,
           width: TOOLTIP_W,
           zIndex: 10001,
-          background: '#ffffff',
-          borderRadius: 14,
-          boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08), 0 12px 32px rgba(0,0,0,0.14)',
-          border: '1px solid #E5E7EB',
+          background: 'hsl(222 47% 12% / 0.96)',
+          borderRadius: 16,
+          boxShadow: '0 24px 72px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.06)',
+          border: '1px solid hsl(217 33% 20%)',
           padding: '16px 18px 14px',
           pointerEvents: 'auto',
         }}
@@ -235,12 +253,12 @@ export function TourOverlay() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{
               width: 22, height: 22, borderRadius: 6,
-              background: '#4F46E5',
+              background: 'hsl(166 52% 58%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <Lightbulb size={12} color="#fff" />
             </div>
-            <span style={{ fontSize: 11, fontWeight: 600, color: '#4F46E5', letterSpacing: '0.02em' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(166 52% 58%)', letterSpacing: '0.02em' }}>
               Step {currentStep + 1} of {steps.length}
             </span>
           </div>
@@ -248,7 +266,7 @@ export function TourOverlay() {
             onClick={endTour}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
-              padding: '2px 4px', borderRadius: 4, color: '#9CA3AF',
+              padding: '2px 4px', borderRadius: 4, color: 'hsl(215 16% 47%)',
               display: 'flex', alignItems: 'center',
             }}
             title="Skip tour"
@@ -258,15 +276,15 @@ export function TourOverlay() {
         </div>
 
         {/* Title + body */}
-        <p style={{ fontSize: 13.5, fontWeight: 700, color: '#111827', margin: '0 0 6px', lineHeight: 1.35 }}>
+        <p style={{ fontSize: 13.5, fontWeight: 700, color: 'hsl(210 40% 98%)', margin: '0 0 6px', lineHeight: 1.35 }}>
           {step.title}
         </p>
-        <p style={{ fontSize: 12, color: '#6B7280', margin: '0 0 14px', lineHeight: 1.65 }}>
+        <p style={{ fontSize: 12, color: 'hsl(215 20% 75%)', margin: '0 0 14px', lineHeight: 1.65 }}>
           {step.body}
         </p>
 
         {/* Divider */}
-        <div style={{ height: 1, background: '#F3F4F6', margin: '0 -18px 12px' }} />
+        <div style={{ height: 1, background: 'hsl(217 33% 20%)', margin: '0 -18px 12px' }} />
 
         {/* Footer: dots + nav buttons */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -276,7 +294,7 @@ export function TourOverlay() {
                 height: 6,
                 width: i === currentStep ? 18 : 6,
                 borderRadius: 3,
-                background: i < currentStep ? '#A5B4FC' : i === currentStep ? '#4F46E5' : '#E5E7EB',
+                background: i < currentStep ? 'hsl(166 52% 66%)' : i === currentStep ? 'hsl(166 52% 58%)' : 'hsl(217 33% 20%)',
                 transition: 'all 0.25s ease',
               }} />
             ))}
@@ -286,9 +304,9 @@ export function TourOverlay() {
               <button
                 onClick={prevStep}
                 style={{
-                  background: 'none', border: '1px solid #E5E7EB',
+                  background: 'transparent', border: '1px solid hsl(217 33% 20%)',
                   borderRadius: 8, padding: '5px 10px',
-                  fontSize: 12, fontWeight: 500, color: '#6B7280',
+                  fontSize: 12, fontWeight: 500, color: 'hsl(215 20% 75%)',
                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
                 }}
               >
@@ -299,11 +317,11 @@ export function TourOverlay() {
             <button
               onClick={nextStep}
               style={{
-                background: '#4F46E5', color: '#fff',
+                background: 'hsl(166 52% 58%)', color: 'hsl(170 80% 8%)',
                 border: 'none', borderRadius: 8, padding: '6px 14px',
                 fontSize: 12, fontWeight: 600, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', gap: 5,
-                boxShadow: '0 2px 8px rgba(79,70,229,0.35)',
+                boxShadow: '0 12px 26px rgba(38,122,107,0.24)',
               }}
             >
               {isLast ? 'Done ✓' : 'Next'}

@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useAuth();
-  const [pointer, setPointer] = useState({ x: 55, y: 35 });
+  const [pointer, setPointer] = useState({ x: 50, y: 42 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
@@ -58,7 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
           <Topbar />
           <main
-            className="app-workspace flex-1 overflow-y-auto p-6 lg:p-7"
+            className="app-workspace flex-1 overflow-y-auto p-7 lg:p-8"
             onMouseMove={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
               setPointer({
@@ -68,7 +68,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }}
             style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
           >
-            {children}
+            <div className="relative z-10">
+              {children}
+            </div>
           </main>
         </div>
       </div>
@@ -121,14 +123,8 @@ function AppOnboardingTour() {
           body: 'Create a project first, then add one transcript or bulk upload meeting files inside that project.',
           position: 'right',
         },
-        {
-          targetId: 'tour-nav-tf-generator',
-          title: 'TF Generator',
-          body: 'Use this production review workspace to parse AWS prerequisite workbooks, validate resources, and review Terraform before controlled deployment.',
-          position: 'right',
-        },
       ], 'app-overview');
-    }, 900);
+    }, 300);
 
     return () => {
       cancelled = true;

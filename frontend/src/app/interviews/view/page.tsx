@@ -238,7 +238,7 @@ function InterviewDetailsContent() {
           position: 'top',
         },
       ], tourKey);
-    }, 900);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [interview, loading, result, startTour]);
@@ -583,7 +583,7 @@ function InterviewDetailsContent() {
                </p>
             </div>
             
-             <div className="card p-6 space-y-3 border-border bg-blue-50/10">
+             <div className="card p-6 space-y-3 border-border bg-accent/5">
                <h4 className="text-xs font-normal text-text-muted">Final Note</h4>
                <p className="text-sm text-text-primary italic leading-relaxed">
                  {(result as any).final_recommendation_note}

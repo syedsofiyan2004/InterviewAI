@@ -40,7 +40,7 @@ export default function NewMomProjectPage() {
       </Link>
 
       <div className="space-y-2">
-        <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase">MOM Analyzer</p>
+        <p className="page-kicker">MOM Analyzer</p>
         <h1 className="text-3xl font-bold text-text-primary tracking-tight">New Project</h1>
         <p className="text-text-secondary">
           Create a project folder first. You can add multiple meeting transcripts inside it.
@@ -58,7 +58,7 @@ export default function NewMomProjectPage() {
           <label className="block text-xs font-semibold text-text-muted mb-2">Project Title</label>
           <input
             required
-            className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+            className="premium-input w-full px-4 text-sm"
             value={projectTitle}
             onChange={(event) => setProjectTitle(event.target.value)}
             placeholder="e.g. Verbal"
@@ -71,7 +71,7 @@ export default function NewMomProjectPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50"
+          className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {loading ? <Loader2 size={18} className="animate-spin" /> : <FolderKanban size={18} />}
           {loading ? 'Creating project...' : 'Create Project'}

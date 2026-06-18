@@ -44,7 +44,7 @@ export function Toast({
 
   return (
     <div className={cn(
-      "fixed bottom-6 right-6 z-[100] flex items-center gap-3 px-4 py-3 bg-surface border border-border rounded-lg shadow-xl transition-all duration-300",
+      "glass-panel fixed bottom-6 right-6 z-[100] flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-300",
       isVisible ? "opacity-100 translate-y-0 scale-100" : "opacity-0 translate-y-4 scale-95"
     )}>
       <div className="flex-shrink-0">

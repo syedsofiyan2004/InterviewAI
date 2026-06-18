@@ -52,13 +52,13 @@ export function ConfirmDialog({
     )}>
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm" 
+        className="absolute inset-0 bg-background/75 backdrop-blur-md" 
         onClick={onCancel}
       />
       
       {/* Modal */}
       <div className={cn(
-        "relative w-full max-w-md bg-surface border border-border rounded-xl shadow-2xl p-6 transition-all duration-200",
+        "glass-panel relative w-full max-w-md rounded-2xl p-6 transition-all duration-200",
         isOpen ? "scale-100 translate-y-0" : "scale-95 translate-y-4"
       )}>
         <button 
@@ -87,14 +87,14 @@ export function ConfirmDialog({
         <div className="flex items-center justify-end gap-3 mt-8">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-elevated rounded-md transition-all"
+            className="btn-secondary px-4 py-2 text-sm font-medium"
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
             className={cn(
-              "px-4 py-2 text-sm font-semibold text-white rounded-md transition-all shadow-sm",
+              "px-4 py-2 text-sm font-semibold text-white rounded-lg transition-all shadow-sm",
               variant === 'danger' ? "bg-danger hover:bg-danger/90" : "bg-accent hover:bg-accent/90"
             )}
           >

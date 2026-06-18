@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, ClipboardList, CloudCog, FileText, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
 
 type HubStats = {
@@ -13,7 +13,6 @@ type HubStats = {
 
 export default function HubPage() {
   const [stats, setStats] = useState<HubStats>({ interviews: 0, moms: 0, loading: true });
-  const [pointer, setPointer] = useState({ x: 50, y: 45 });
 
   useEffect(() => {
     let mounted = true;
@@ -45,7 +44,8 @@ export default function HubPage() {
   const apps = useMemo(() => [
     {
       title: 'Interview Evaluator',
-      description: 'Assess interview transcripts against job descriptions with AI scoring, evidence, and PDF reports.',
+      description: 'Paste an interview transcript and a job description. Get a scored report with evidence for each competency.',
+      proof: 'Output: Score / Strengths / Red flags / PDF',
       href: '/interviews',
       icon: ClipboardList,
       statLabel: 'Evaluations',
@@ -53,58 +53,36 @@ export default function HubPage() {
     },
     {
       title: 'MOM Analyzer',
-      description: 'Convert meeting transcripts into summaries, decisions, risks, next steps, and owner-based action items.',
+      description: 'Upload your meeting recording transcript. Get decisions, risks, and action items with owners - ready to share.',
+      proof: 'Output: Decisions / Actions / Risks / PDF',
       href: '/mom',
       icon: FileText,
       statLabel: 'MOMs',
       stat: stats.moms,
     },
-    {
-      title: 'TF Generator',
-      description: 'Parse AWS prerequisite workbooks, validate manifests, and generate reviewable Terraform before deployment.',
-      href: '/tf-generator',
-      icon: CloudCog,
-      statLabel: 'Review',
-      stat: 'Ready',
-    },
   ], [stats.interviews, stats.moms]);
 
   return (
-    <div
-      className="hub-stage min-h-[calc(100vh-7rem)] rounded-2xl p-[clamp(22px,3.2vw,42px)]"
-      onMouseMove={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        setPointer({
-          x: ((event.clientX - rect.left) / rect.width) * 100,
-          y: ((event.clientY - rect.top) / rect.height) * 100,
-        });
-      }}
-      style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
-    >
-      <div className="hub-grid" />
-      <div className="hub-pointer-field" />
-
-      <div className="relative z-10 flex w-full max-w-7xl flex-col gap-8">
+    <div className="hub-stage min-h-[calc(100vh-7rem)] rounded-2xl p-[clamp(22px,3.2vw,42px)]">
+      <div className="relative z-10 flex w-full max-w-7xl flex-col gap-10">
         <header className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-accent-foreground shadow-lg shadow-accent/20">
-                <ShieldCheck size={22} />
-              </div>
+              <img src="/minfy-ai-logo.png" alt="" className="h-12 w-12 rounded-xl object-contain shadow-sm" />
               <div>
                 <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy AI</p>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Work clarity suite</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Internal tools</p>
               </div>
             </div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-accent">
-              Interview intelligence / Meeting clarity
+              Two tools. One place.
             </p>
-            <h1 className="mt-4 max-w-2xl text-[clamp(38px,6vw,76px)] font-semibold leading-[0.96] tracking-tight text-text-primary">
-              Conversations,
-              <span className="block text-accent">understood.</span>
+            <h1 className="mt-3 max-w-3xl text-[clamp(38px,6vw,76px)] font-semibold leading-[0.96] tracking-tight text-text-primary">
+              Your meetings and interviews,
+              <span className="block text-accent">actually documented.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-text-secondary">
-              Choose a workspace to evaluate interviews, summarize meetings, and turn long discussions into useful reports.
+            <p className="mt-4 max-w-2xl text-base leading-7 text-text-secondary">
+              Upload a transcript. Get a proper report. No copying, no formatting, no chasing people for notes.
             </p>
           </div>
           {stats.loading && (
@@ -115,7 +93,7 @@ export default function HubPage() {
           )}
         </header>
 
-        <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {apps.map((app, index) => {
             const Icon = app.icon;
             return (
@@ -124,8 +102,9 @@ export default function HubPage() {
                 href={app.href}
                 className="hub-workspace-card group"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-4">
+                <div className="flex h-full flex-col justify-between gap-6">
+                  <div>
+                    <div className="flex items-center gap-4">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
                       0{index + 1}
                     </span>
@@ -133,18 +112,25 @@ export default function HubPage() {
                       <Icon size={22} />
                     </div>
                   </div>
-                  <ArrowRight size={18} className="text-text-muted transition-transform group-hover:translate-x-1 group-hover:text-accent" />
-                </div>
 
-                <div className="mt-8 space-y-3">
-                  <div className="flex items-end justify-between gap-4">
-                    <h2 className="text-xl font-semibold text-text-primary">{app.title}</h2>
-                    <div className="text-right">
-                      <p className="text-3xl font-bold leading-none text-text-primary">{app.stat}</p>
-                      <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-text-muted">{app.statLabel}</p>
+                    <div className="mt-6 space-y-3">
+                      <h2 className="text-xl font-semibold text-text-primary">{app.title}</h2>
+                      <p className="max-w-xl text-sm leading-6 text-text-secondary">{app.description}</p>
+                      <code className="inline-flex max-w-full rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-semibold leading-5 text-text-secondary">
+                        {app.proof}
+                      </code>
                     </div>
                   </div>
-                  <p className="max-w-xl text-sm leading-6 text-text-secondary">{app.description}</p>
+
+                  <div className="flex items-end justify-between gap-4 border-t border-border pt-5">
+                    <div>
+                      <p className="text-2xl font-semibold leading-none text-text-primary">{app.stat}</p>
+                      <p className="mt-1 text-xs uppercase tracking-wide text-text-muted">{app.statLabel}</p>
+                    </div>
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition-colors group-hover:border-accent/40 group-hover:text-accent">
+                      <ArrowRight size={17} className="transition-transform group-hover:translate-x-0.5" />
+                    </span>
+                  </div>
                 </div>
               </Link>
             );

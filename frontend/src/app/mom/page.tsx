@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ComponentType } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ArrowRight, CheckCircle2, Clock, FileText, FolderKanban, Plus, Trash2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock, FileText, FolderKanban, Plus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { api, Mom, MomProject } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -88,18 +89,15 @@ export default function MomDashboard() {
     <div className="max-w-6xl mx-auto space-y-8 pb-8">
       <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase mb-1">
-            Minfy AI / MOM Analyzer
-          </p>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Project Workspaces</h1>
+          <p className="page-kicker mb-1">Minfy AI / MOM Analyzer</p>
+          <h1 className="text-xl font-semibold text-text-primary tracking-tight">Project Workspaces</h1>
           <p className="text-sm text-text-muted mt-0.5">
             {projects.length} projects / {stats.total} meeting reports / {stats.completed} completed / {stats.processing} in progress
           </p>
         </div>
         <Link
           href="/mom/new"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90 shrink-0"
-          style={{ background: '#4F46E5' }}
+          className="btn-primary flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold shrink-0"
         >
           <Plus size={15} />
           New Project
@@ -113,7 +111,7 @@ export default function MomDashboard() {
         <Stat title="Completed" value={stats.completed} icon={CheckCircle2} onClick={() => setFilter('COMPLETED')} active={filter === 'COMPLETED'} />
       </div>
 
-      <section className="space-y-4">
+      <section className="mt-8 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text-primary">Projects</h2>
@@ -186,12 +184,12 @@ export default function MomDashboard() {
 
                   <Link href={href} className="mt-5 grid grid-cols-2 gap-3">
                     <div className="rounded-lg p-3" style={{ background: 'var(--surface)' }}>
-                      <p className="text-[11px] font-medium text-text-muted">Reports</p>
-                      <p className="text-xl font-bold text-text-primary mt-1">{project.mom_count}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Reports</p>
+                      <p className="text-2xl font-semibold text-text-primary mt-1">{project.mom_count}</p>
                     </div>
                     <div className="rounded-lg p-3" style={{ background: 'var(--surface)' }}>
-                      <p className="text-[11px] font-medium text-text-muted">Completed</p>
-                      <p className="text-xl font-bold text-text-primary mt-1">{project.completed_count}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Completed</p>
+                      <p className="text-2xl font-semibold text-text-primary mt-1">{project.completed_count}</p>
                     </div>
                   </Link>
                 </div>
@@ -201,35 +199,37 @@ export default function MomDashboard() {
         )}
       </section>
 
-      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}>
-        <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div className="data-table mt-8">
+        <div className="px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
             <h3 className="text-sm font-semibold text-text-primary">Recent Meeting Reports</h3>
             <p className="text-xs text-text-muted mt-1">Open the project folder when you need to add more transcripts.</p>
           </div>
-          <select
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            className="text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent/30 transition-all"
-            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--color-text-secondary)' }}
-          >
-            <option value="ALL">All statuses</option>
-            <option value="PROCESSING">Processing</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="FAILED">Failed</option>
-          </select>
+          <div className="status-tabs">
+            {['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'].map((status) => (
+              <button
+                key={status}
+                type="button"
+                className="status-tab"
+                data-active={filter === status}
+                onClick={() => setFilter(status)}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Title</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Project</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Source</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Meeting Date</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Status</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-right">Action</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Title</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Project</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Source</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-center">Meeting Date</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-center">Status</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -319,17 +319,17 @@ function Stat({
 }: {
   title: string;
   value: number;
-  icon: any;
+  icon: ComponentType<{ size?: number; className?: string }>;
   active: boolean;
   onClick?: () => void;
 }) {
   const content = (
     <>
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-text-muted">{title}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</p>
         <Icon size={18} className="text-accent" />
       </div>
-      <p className="text-2xl font-bold text-text-primary mt-4">{value}</p>
+      <p className="text-2xl font-semibold text-text-primary mt-4">{value}</p>
     </>
   );
 
@@ -337,10 +337,10 @@ function Stat({
     return (
       <button
       onClick={onClick}
-      className="text-left p-5 rounded-xl transition-all"
+      className="metric-card text-left p-5 transition-all hover:-translate-y-0.5"
       style={{
-        border: active ? '1px solid #4F46E5' : '1px solid var(--border)',
-        background: active ? '#4F46E512' : 'var(--surface-elevated)',
+        border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+        background: active ? 'color-mix(in srgb, var(--accent) 10%, var(--surface-elevated))' : undefined,
       }}
       >
         {content}
@@ -350,8 +350,7 @@ function Stat({
 
   return (
     <div
-      className="text-left p-5 rounded-xl transition-all"
-      style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}
+      className="metric-card text-left p-5 transition-all"
     >
       {content}
     </div>

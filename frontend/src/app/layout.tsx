@@ -17,6 +17,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Minfy AI",
   description: "AI-powered interview evaluation platform by Minfy",
+  icons: {
+    icon: "/minfy-ai-logo.png",
+    shortcut: "/minfy-ai-logo.png",
+    apple: "/minfy-ai-logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -31,7 +36,7 @@ export default function RootLayout({
           (function() {
             const saved = localStorage.getItem('theme');
             const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            const isDarkMode = saved ? saved === 'dark' : prefersDark;
+            const isDarkMode = saved ? saved === 'dark' : true;
             if (isDarkMode) document.documentElement.classList.add('dark');
           })()
         ` }} />

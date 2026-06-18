@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CloudCog, FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
+import { FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, LogOut, Sun, Moon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,13 +25,6 @@ const navSections = [
     items: [
       { name: 'Projects', href: '/mom', icon: ListChecks },
       { name: 'New Project', href: '/mom/new', icon: FolderPlus },
-    ],
-  },
-  {
-    name: 'TF Generator',
-    items: [
-      { name: 'Workspaces', href: '/tf-generator', icon: CloudCog },
-      { name: 'New Workspace', href: '/tf-generator?view=new', icon: FolderPlus },
     ],
   },
 ];
@@ -59,28 +52,26 @@ export function Sidebar() {
 
   return (
     <div 
-      className="flex flex-col h-screen border-r border-border bg-surface/95 text-text-primary overflow-hidden backdrop-blur-xl"
+      className="flex flex-col h-screen border-r border-border/80 bg-surface text-text-primary overflow-hidden shadow-[10px_0_28px_rgba(15,23,42,0.06)]"
       style={{ width: '220px', flexShrink: 0 }}
     >
-      <div className="h-14 flex items-center gap-3 px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent text-white shadow-lg shadow-accent/20">
-          <ShieldCheck size={20} />
-        </div>
+      <div className="h-14 flex items-center gap-3 px-5 border-b border-border/70 flex-shrink-0">
+        <img src="/minfy-ai-logo.png" alt="" className="h-9 w-9 rounded-lg object-contain shadow-sm" />
         <div className="flex items-baseline">
           <span className="font-semibold text-text-primary tracking-tight">Minfy</span>
           <span className="font-normal text-text-muted ml-1">AI</span>
         </div>
       </div>
       
-      <nav className="flex-1 px-3 py-6 space-y-6">
+      <nav className="flex-1 px-3 py-6 space-y-6 overflow-y-auto">
         <Link
           id="tour-nav-home"
           href="/"
           className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group text-sm font-medium",
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium",
             pathname === '/'
-              ? "bg-accent/10 text-accent"
-              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+              ? "bg-accent/10 text-accent ring-1 ring-accent/15"
+              : "text-text-secondary hover:bg-surface-elevated/80 hover:text-text-primary"
           )}
         >
           <Home size={18} className={cn(pathname === '/' ? "text-accent" : "text-text-muted group-hover:text-text-primary")} />
@@ -94,7 +85,8 @@ export function Sidebar() {
             </p>
             <div className="space-y-1">
               {section.items.map((item) => {
-                const isActive = pathname === item.href;
+                const itemPath = item.href.split('?')[0];
+                const isActive = pathname === itemPath;
                 const Icon = item.icon;
 
                 return (
@@ -103,10 +95,10 @@ export function Sidebar() {
                     key={item.name}
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group text-sm font-medium",
+                      "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium",
                       isActive
-                        ? "bg-accent/10 text-accent"
-                        : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+                        ? "bg-accent/10 text-accent ring-1 ring-accent/15"
+                        : "text-text-secondary hover:bg-surface-elevated/80 hover:text-text-primary"
                     )}
                   >
                     <Icon size={18} className={cn(isActive ? "text-accent" : "text-text-muted group-hover:text-text-primary")} />
@@ -119,9 +111,10 @@ export function Sidebar() {
         ))}
       </nav>
       
-      <div id="tour-sidebar-footer" className="p-4 border-t border-border">
+      <div id="tour-sidebar-footer" className="p-4 border-t border-border/70">
+        <div className="rounded-xl border border-border/70 bg-surface-elevated/60 p-3">
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-accent-foreground text-sm font-semibold shrink-0">
+          <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-accent-foreground text-sm font-semibold shrink-0 shadow-md shadow-accent/20">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
@@ -146,6 +139,7 @@ export function Sidebar() {
           >
             {isDark ? <Sun size={14} /> : <Moon size={14} />}
           </button>
+        </div>
         </div>
       </div>
     </div>

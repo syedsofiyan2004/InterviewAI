@@ -8,7 +8,6 @@ import { api } from '@/lib/api';
 import { 
   ArrowLeft, 
   Upload, 
-  FileText, 
   CheckCircle2, 
   Loader2,
   AlertCircle
@@ -68,7 +67,7 @@ export default function NewInterview() {
                 position: 'right',
               },
             ], 'interviews-new-details');
-          }, 1000);
+          }, 300);
         }
       });
     }
@@ -105,7 +104,7 @@ export default function NewInterview() {
                 position: 'top',
               },
             ], 'interviews-new-upload');
-          }, 800);
+          }, 300);
         }
       });
     }
@@ -213,7 +212,7 @@ export default function NewInterview() {
               <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
               <input 
                 required
-                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+                className="premium-input w-full px-4 text-sm"
                 value={formData.candidate_name}
                 onChange={e => setFormData({ ...formData, candidate_name: e.target.value })}
                 placeholder="e.g. Sarah Connor"
@@ -223,7 +222,7 @@ export default function NewInterview() {
               <label className="block text-xs font-semibold text-text-muted mb-2">Position</label>
               <input 
                 required
-                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+                className="premium-input w-full px-4 text-sm"
                 value={formData.position}
                 onChange={e => setFormData({ ...formData, position: e.target.value })}
                 placeholder="e.g. Senior Software Engineer"
@@ -234,7 +233,7 @@ export default function NewInterview() {
               <input 
                 type="date"
                 required
-                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+                className="premium-input w-full px-4 text-sm"
                 value={formData.interview_date}
                 onChange={e => setFormData({ ...formData, interview_date: e.target.value })}
               />
@@ -244,7 +243,7 @@ export default function NewInterview() {
               <select
                 id="model_id"
                 name="model_id"
-                className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all appearance-none"
+                className="premium-input w-full px-4 text-sm appearance-none"
                 value={formData.model_id}
                 onChange={e => setFormData({ ...formData, model_id: e.target.value })}
               >
@@ -256,7 +255,7 @@ export default function NewInterview() {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50"
+            className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading ? <Loader2 className="animate-spin" size={20} /> : 'Continue to document upload'}
           </button>
@@ -300,7 +299,7 @@ export default function NewInterview() {
               id="tour-submit-btn"
               onClick={() => router.push(`/interviews/view?id=${interviewId}`)}
               disabled={uploads.transcript.status !== 'DONE' || uploads.jd.status !== 'DONE'}
-              className="w-full py-3 bg-accent text-accent-foreground font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-30 flex items-center justify-center gap-2"
+              className="btn-primary w-full py-3 font-bold disabled:opacity-30 flex items-center justify-center gap-2"
             >
               Submit for analysis
             </button>
@@ -359,7 +358,7 @@ function UploadCard({ title, description, status, fileName, onUpload }: { title:
       onDragOver={handleDrag}
       onDrop={handleDrop}
       className={cn(
-        "card p-6 flex flex-col justify-between items-center text-center space-y-4 transition-all duration-300",
+        "card upload-zone p-6 flex flex-col justify-between items-center text-center space-y-4 transition-all duration-300",
         status === 'IDLE' ? (isDragging ? 'bg-accent/5 border-accent ring-2 ring-accent/20' : 'bg-surface/50 border-dashed hover:border-accent/40') : 
         status === 'DONE' ? 'bg-success/5 border-success/30' : ''
       )}
@@ -382,7 +381,7 @@ function UploadCard({ title, description, status, fileName, onUpload }: { title:
       
       <div className="w-full">
         {status === 'IDLE' && (
-          <label className="w-full py-2 bg-surface-elevated border border-border text-xs font-semibold text-text-primary rounded-md cursor-pointer hover:bg-surface transition-colors flex items-center justify-center">
+          <label className="btn-secondary w-full py-2 text-xs font-semibold cursor-pointer flex items-center justify-center">
             {isDragging ? 'Drop to Upload' : 'Browse File'}
             <input 
               type="file" 
@@ -406,7 +405,7 @@ function UploadCard({ title, description, status, fileName, onUpload }: { title:
         )}
 
         {status === 'DONE' && (
-          <label className="w-full py-2 bg-success/10 border border-success/20 text-xs font-semibold text-success rounded-md cursor-pointer hover:bg-success/20 transition-colors flex items-center justify-center gap-2">
+          <label className="w-full py-2 bg-success/10 border border-success/20 text-xs font-semibold text-success rounded-lg cursor-pointer hover:bg-success/20 transition-colors flex items-center justify-center gap-2">
             Change File
             <input 
               type="file" 
@@ -423,7 +422,7 @@ function UploadCard({ title, description, status, fileName, onUpload }: { title:
         )}
 
         {status === 'ERROR' && (
-          <label className="w-full py-2 bg-danger/10 border border-danger/20 text-xs font-semibold text-danger rounded-md cursor-pointer hover:bg-danger/20 transition-colors flex items-center justify-center gap-2">
+          <label className="w-full py-2 bg-danger/10 border border-danger/20 text-xs font-semibold text-danger rounded-lg cursor-pointer hover:bg-danger/20 transition-colors flex items-center justify-center gap-2">
             <AlertCircle size={14} />
             Retry Upload
             <input 
