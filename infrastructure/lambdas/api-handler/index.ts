@@ -30,6 +30,17 @@ import {
   ConfirmUploadSchema
 } from '../../schema';
 import {
+  createKekaIntegration,
+  createTeamsIntegration,
+  InterviewIntelligenceRecord,
+  IntelligencePanelist,
+  IntelligenceQuestion
+} from './intelligence-integrations.js';
+
+type IntelligenceQuestionPlan = NonNullable<InterviewIntelligenceRecord['questionPlan']>;
+type IntelligenceEvaluation = NonNullable<InterviewIntelligenceRecord['aiEvaluation']>;
+type IntelligenceCoverageMatrix = IntelligenceEvaluation['coverageMatrix'];
+import {
   ConfirmMomUploadSchema,
   CreateMomProjectSchema,
   CreateMomSchema,
@@ -39,13 +50,14 @@ import {
 import { generateMomPdfReport } from '../shared/mom-report.js';
 import { generateInterviewPdfReport } from '../processor/index.js';
 
-validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL', 'MOM_TABLE_NAME', 'MOM_QUEUE_URL']);
+validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL', 'MOM_TABLE_NAME', 'MOM_QUEUE_URL', 'INTELLIGENCE_TABLE_NAME']);
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const QUEUE_URL = process.env.QUEUE_URL!;
 const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
 const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
+const INTELLIGENCE_TABLE_NAME = process.env.INTELLIGENCE_TABLE_NAME!;
 
 const sqsClient = new SQSClient({});
 
@@ -61,6 +73,46 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/user/preferences') {
       return await updateUserPreferences(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/integrations/status') {
+      return await getIntegrationStatus();
+    }
+
+    if (httpMethod === 'GET' && resource === '/intelligence-interviews') {
+      return await listIntelligenceInterviews(event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews') {
+      return await createIntelligenceInterview(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/intelligence-interviews/{id}') {
+      return await getIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/generate-questions') {
+      return await generateIntelligenceQuestions(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/transcript') {
+      return await updateIntelligenceTranscript(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/scores') {
+      return await updateIntelligenceScores(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/analyze') {
+      return await analyzeIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/approve') {
+      return await approveIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/intelligence-interviews/{id}/report') {
+      return await getIntelligenceReport(pathParameters?.id, event);
     }
 
     if (httpMethod === 'POST' && resource === '/moms') {
@@ -1187,6 +1239,530 @@ async function deleteMom(id: string | undefined, event: APIGatewayProxyEvent) {
   }));
 
   return successResponse({ message: 'MOM deleted successfully' });
+}
+
+async function getOwnedIntelligenceRecord(id: string | undefined, event: APIGatewayProxyEvent) {
+  if (!id) {
+    return { response: errorResponse(400, 'VALIDATION_ERROR', 'Missing id') };
+  }
+
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) {
+    return { response: errorResponse(401, 'ACCESS_DENIED', 'Unauthorized') };
+  }
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: INTELLIGENCE_TABLE_NAME,
+    Key: { intelligence_id: id },
+  }));
+
+  const item = result.Item as InterviewIntelligenceRecord | undefined;
+  if (!item) {
+    return { response: errorResponse(404, 'NOT_FOUND', 'Interview intelligence record not found') };
+  }
+
+  if (!isOwnedBy(item, userId)) {
+    return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this intelligence interview') };
+  }
+
+  return { item, userId };
+}
+
+function getIntegrationMode(value: string | undefined): 'mock' | 'disabled' | 'live' {
+  if (value === 'live') return 'live';
+  if (value === 'disabled') return 'disabled';
+  return 'mock';
+}
+
+async function getIntegrationStatus() {
+  const kekaMode = getIntegrationMode(process.env.KEKA_INTEGRATION_MODE);
+  const teamsMode = getIntegrationMode(process.env.TEAMS_INTEGRATION_MODE);
+
+  return successResponse({
+    keka: {
+      mode: kekaMode,
+      label: kekaMode === 'live' ? 'Keka live mode' : kekaMode === 'disabled' ? 'Keka disabled' : 'Keka mock mode',
+      configured: kekaMode === 'live' && !!(process.env.KEKA_BASE_URL && (process.env.KEKA_API_KEY || process.env.KEKA_CLIENT_ID)),
+    },
+    teams: {
+      mode: teamsMode,
+      label: teamsMode === 'live' ? 'Teams live mode' : teamsMode === 'disabled' ? 'Teams disabled' : 'Teams mock mode',
+      configured: teamsMode === 'live' && !!(process.env.MS_TENANT_ID && process.env.MS_CLIENT_ID && process.env.MS_CLIENT_SECRET),
+    },
+    message: kekaMode === 'mock' || teamsMode === 'mock'
+      ? 'Real credentials not configured yet. Manual and mock workflows are available.'
+      : 'Integration modes are configured from backend environment variables.',
+  });
+}
+
+function parseBody(event: APIGatewayProxyEvent): any {
+  return JSON.parse(event.body || '{}');
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function summarizeText(text: string | undefined, fallback: string): string {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return fallback;
+  return clean.length > 260 ? `${clean.slice(0, 257)}...` : clean;
+}
+
+function inferSkills(job: InterviewIntelligenceRecord['job']): string[] {
+  const explicit = [...(job.requiredSkills || []), ...(job.preferredSkills || [])]
+    .map((skill) => skill.trim())
+    .filter(Boolean);
+  if (explicit.length) return Array.from(new Set(explicit)).slice(0, 10);
+
+  const known = ['AWS', 'Terraform', 'Kubernetes', 'Python', 'Java', 'React', 'Node.js', 'SQL', 'CI/CD', 'IAM', 'Security', 'Observability'];
+  const lower = `${job.title} ${job.description}`.toLowerCase();
+  const inferred = known.filter((skill) => lower.includes(skill.toLowerCase()));
+  return inferred.length ? inferred : ['Problem solving', 'Communication', 'Role fit'];
+}
+
+function buildQuestion(skill: string, roleTitle: string): IntelligenceQuestion & {
+  expectedStrongAnswerSignals: string[];
+  redFlags: string[];
+} {
+  return {
+    question: `Describe a real project where you used ${skill} for a ${roleTitle} responsibility. What trade-offs did you make?`,
+    followUps: [
+      `What would you change if you had to solve the same ${skill} problem again?`,
+      `How did you validate that the ${skill} approach worked in production?`,
+    ],
+    whatToEvaluate: [
+      'Depth of hands-on experience',
+      'Decision-making quality',
+      'Ability to explain trade-offs clearly',
+    ],
+    expectedStrongAnswerSignals: [
+      'Specific project context and measurable outcome',
+      'Clear explanation of constraints, alternatives, and validation',
+      'Ownership of mistakes or operational lessons',
+    ],
+    redFlags: [
+      'Only theoretical explanation with no real example',
+      'Cannot explain why the chosen approach was appropriate',
+      'Avoids follow-up detail on failure handling or validation',
+    ],
+  };
+}
+
+function buildQuestionPlan(record: InterviewIntelligenceRecord): IntelligenceQuestionPlan {
+  const skills = inferSkills(record.job);
+  const panel = record.panel.length ? record.panel : [{ interviewerId: 'interviewer-1', name: 'Interviewer' }];
+  const skillAreas = skills.map((skill, index) => ({
+    skill,
+    priority: index < 3 ? 'high' as const : index < 6 ? 'medium' as const : 'low' as const,
+    reason: `${skill} is relevant to ${record.job.title || 'the role'} based on the JD${record.candidate.resumeText ? ' and candidate resume' : ''}.`,
+  }));
+
+  const panelPlan = panel.map((interviewer, index) => {
+    const assigned = panel.length === 1
+      ? skills
+      : skills.filter((_, skillIndex) => skillIndex % panel.length === index);
+    const focusSkills = assigned.length ? assigned : [skills[index % skills.length] || 'Role fit'];
+    const focusArea = interviewer.focusArea || focusSkills.slice(0, 2).join(' / ');
+    return {
+      interviewerId: interviewer.interviewerId,
+      focusArea,
+      questions: focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role')),
+    };
+  });
+
+  return {
+    generatedAt: Date.now(),
+    candidateSummary: summarizeText(record.candidate.experienceSummary || record.candidate.resumeText, `${record.candidate.name} has been added for interview preparation.`),
+    jdSummary: summarizeText(record.job.description, `Interview guide for ${record.job.title || 'the selected role'}.`),
+    skillAreas,
+    panelPlan,
+    scoringRubric: [
+      { category: 'Technical depth', maxScore: 10, guidance: 'Rate the candidate on practical depth, examples, troubleshooting, and trade-off thinking.' },
+      { category: 'Role alignment', maxScore: 10, guidance: 'Rate how strongly the candidate maps to the JD responsibilities and seniority.' },
+      { category: 'Communication', maxScore: 10, guidance: 'Rate clarity, structure, collaboration signals, and ability to explain decisions.' },
+      { category: 'Ownership and judgment', maxScore: 10, guidance: 'Rate accountability, risk awareness, production maturity, and escalation judgment.' },
+    ],
+  };
+}
+
+async function listIntelligenceInterviews(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const result = await ddbDocClient.send(new ScanCommand({
+    TableName: INTELLIGENCE_TABLE_NAME,
+    FilterExpression: 'owner_user_id = :owner',
+    ExpressionAttributeValues: { ':owner': userId },
+  }));
+
+  const items = (result.Items || [])
+    .map((item) => item as InterviewIntelligenceRecord)
+    .sort((a, b) => b.created_at - a.created_at);
+
+  return successResponse({ items, count: items.length });
+}
+
+async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  const body = parseBody(event);
+  const sourceMode = body.source_mode === 'mock_keka' ? 'mock_keka' : 'manual';
+  const now = Date.now();
+  const id = uuidv4();
+  const kekaMode = getIntegrationMode(process.env.KEKA_INTEGRATION_MODE);
+  const teamsMode = getIntegrationMode(process.env.TEAMS_INTEGRATION_MODE);
+
+  let integrationData: Awaited<ReturnType<ReturnType<typeof createKekaIntegration>['getInterviewData']>>;
+  if (sourceMode === 'mock_keka') {
+    integrationData = await createKekaIntegration('mock').getInterviewData({
+      jobId: body.jobId,
+      candidateId: body.candidateId,
+      interviewId: body.interviewId,
+    });
+  } else {
+    const panel = Array.isArray(body.panel) ? body.panel : [];
+    integrationData = {
+      job: {
+        title: String(body.job?.title || '').trim(),
+        description: String(body.job?.description || '').trim(),
+        seniority: String(body.job?.seniority || '').trim() || undefined,
+        requiredSkills: normalizeStringArray(body.job?.requiredSkills),
+        preferredSkills: normalizeStringArray(body.job?.preferredSkills),
+      },
+      candidate: {
+        name: String(body.candidate?.name || '').trim(),
+        email: String(body.candidate?.email || '').trim() || undefined,
+        resumeText: String(body.candidate?.resumeText || '').trim() || undefined,
+        experienceSummary: String(body.candidate?.experienceSummary || '').trim() || undefined,
+      },
+      panel: panel.map((member: any, index: number) => ({
+        interviewerId: String(member.interviewerId || `panel-${index + 1}`),
+        name: String(member.name || `Interviewer ${index + 1}`).trim(),
+        email: String(member.email || '').trim() || undefined,
+        role: String(member.role || '').trim() || undefined,
+        focusArea: String(member.focusArea || '').trim() || undefined,
+      })),
+      meetingUrl: String(body.meetingUrl || '').trim() || undefined,
+    };
+  }
+
+  if (!integrationData.job.title || !integrationData.job.description || !integrationData.candidate.name) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Job title, job description, and candidate name are required.');
+  }
+
+  const record: InterviewIntelligenceRecord = {
+    intelligence_id: id,
+    owner_user_id: userId,
+    created_at: now,
+    updated_at: now,
+    source_mode: sourceMode,
+    status: 'data_ready',
+    keka: {
+      mode: sourceMode === 'mock_keka' ? 'mock' : kekaMode,
+      jobId: body.jobId,
+      candidateId: body.candidateId,
+      interviewId: body.interviewId,
+      syncStatus: sourceMode === 'mock_keka' ? 'mocked' : 'not_connected',
+      lastSyncAt: sourceMode === 'mock_keka' ? now : undefined,
+    },
+    teams: {
+      mode: sourceMode === 'mock_keka' ? 'mock' : teamsMode,
+      meetingUrl: integrationData.meetingUrl,
+      transcriptStatus: integrationData.meetingUrl ? 'pending' : 'not_available',
+    },
+    job: {
+      ...integrationData.job,
+      requiredSkills: integrationData.job.requiredSkills?.length ? integrationData.job.requiredSkills : inferSkills(integrationData.job),
+      preferredSkills: integrationData.job.preferredSkills || [],
+    },
+    candidate: integrationData.candidate,
+    panel: integrationData.panel.length ? integrationData.panel : [{ interviewerId: 'panel-1', name: 'Interviewer 1' }],
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: record }));
+  return createdResponse({ intelligence_id: id, item: record });
+}
+
+async function getIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+  return successResponse(item);
+}
+
+async function generateIntelligenceQuestions(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const questionPlan = buildQuestionPlan(item);
+  const panel = item.panel.map((member) => {
+    const plan = questionPlan.panelPlan.find((entry) => entry.interviewerId === member.interviewerId);
+    return {
+      ...member,
+      focusArea: plan?.focusArea || member.focusArea,
+      assignedQuestions: plan?.questions.map((question) => ({
+        question: question.question,
+        followUps: question.followUps,
+        whatToEvaluate: question.whatToEvaluate,
+      })) || [],
+    };
+  });
+
+  const updated = {
+    ...item,
+    panel,
+    questionPlan,
+    status: 'questions_generated' as const,
+    updated_at: Date.now(),
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+async function updateIntelligenceTranscript(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const body = parseBody(event);
+  let rawText = String(body.rawText || '').trim();
+  let source: 'manual' | 'mock_teams' | 'teams_live' = body.source === 'mock_teams' ? 'mock_teams' : 'manual';
+  let meetingId = item.teams.meetingId;
+
+  if (body.useMockTeams === true || source === 'mock_teams') {
+    const transcript = await createTeamsIntegration('mock').getTranscript({
+      meetingUrl: item.teams.meetingUrl,
+      meetingId: item.teams.meetingId,
+    });
+    rawText = transcript.rawText;
+    meetingId = transcript.meetingId;
+    source = 'mock_teams';
+  }
+
+  if (!rawText) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Transcript text is required.');
+  }
+
+  const now = Date.now();
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    updated_at: now,
+    status: 'transcript_ready',
+    teams: {
+      ...item.teams,
+      meetingId,
+      transcriptStatus: source === 'mock_teams' ? 'mocked' : 'synced',
+      lastSyncAt: now,
+    },
+    transcript: { rawText, source, uploadedAt: now },
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+async function updateIntelligenceScores(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const body = parseBody(event);
+  const scores = Array.isArray(body.panel) ? body.panel : [];
+  const panel = item.panel.map((member) => {
+    const score = scores.find((entry: any) => entry.interviewerId === member.interviewerId);
+    if (!score) return member;
+    const numericScore = Number(score.score);
+    return {
+      ...member,
+      score: Number.isFinite(numericScore) ? Math.max(0, Math.min(10, numericScore)) : undefined,
+      feedback: String(score.feedback || '').trim() || undefined,
+      opinion: ['proceed', 'hold', 'reject', 'needs_review'].includes(score.opinion) ? score.opinion : undefined,
+    };
+  });
+
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    panel,
+    status: 'scores_submitted',
+    updated_at: Date.now(),
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+function countQuestionsAsked(transcript: string, member: IntelligencePanelist): number {
+  const name = member.name.split(' ')[0].toLowerCase();
+  const matches = transcript.toLowerCase().match(new RegExp(`${name}[^.?!]*\\?`, 'g'));
+  return matches?.length || 0;
+}
+
+function analyzeCoverage(skills: string[], transcript: string): IntelligenceCoverageMatrix {
+  const lower = transcript.toLowerCase();
+  return skills.map((skill) => {
+    const found = lower.includes(skill.toLowerCase());
+    return {
+      jdSkill: skill,
+      covered: found ? 'yes' : 'partial',
+      evidence: found ? `Transcript contains discussion related to ${skill}.` : `No direct ${skill} keyword found; review manually for indirect evidence.`,
+      askedBy: [],
+    };
+  });
+}
+
+async function analyzeIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  if (!item.questionPlan) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Generate pre-interview questions before running analysis.');
+  }
+  if (!item.transcript?.rawText) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Transcript is required before analysis.');
+  }
+
+  const transcript = item.transcript.rawText;
+  const skills = inferSkills(item.job);
+  const coverageMatrix = analyzeCoverage(skills, transcript);
+  const coveredCount = coverageMatrix.filter((entry) => entry.covered === 'yes').length;
+  const coveragePercent = Math.round((coveredCount / Math.max(1, coverageMatrix.length)) * 100);
+  const scores = item.panel.map((member) => member.score).filter((score): score is number => typeof score === 'number');
+  const averageScore = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : undefined;
+  const recommendation = averageScore === undefined
+    ? 'needs_review'
+    : averageScore >= 7.5 && coveragePercent >= 50
+      ? 'proceed'
+      : averageScore >= 5.5
+        ? 'hold'
+        : 'reject';
+
+  const interviewerEvaluations = item.panel.map((member) => {
+    const questionsAskedCount = countQuestionsAsked(transcript, member);
+    const assignedSkills = item.questionPlan?.panelPlan.find((plan) => plan.interviewerId === member.interviewerId)?.questions.length || 0;
+    const jdCoveragePercent = assignedSkills ? Math.min(100, Math.round((questionsAskedCount / assignedSkills) * 100)) : coveragePercent;
+    return {
+      interviewerId: member.interviewerId,
+      name: member.name,
+      questionsAskedCount,
+      jdCoveragePercent,
+      followUpQuality: questionsAskedCount >= 2 ? 'strong' as const : questionsAskedCount === 1 ? 'average' as const : 'not_enough_data' as const,
+      scoreJustification: member.score === undefined
+        ? 'not_available' as const
+        : member.feedback && member.feedback.length > 40
+          ? 'well_supported' as const
+          : 'partially_supported' as const,
+      observations: [
+        questionsAskedCount > 0 ? `${member.name} asked transcript-visible questions.` : `${member.name} has limited visible question evidence in the transcript.`,
+        member.feedback ? 'Manual feedback was provided for calibration.' : 'Manual feedback was not provided.',
+      ],
+      missedAreas: coverageMatrix.filter((entry) => entry.covered !== 'yes').slice(0, 3).map((entry) => entry.jdSkill),
+    };
+  });
+
+  const panelCalibration = item.panel.length > 1 && scores.length > 1 ? (() => {
+    const max = Math.max(...scores);
+    const min = Math.min(...scores);
+    const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const outliers = item.panel
+      .filter((member) => typeof member.score === 'number' && Math.abs(member.score - avg) >= 3)
+      .map((member) => ({
+        interviewerId: member.interviewerId,
+        name: member.name,
+        score: member.score!,
+        reason: 'Score differs materially from the panel average and should be reviewed with transcript evidence.',
+      }));
+    return {
+      panelSize: item.panel.length,
+      scoreSpread: max - min,
+      outliers,
+      summary: max - min >= 4
+        ? 'Panel scores show a wide spread. Human calibration discussion is recommended before a final decision.'
+        : 'Panel scores are reasonably aligned. Review transcript evidence before final approval.',
+      humanReviewRequired: outliers.length > 0 || max - min >= 4,
+    };
+  })() : undefined;
+
+  const aiEvaluation: InterviewIntelligenceRecord['aiEvaluation'] = {
+    generatedAt: Date.now(),
+    candidateEvaluation: {
+      summary: `${item.candidate.name} was evaluated for ${item.job.title}. The analysis compares JD coverage, transcript evidence, and human interviewer scoring.`,
+      strengths: coverageMatrix.filter((entry) => entry.covered === 'yes').slice(0, 4).map((entry) => `Evidence found for ${entry.jdSkill}.`),
+      concerns: coverageMatrix.filter((entry) => entry.covered !== 'yes').slice(0, 4).map((entry) => `${entry.jdSkill} requires more explicit evidence.`),
+      skillScores: coverageMatrix.map((entry) => ({
+        skill: entry.jdSkill,
+        score: entry.covered === 'yes' ? 8 : 5,
+        evidence: entry.evidence,
+      })),
+      recommendation,
+      recommendationReason: averageScore === undefined
+        ? 'Human scores were not fully available, so the final recommendation requires reviewer judgment.'
+        : `Average panel score is ${averageScore.toFixed(1)}/10 with ${coveragePercent}% JD keyword coverage.`,
+    },
+    interviewerEvaluations,
+    coverageMatrix,
+    panelCalibration,
+    finalReport: [
+      `AI-assisted interview intelligence report for ${item.candidate.name} (${item.job.title}).`,
+      `Recommendation: ${recommendation}. Final hiring decision requires human review.`,
+      `JD coverage: ${coveragePercent}%.`,
+      averageScore === undefined ? 'Panel score: not fully available.' : `Panel average score: ${averageScore.toFixed(1)}/10.`,
+      panelCalibration?.summary || 'Single-interviewer mode: outlier comparison was not run; coverage and score justification were reviewed.',
+    ].join('\n\n'),
+  };
+
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    aiEvaluation,
+    status: 'analysis_generated',
+    updated_at: Date.now(),
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+async function approveIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  if (!item.aiEvaluation) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'AI analysis must be generated before approval.');
+  }
+
+  const body = parseBody(event);
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    approved: {
+      approvedBy: userId!,
+      approvedAt: Date.now(),
+      notes: String(body.notes || '').trim() || undefined,
+    },
+    status: 'approved',
+    updated_at: Date.now(),
+  };
+
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+async function getIntelligenceReport(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+  if (!item.aiEvaluation) {
+    return errorResponse(404, 'NOT_FOUND', 'AI-assisted report is not available yet');
+  }
+  return successResponse({
+    intelligence_id: item.intelligence_id,
+    status: item.status,
+    report: item.aiEvaluation.finalReport,
+    approved: item.approved,
+  });
 }
 
 // --- NEW User Preference Handlers ---

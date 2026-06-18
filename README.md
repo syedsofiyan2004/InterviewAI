@@ -14,6 +14,15 @@ Minfy AI is a secure workspace for interview evaluation and meeting-minutes anal
 - Download regenerated PDF reports with safe text wrapping for long fields.
 - New-user tour guidance across evaluation list, setup, upload, processing, and results pages.
 
+### Interview Intelligence Mode
+
+- Create a separate interview preparation and review workspace beside Classic Interview Evaluation.
+- Use manual or mock Keka data for JD, resume, candidate, interview panel, and Teams meeting link.
+- Generate interviewer-wise question plans before the interview.
+- Add Teams transcript text and human interviewer scores after the interview.
+- Produce AI-assisted candidate evaluation, interviewer coverage review, panel calibration, and final human-reviewed report.
+- See `docs/interview-intelligence-v2.md` for integration notes and future live Keka/Teams setup.
+
 ### MOM Analyzer
 
 - Create MOM analysis records for meeting transcripts.

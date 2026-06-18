@@ -60,6 +60,14 @@ export class IepStack extends cdk.Stack {
       pointInTimeRecovery: true,
     });
 
+    const intelligenceTable = new dynamodb.Table(this, 'InterviewIntelligenceTable', {
+      tableName: getUniqueName('interview-intelligence'),
+      partitionKey: { name: 'intelligence_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      pointInTimeRecovery: true,
+    });
+
     // 3. SQS Queue and DLQ for evaluation
     const evaluationDlq = new sqs.Queue(this, 'EvaluationDlq', {
       queueName: getUniqueName('eval-dlq'),
@@ -102,6 +110,18 @@ export class IepStack extends cdk.Stack {
         QUEUE_URL: evaluationQueue.queueUrl,
         MOM_TABLE_NAME: momTable.tableName,
         MOM_QUEUE_URL: momQueue.queueUrl,
+        INTELLIGENCE_TABLE_NAME: intelligenceTable.tableName,
+        KEKA_INTEGRATION_MODE: process.env.KEKA_INTEGRATION_MODE || 'mock',
+        TEAMS_INTEGRATION_MODE: process.env.TEAMS_INTEGRATION_MODE || 'mock',
+        KEKA_BASE_URL: process.env.KEKA_BASE_URL || '',
+        KEKA_CLIENT_ID: process.env.KEKA_CLIENT_ID || '',
+        KEKA_CLIENT_SECRET: process.env.KEKA_CLIENT_SECRET || '',
+        KEKA_API_KEY: process.env.KEKA_API_KEY || '',
+        KEKA_SCOPE: process.env.KEKA_SCOPE || '',
+        MS_TENANT_ID: process.env.MS_TENANT_ID || '',
+        MS_CLIENT_ID: process.env.MS_CLIENT_ID || '',
+        MS_CLIENT_SECRET: process.env.MS_CLIENT_SECRET || '',
+        MS_GRAPH_SCOPES: process.env.MS_GRAPH_SCOPES || '',
         // Standardized Model Sync (Sonnet 3.7 + Nova)
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
@@ -117,6 +137,7 @@ export class IepStack extends cdk.Stack {
     // Permissions for API Handler
     interviewsTable.grantReadWriteData(apiHandler);
     momTable.grantReadWriteData(apiHandler);
+    intelligenceTable.grantReadWriteData(apiHandler);
     filesBucket.grantReadWrite(apiHandler);
     filesBucket.grantDelete(apiHandler);
     evaluationQueue.grantSendMessages(apiHandler);
@@ -281,6 +302,28 @@ export class IepStack extends cdk.Stack {
     const report = singleInterview.addResource('report');
     report.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
+    const intelligenceInterviews = api.root.addResource('intelligence-interviews');
+    intelligenceInterviews.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    intelligenceInterviews.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const singleIntelligenceInterview = intelligenceInterviews.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleIntelligenceInterview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('generate-questions').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('transcript').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('scores').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('analyze').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('approve').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('report').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const integrations = api.root.addResource('integrations');
+    integrations.addResource('status').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
     const moms = api.root.addResource('moms');
     moms.addMethod('POST', apiHandlerIntegration, authMethodOptions);
     moms.addMethod('GET', apiHandlerIntegration, authMethodOptions);
@@ -337,6 +380,7 @@ export class IepStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'BucketName', { value: filesBucket.bucketName });
     new cdk.CfnOutput(this, 'TableName', { value: interviewsTable.tableName });
     new cdk.CfnOutput(this, 'MomTableName', { value: momTable.tableName });
+    new cdk.CfnOutput(this, 'InterviewIntelligenceTableName', { value: intelligenceTable.tableName });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
 

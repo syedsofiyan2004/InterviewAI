@@ -167,6 +167,144 @@ export interface MomResult {
   overall_summary: string;
 }
 
+export type IntelligenceStatus =
+  | 'draft'
+  | 'data_ready'
+  | 'questions_generated'
+  | 'transcript_ready'
+  | 'scores_submitted'
+  | 'analysis_generated'
+  | 'approved';
+
+export interface IntelligenceQuestion {
+  question: string;
+  followUps: string[];
+  whatToEvaluate: string[];
+}
+
+export interface IntelligencePanelist {
+  interviewerId: string;
+  name: string;
+  email?: string;
+  role?: string;
+  focusArea?: string;
+  assignedQuestions?: IntelligenceQuestion[];
+  score?: number;
+  feedback?: string;
+  opinion?: 'proceed' | 'hold' | 'reject' | 'needs_review';
+}
+
+export interface InterviewIntelligenceRecord {
+  intelligence_id: string;
+  owner_user_id: string;
+  created_at: number;
+  updated_at: number;
+  source_mode: 'manual' | 'mock_keka' | 'keka_live';
+  status: IntelligenceStatus;
+  keka: {
+    mode: 'mock' | 'disabled' | 'live';
+    syncStatus: 'not_connected' | 'mocked' | 'synced' | 'failed';
+    lastSyncAt?: number;
+    error?: string;
+  };
+  teams: {
+    mode: 'mock' | 'disabled' | 'live';
+    meetingUrl?: string;
+    meetingId?: string;
+    transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
+    lastSyncAt?: number;
+    error?: string;
+  };
+  job: {
+    title: string;
+    description: string;
+    seniority?: string;
+    requiredSkills: string[];
+    preferredSkills?: string[];
+  };
+  candidate: {
+    name: string;
+    email?: string;
+    resumeText?: string;
+    experienceSummary?: string;
+  };
+  panel: IntelligencePanelist[];
+  questionPlan?: {
+    generatedAt: number;
+    candidateSummary: string;
+    jdSummary: string;
+    skillAreas: Array<{
+      skill: string;
+      priority: 'high' | 'medium' | 'low';
+      reason: string;
+    }>;
+    panelPlan: Array<{
+      interviewerId: string;
+      focusArea: string;
+      questions: Array<IntelligenceQuestion & {
+        expectedStrongAnswerSignals: string[];
+        redFlags: string[];
+      }>;
+    }>;
+    scoringRubric: Array<{
+      category: string;
+      maxScore: number;
+      guidance: string;
+    }>;
+  };
+  transcript?: {
+    rawText: string;
+    source: 'manual' | 'mock_teams' | 'teams_live';
+    uploadedAt: number;
+  };
+  aiEvaluation?: {
+    generatedAt: number;
+    candidateEvaluation: {
+      summary: string;
+      strengths: string[];
+      concerns: string[];
+      skillScores: Array<{ skill: string; score: number; evidence: string }>;
+      recommendation: 'proceed' | 'hold' | 'reject' | 'needs_review';
+      recommendationReason: string;
+    };
+    interviewerEvaluations: Array<{
+      interviewerId: string;
+      name: string;
+      questionsAskedCount: number;
+      jdCoveragePercent: number;
+      followUpQuality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      scoreJustification: 'well_supported' | 'partially_supported' | 'weakly_supported' | 'not_available';
+      observations: string[];
+      missedAreas: string[];
+    }>;
+    coverageMatrix: Array<{
+      jdSkill: string;
+      covered: 'yes' | 'partial' | 'no';
+      evidence: string;
+      askedBy?: string[];
+    }>;
+    panelCalibration?: {
+      panelSize: number;
+      scoreSpread?: number;
+      outliers: Array<{ interviewerId: string; name: string; score: number; reason: string }>;
+      summary: string;
+      humanReviewRequired: boolean;
+    };
+    finalReport: string;
+  };
+  approved?: {
+    approvedBy: string;
+    approvedAt: number;
+    notes?: string;
+  };
+}
+
+export interface IntegrationStatus {
+  keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
+  teams: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
+  message: string;
+}
+
 // ---------------------------------------------------------------------------
 // Auth-aware fetch — attaches the Cognito ID token to every API call.
 // CognitoUserPoolsAuthorizer validates the ID token (not the access token).
@@ -353,6 +491,104 @@ export const api = {
 
   async getMomReportUrl(id: string): Promise<{ download_url: string }> {
     const res = await authFetch(`${API_URL}/moms/${id}/report`);
+    return handleResponse(res);
+  },
+
+  async getIntegrationStatus(): Promise<IntegrationStatus> {
+    const res = await authFetch(`${API_URL}/integrations/status`);
+    return handleResponse(res);
+  },
+
+  async getIntelligenceInterviews(): Promise<{ items: InterviewIntelligenceRecord[]; count: number }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews`);
+    return handleResponse(res);
+  },
+
+  async createIntelligenceInterview(data: {
+    source_mode: 'manual' | 'mock_keka';
+    job?: {
+      title: string;
+      description: string;
+      seniority?: string;
+      requiredSkills?: string[] | string;
+      preferredSkills?: string[] | string;
+    };
+    candidate?: {
+      name: string;
+      email?: string;
+      resumeText?: string;
+      experienceSummary?: string;
+    };
+    panel?: Array<{
+      interviewerId?: string;
+      name: string;
+      email?: string;
+      role?: string;
+      focusArea?: string;
+    }>;
+    meetingUrl?: string;
+  }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async getIntelligenceInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`);
+    return handleResponse(res);
+  },
+
+  async generateIntelligenceQuestions(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/generate-questions`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async updateIntelligenceTranscript(id: string, data: { rawText?: string; source?: 'manual' | 'mock_teams'; useMockTeams?: boolean }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/transcript`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async updateIntelligenceScores(id: string, panel: Array<{
+    interviewerId: string;
+    score?: number;
+    feedback?: string;
+    opinion?: 'proceed' | 'hold' | 'reject' | 'needs_review';
+  }>): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ panel }),
+    });
+    return handleResponse(res);
+  },
+
+  async analyzeIntelligenceInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/analyze`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async approveIntelligenceInterview(id: string, notes?: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    });
+    return handleResponse(res);
+  },
+
+  async getIntelligenceReport(id: string): Promise<{ intelligence_id: string; status: IntelligenceStatus; report: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/report`);
     return handleResponse(res);
   },
 

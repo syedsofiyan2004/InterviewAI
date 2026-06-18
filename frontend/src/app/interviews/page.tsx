@@ -5,6 +5,7 @@ import type { ComponentType, CSSProperties } from 'react';
 import Link from 'next/link';
 import { api, Interview } from '@/lib/api';
 import { 
+  BrainCircuit,
   Users, 
   CheckCircle2, 
   Clock, 
@@ -147,14 +148,23 @@ export default function Dashboard() {
             {interviews.length} total &middot; {stats.completed} completed &middot; {stats.pending} in progress
           </p>
         </div>
-        <Link
-          href="/interviews/new"
-          id="tour-new-btn"
-          className="btn-primary flex items-center gap-2 px-4 py-2.5 text-sm font-semibold shrink-0"
-        >
-          <PlusCircle size={16} />
-          New evaluation
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/interviews/intelligence"
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-elevated px-4 py-2.5 text-sm font-semibold text-text-primary transition-colors hover:border-accent/40 hover:text-accent"
+          >
+            <BrainCircuit size={16} />
+            Intelligence mode
+          </Link>
+          <Link
+            href="/interviews/new"
+            id="tour-new-btn"
+            className="btn-primary flex items-center gap-2 px-4 py-2.5 text-sm font-semibold shrink-0"
+          >
+            <PlusCircle size={16} />
+            New evaluation
+          </Link>
+        </div>
       </div>
 
       {/* ── Stat cards ── */}

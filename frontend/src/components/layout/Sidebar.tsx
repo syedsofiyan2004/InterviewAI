@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, LogOut, Sun, Moon } from 'lucide-react';
+import { BrainCircuit, FolderPlus, Home, LayoutDashboard, ListChecks, PlusCircle, LogOut, Sun, Moon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,6 +18,7 @@ const navSections = [
     items: [
       { name: 'Evaluations', href: '/interviews', icon: LayoutDashboard },
       { name: 'New Evaluation', href: '/interviews/new', icon: PlusCircle },
+      { name: 'Intelligence Mode', href: '/interviews/intelligence', icon: BrainCircuit },
     ],
   },
   {

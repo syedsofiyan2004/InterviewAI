@@ -1,0 +1,31 @@
+{
+  "job": {
+    "title": "Senior AWS Platform Engineer",
+    "seniority": "Senior",
+    "description": "Own AWS landing-zone delivery, Terraform modules, CI/CD automation, production operations, IAM design, observability, and incident response for customer cloud platforms.",
+    "requiredSkills": ["AWS", "Terraform", "IAM", "CI/CD", "Observability", "Incident response"],
+    "preferredSkills": ["Kubernetes", "Python automation", "Cost optimization"]
+  },
+  "candidate": {
+    "name": "Aarav Mehta",
+    "email": "aarav.mehta@example.com",
+    "experienceSummary": "7 years in AWS platform engineering and infrastructure automation."
+  },
+  "panel": [
+    {
+      "interviewerId": "panel-1",
+      "name": "Priya Raman",
+      "email": "priya.raman@example.com",
+      "role": "Cloud Architect",
+      "focusArea": "AWS architecture"
+    },
+    {
+      "interviewerId": "panel-2",
+      "name": "Nikhil Shah",
+      "email": "nikhil.shah@example.com",
+      "role": "DevOps Lead",
+      "focusArea": "Terraform and CI/CD"
+    }
+  ],
+  "meetingUrl": "https://teams.microsoft.com/l/meetup-join/mock-interview"
+}
