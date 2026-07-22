@@ -50,6 +50,25 @@ const LocalEvaluationSchema = z.object({
     fit: z.enum(['Strong', 'Partial', 'Gap']),
     evidence: z.string(),
   })).max(12).optional(),
+  interview_execution: z.object({
+    summary: z.string(),
+    panel_assessment: z.object({
+      score: z.number().min(0).max(10),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(8),
+      missed_areas: z.array(z.string()).max(8),
+    }),
+    interviewer_evaluations: z.array(z.object({
+      name: z.string(),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(6),
+      missed_areas: z.array(z.string()).max(6),
+    })).max(12),
+  }).optional().catch(undefined),
 });
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -62,6 +81,18 @@ validateEnv(['TABLE_NAME', 'BUCKET_NAME']);
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
+
+function getUserFolder(item: any): string {
+  const email = String(item?.owner_email || '').trim().toLowerCase();
+  if (email) {
+    const localPart = email.split('@')[0] || email;
+    return localPart
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || item.owner_user_id || 'user';
+  }
+  return item.owner_user_id || 'user';
+}
 
 export const handler = async (event: SQSEvent) => {
   for (const record of event.Records) {
@@ -179,14 +210,19 @@ async function runEvaluationPipeline(id: string) {
 
   // 5. Step: Extract Evidence & Score
   console.log('Step 4: Extracting evidence and scoring...');
-  const evaluation = await withRetry(() => extractEvidenceAndScore(transcript, rubric, item.model_id, resume), 3, 'AI_MALFORMED_OUTPUT');
+  const evaluation = await withRetry(
+    () => extractEvidenceAndScore(transcript, rubric, item.model_id, resume, item.question_guide),
+    3,
+    'AI_MALFORMED_OUTPUT',
+  );
 
   // Data is already validated inside evaluateTranscript() using LocalEvaluationSchema
   const validatedResult = evaluation;
 
   // 7. Persist Full Result to S3
+  const userFolder = getUserFolder(item);
   const ownerPrefix = item.owner_user_id
-    ? `users/${item.owner_user_id}/interviews/${id}`
+    ? `users/${userFolder}/interviews/${id}`
     : `processed/${id}`;
   const resultS3Key = item.owner_user_id
     ? `${ownerPrefix}/processed/result.json`
@@ -327,6 +363,7 @@ function getModelId(selection?: string): string {
   
   const mapping: Record<string, string | undefined> = {
     'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+    'claude-sonnet-4-6': process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
     'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
   };
 
@@ -346,6 +383,7 @@ function getModelId(selection?: string): string {
   if (allowFallback) {
     const fallbackMapping: Record<string, string> = {
       'claude-3-sonnet': 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+      'claude-sonnet-4-6': 'global.anthropic.claude-sonnet-4-6',
       'nova-pro': 'amazon.nova-pro-v1:0',
     };
     const fallbackId = fallbackMapping[modelKey] || 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0';
@@ -356,7 +394,91 @@ function getModelId(selection?: string): string {
   throw new Error(`MODEL_PROFILE_NOT_CONFIGURED: ${modelKey}`);
 }
 
-async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string, resume?: string): Promise<any> {
+function normalizeInterviewExecution(value: any, transcript: string, questionGuide?: any) {
+  const plannedQuestions = Array.isArray(questionGuide?.questions) ? questionGuide.questions.length : 0;
+  const questionsAsked = (transcript.match(/\?/g) || []).length;
+  const coverage = plannedQuestions
+    ? Math.min(100, Math.round((questionsAsked / plannedQuestions) * 100))
+    : 0;
+  const followUpQuality = questionsAsked >= 4
+    ? 'strong'
+    : questionsAsked >= 2
+      ? 'average'
+      : questionsAsked > 0
+        ? 'weak'
+        : 'not_enough_data';
+  const fallback = {
+    summary: plannedQuestions
+      ? 'Interview execution was reviewed against the prepared question guide and the available transcript evidence.'
+      : 'Interview execution was reviewed from the available transcript evidence.',
+    panel_assessment: {
+      score: followUpQuality === 'strong' ? 8 : followUpQuality === 'average' ? 6 : followUpQuality === 'weak' ? 4 : 0,
+      questions_asked_count: questionsAsked,
+      planned_question_coverage_percent: coverage,
+      follow_up_quality: followUpQuality,
+      observations: [
+        questionsAsked
+          ? `${questionsAsked} transcript-visible question${questionsAsked === 1 ? '' : 's'} were detected.`
+          : 'No transcript-visible questions could be reliably detected.',
+        plannedQuestions
+          ? `The review compares the transcript with ${plannedQuestions} prepared guide question${plannedQuestions === 1 ? '' : 's'}.`
+          : 'No prepared guide was available for direct question coverage comparison.',
+      ],
+      missed_areas: plannedQuestions && coverage < 100
+        ? ['Some prepared guide areas may not have been covered in the transcript.']
+        : [],
+    },
+    interviewer_evaluations: [{
+      name: 'Interview panel',
+      questions_asked_count: questionsAsked,
+      planned_question_coverage_percent: coverage,
+      follow_up_quality: followUpQuality,
+      observations: ['Individual speakers could not be reliably identified from the transcript.'],
+      missed_areas: plannedQuestions && coverage < 100 ? ['Review prepared guide coverage before making a final hiring decision.'] : [],
+    }],
+  };
+
+  if (!value || typeof value !== 'object') return fallback;
+  const safeNumber = (candidate: unknown, defaultValue: number, min: number, max: number) => {
+    const parsed = Number(candidate);
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : defaultValue;
+  };
+  const cleanList = (candidate: unknown, defaultValue: string[], limit: number) => Array.isArray(candidate)
+    ? candidate.map((item) => String(item || '').trim()).filter(Boolean).slice(0, limit)
+    : defaultValue;
+  const providedInterviewers = Array.isArray(value.interviewer_evaluations)
+    ? value.interviewer_evaluations
+      .map((entry: any, index: number) => ({
+        name: String(entry?.name || `Panel interviewer ${index + 1}`).trim(),
+        questions_asked_count: Math.round(safeNumber(entry?.questions_asked_count, 0, 0, 999)),
+        planned_question_coverage_percent: safeNumber(entry?.planned_question_coverage_percent, 0, 0, 100),
+        follow_up_quality: ['strong', 'average', 'weak', 'not_enough_data'].includes(entry?.follow_up_quality)
+          ? entry.follow_up_quality
+          : 'not_enough_data',
+        observations: cleanList(entry?.observations, [], 6),
+        missed_areas: cleanList(entry?.missed_areas, [], 6),
+      }))
+      .filter((entry: any) => entry.name)
+      .slice(0, 12)
+    : [];
+
+  return {
+    summary: String(value.summary || fallback.summary).trim(),
+    panel_assessment: {
+      score: safeNumber(value?.panel_assessment?.score, fallback.panel_assessment.score, 0, 10),
+      questions_asked_count: Math.round(safeNumber(value?.panel_assessment?.questions_asked_count, fallback.panel_assessment.questions_asked_count, 0, 999)),
+      planned_question_coverage_percent: safeNumber(value?.panel_assessment?.planned_question_coverage_percent, fallback.panel_assessment.planned_question_coverage_percent, 0, 100),
+      follow_up_quality: ['strong', 'average', 'weak', 'not_enough_data'].includes(value?.panel_assessment?.follow_up_quality)
+        ? value.panel_assessment.follow_up_quality
+        : fallback.panel_assessment.follow_up_quality,
+      observations: cleanList(value?.panel_assessment?.observations, fallback.panel_assessment.observations, 8),
+      missed_areas: cleanList(value?.panel_assessment?.missed_areas, fallback.panel_assessment.missed_areas, 8),
+    },
+    interviewer_evaluations: providedInterviewers.length ? providedInterviewers : fallback.interviewer_evaluations,
+  };
+}
+
+async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string, resume?: string, questionGuide?: any): Promise<any> {
   const prompt = `
     Evaluate the interview transcript against the rubric with a SCEPTICAL executive lens.
     
@@ -401,6 +523,7 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     
     - Use a scale of 0.0 to 10.0 for all scores (Decimals allowed, e.g., 8.5).
     - JD Fit Score: Percentage match (0-100).
+    - INTERVIEW EXECUTION REVIEW: Assess the interview panel separately from the candidate. Compare transcript-visible questions and follow-ups with the prepared guide where available. Do not score the panel based on candidate quality. Identify individual interviewers only when speaker labels make their identity clear; otherwise use a single "Interview panel" entry. Do not invent speakers or question coverage.
     
     JSON Schema:
     <evaluation_json>
@@ -424,7 +547,28 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
       "experience_level": "string",
       "fit_gap_analysis": [
         { "requirement": "summary", "fit": "Strong" | "Partial" | "Gap", "evidence": "verbatim quote" }
-      ]
+      ],
+      "interview_execution": {
+        "summary": "short evidence-based assessment of interview quality",
+        "panel_assessment": {
+          "score": 0.0-10.0,
+          "questions_asked_count": 0,
+          "planned_question_coverage_percent": 0-100,
+          "follow_up_quality": "strong" | "average" | "weak" | "not_enough_data",
+          "observations": ["string"],
+          "missed_areas": ["string"]
+        },
+        "interviewer_evaluations": [
+          {
+            "name": "speaker name or Interview panel",
+            "questions_asked_count": 0,
+            "planned_question_coverage_percent": 0-100,
+            "follow_up_quality": "strong" | "average" | "weak" | "not_enough_data",
+            "observations": ["string"],
+            "missed_areas": ["string"]
+          }
+        ]
+      }
     }
     </evaluation_json>
     
@@ -441,6 +585,9 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     ${rubric}
 
     ${resume ? `CANDIDATE RESUME:\n${resume}\n\n` : ''}
+
+    PREPARED INTERVIEW GUIDE:
+    ${questionGuide ? JSON.stringify(questionGuide) : 'No prepared question guide was available.'}
 
     TRANSCRIPT:
     ${transcript}
@@ -460,7 +607,10 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
       throw new Error(`FINAL_RESULT_VALIDATION_FAILED: ${errorMsg}`);
     }
     
-    return validation.data;
+    return {
+      ...validation.data,
+      interview_execution: normalizeInterviewExecution(validation.data.interview_execution, transcript, questionGuide),
+    };
   } catch (err: any) {
     if (err.message?.includes('VALIDATION_FAILED')) throw err;
     if (err.message?.includes('MODEL_PROFILE_NOT_CONFIGURED')) throw err;
@@ -840,6 +990,40 @@ export async function generateInterviewPdfReport(interviewParams: any, results: 
   gap(4);
 
   // ══════════════════════════════════════════════
+  if (results.interview_execution) {
+    sectionTitle('Interview Execution Review');
+    drawText(results.interview_execution.summary, { size: 8.5, lineHeight: 14, color: C.gray800 });
+    gap(4);
+
+    const panelReview = results.interview_execution.panel_assessment;
+    const reviewMetrics = [
+      { label: 'PANEL QUALITY', value: `${panelReview.score.toFixed(1)}/10` },
+      { label: 'GUIDE COVERAGE', value: `${panelReview.planned_question_coverage_percent}%` },
+      { label: 'FOLLOW-UPS', value: panelReview.follow_up_quality.replace(/_/g, ' ').toUpperCase() },
+    ];
+    const reviewBoxW = CW / 3 - 6;
+    needsSpace(54);
+    reviewMetrics.forEach((metric, index) => {
+      const x = ML + index * (reviewBoxW + 9);
+      page.drawRectangle({ x, y: y - 46, width: reviewBoxW, height: 46, color: C.gray100 });
+      page.drawText(metric.label, { x: x + 8, y: y - 15, size: 6.5, font: boldFont, color: C.gray600 });
+      page.drawText(fitText(metric.value, boldFont, 9, reviewBoxW - 16), { x: x + 8, y: y - 31, size: 9, font: boldFont, color: C.indigoDark });
+    });
+    y -= 56;
+
+    results.interview_execution.interviewer_evaluations.slice(0, 6).forEach((interviewer) => {
+      needsSpace(30);
+      page.drawText(fitText(interviewer.name, boldFont, 8, CW * 0.28), { x: ML, y, size: 8, font: boldFont, color: C.black });
+      page.drawText(`${interviewer.questions_asked_count} questions`, { x: ML + CW * 0.32, y, size: 7.5, font, color: C.gray600 });
+      page.drawText(`${interviewer.planned_question_coverage_percent}% guide coverage`, { x: ML + CW * 0.52, y, size: 7.5, font, color: C.gray600 });
+      page.drawText(interviewer.follow_up_quality.replace(/_/g, ' '), { x: ML + CW * 0.78, y, size: 7.5, font, color: C.indigo });
+      y -= 12;
+      const observation = interviewer.observations[0] || interviewer.missed_areas[0];
+      if (observation) drawText(observation, { x: ML, size: 7.5, lineHeight: 11, color: C.gray600, maxWidth: CW });
+      gap(6);
+    });
+  }
+
   // VERDICT BOX
   // ══════════════════════════════════════════════
   sectionTitle('Final Verdict');

@@ -34,6 +34,7 @@ export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'p
   resume_s3_key?: string;
   inferred_role?: string;
   is_mismatched?: boolean;
+  question_guide?: InterviewQuestionGuide | null;
   results?: {
     overall_score: number;
     recommendation: string;
@@ -70,6 +71,25 @@ export interface EvaluationResult {
   }>;
   executive_summary: string;
   final_recommendation_note: string;
+  interview_execution?: {
+    summary: string;
+    panel_assessment: {
+      score: number;
+      questions_asked_count: number;
+      planned_question_coverage_percent: number;
+      follow_up_quality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      observations: string[];
+      missed_areas: string[];
+    };
+    interviewer_evaluations: Array<{
+      name: string;
+      questions_asked_count: number;
+      planned_question_coverage_percent: number;
+      follow_up_quality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      observations: string[];
+      missed_areas: string[];
+    }>;
+  };
 }
 
 export type MomStatus = 'CREATED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -167,6 +187,25 @@ export interface MomResult {
   overall_summary: string;
 }
 
+export interface InterviewQuestionGuide {
+  generated_at: number;
+  source: 'approved_question_bank';
+  role_title: string;
+  detected_level: 'junior' | 'mid' | 'senior' | 'lead' | 'architect';
+  focus_areas: string[];
+  optimization_status: 'optimized' | 'bank_only';
+  questions: Array<{
+    id: string;
+    bank_question_id: string;
+    category: string;
+    focus_area: string;
+    source_question: string;
+    question: string;
+    follow_ups: string[];
+    what_to_listen_for: string[];
+  }>;
+}
+
 export type IntelligenceStatus =
   | 'draft'
   | 'data_ready'
@@ -180,6 +219,8 @@ export interface IntelligenceQuestion {
   question: string;
   followUps: string[];
   whatToEvaluate: string[];
+  questionType?: 'introduction' | 'resume' | 'role';
+  countsTowardPanelEvaluation?: boolean;
 }
 
 export interface IntelligencePanelist {
@@ -199,7 +240,7 @@ export interface InterviewIntelligenceRecord {
   owner_user_id: string;
   created_at: number;
   updated_at: number;
-  source_mode: 'manual' | 'mock_keka' | 'keka_live';
+  source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
   status: IntelligenceStatus;
   keka: {
     mode: 'mock' | 'disabled' | 'live';
@@ -211,6 +252,8 @@ export interface InterviewIntelligenceRecord {
     mode: 'mock' | 'disabled' | 'live';
     meetingUrl?: string;
     meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
     transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
     lastSyncAt?: number;
     error?: string;
@@ -227,6 +270,8 @@ export interface InterviewIntelligenceRecord {
     email?: string;
     resumeText?: string;
     experienceSummary?: string;
+    resumeS3Key?: string;
+    resumeFileName?: string;
   };
   panel: IntelligencePanelist[];
   questionPlan?: {
@@ -303,6 +348,19 @@ export interface IntegrationStatus {
   keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
   teams: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
   message: string;
+}
+
+export interface MinfyCareerJob {
+  id: string;
+  title: string;
+  department?: string;
+  location?: string;
+  sourceUrl: string;
+}
+
+export interface MinfyCareerJobDetail extends MinfyCareerJob {
+  description: string;
+  fetchedAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -494,8 +552,34 @@ export const api = {
     return handleResponse(res);
   },
 
+  async generateInterviewQuestionGuide(id: string): Promise<InterviewQuestionGuide> {
+    const res = await authFetch(`${API_URL}/interviews/${id}/question-guide`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
   async getIntegrationStatus(): Promise<IntegrationStatus> {
     const res = await authFetch(`${API_URL}/integrations/status`);
+    return handleResponse(res);
+  },
+
+  async getMinfyCareerJobs(): Promise<{ source: string; source_url: string; fetched_at: number; jobs: MinfyCareerJob[] }> {
+    const res = await authFetch(`${API_URL}/minfy-careers/jobs`);
+    return handleResponse(res);
+  },
+
+  async getMinfyCareerJob(jobId: string): Promise<{ job: MinfyCareerJobDetail }> {
+    const res = await authFetch(`${API_URL}/minfy-careers/jobs/${encodeURIComponent(jobId)}`);
+    return handleResponse(res);
+  },
+
+  async attachMinfyCareerJobDescription(id: string, jobId: string): Promise<{ status: string; s3_key: string; job: MinfyCareerJob }> {
+    const res = await authFetch(`${API_URL}/interviews/${id}/minfy-jd`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId }),
+    });
     return handleResponse(res);
   },
 
@@ -505,7 +589,7 @@ export const api = {
   },
 
   async createIntelligenceInterview(data: {
-    source_mode: 'manual' | 'mock_keka';
+    source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
     job?: {
       title: string;
       description: string;
@@ -527,6 +611,9 @@ export const api = {
       focusArea?: string;
     }>;
     meetingUrl?: string;
+    meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
   }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord }> {
     const res = await authFetch(`${API_URL}/intelligence-interviews`, {
       method: 'POST',
@@ -538,6 +625,38 @@ export const api = {
 
   async getIntelligenceInterview(id: string): Promise<InterviewIntelligenceRecord> {
     const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`);
+    return handleResponse(res);
+  },
+
+  async deleteIntelligenceInterview(id: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`, { method: 'DELETE' });
+    return handleResponse(res);
+  },
+
+  async updateIntelligenceDetails(id: string, data: { candidateEmail?: string; organizerEmail?: string }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_email: data.candidateEmail, organizer_email: data.organizerEmail }),
+    });
+    return handleResponse(res);
+  },
+
+  async getIntelligenceResumeUploadUrl(id: string, file: { fileName: string; contentType: string }): Promise<{ upload_url: string; s3_key: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/resume-upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: file.fileName, content_type: file.contentType }),
+    });
+    return handleResponse(res);
+  },
+
+  async confirmIntelligenceResume(id: string, data: { s3_key: string; file_name: string }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/confirm-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
     return handleResponse(res);
   },
 
@@ -553,6 +672,13 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async syncTeamsTranscript(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/sync-teams-transcript`, {
+      method: 'POST',
     });
     return handleResponse(res);
   },
@@ -587,7 +713,7 @@ export const api = {
     return handleResponse(res);
   },
 
-  async getIntelligenceReport(id: string): Promise<{ intelligence_id: string; status: IntelligenceStatus; report: string }> {
+  async getIntelligenceReport(id: string): Promise<{ intelligence_id: string; status: IntelligenceStatus; report: string; download_url: string }> {
     const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/report`);
     return handleResponse(res);
   },

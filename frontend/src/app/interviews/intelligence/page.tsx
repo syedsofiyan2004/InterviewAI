@@ -3,17 +3,36 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, IntegrationStatus, InterviewIntelligenceRecord } from '@/lib/api';
-import { BrainCircuit, CalendarClock, CheckCircle2, ClipboardList, PlusCircle } from 'lucide-react';
+import {
+  ArrowRight,
+  BrainCircuit,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  PlusCircle,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react';
 import { format } from 'date-fns';
 
 const statusLabels: Record<string, string> = {
-  data_ready: 'Data Ready',
-  questions_generated: 'Questions Generated',
-  transcript_ready: 'Transcript Ready',
-  scores_submitted: 'Scores Submitted',
-  analysis_generated: 'Analysis Generated',
+  data_ready: 'Data ready',
+  questions_generated: 'Questions generated',
+  transcript_ready: 'Transcript ready',
+  scores_submitted: 'Scores submitted',
+  analysis_generated: 'Analysis generated',
   approved: 'Approved',
   draft: 'Draft',
+};
+
+const statusNextSteps: Record<string, string> = {
+  draft: 'Add the interview data',
+  data_ready: 'Prepare the panel guide',
+  questions_generated: 'Run the interview',
+  transcript_ready: 'Add panel scores',
+  scores_submitted: 'Review the analysis',
+  analysis_generated: 'Approve the report',
+  approved: 'Complete',
 };
 
 export default function InterviewIntelligenceDashboard() {
@@ -45,112 +64,202 @@ export default function InterviewIntelligenceDashboard() {
   const approved = items.filter((item) => item.status === 'approved').length;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 pb-8">
-      <div className="flex flex-col gap-4 pt-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-accent">
-            Interview Agent · Intelligence Mode
-          </p>
-          <h1 className="text-xl font-semibold tracking-tight text-text-primary">
-            Interview Intelligence
+    <div className="mx-auto max-w-6xl space-y-7 pb-10">
+      <section className="intelligence-hero">
+        <div className="min-w-0">
+          <p className="page-kicker">Interview Intelligence</p>
+          <h1 className="mt-4 max-w-2xl text-4xl font-semibold leading-[1.03] tracking-tight text-text-primary md:text-5xl">
+            Prepare the panel. Review the evidence.
           </h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">
-            Prepare interviewer-wise questions before the interview, then analyze transcript coverage,
-            interviewer quality, panel scoring, and final AI-assisted recommendations after the interview.
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-text-secondary">
+            Bring the role, candidate, interview panel, and Teams transcript into one reviewable workspace.
+            Use the guide before the call, then compare evidence and panel feedback afterwards.
           </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link href="/interviews/intelligence/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+              <PlusCircle size={16} />
+              Set up an interview
+            </Link>
+            <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 py-2.5 text-xs font-semibold text-text-muted">
+              <Clock3 size={14} />
+              One workspace from preparation to approval
+            </span>
+          </div>
         </div>
-        <Link href="/interviews/intelligence/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
-          <PlusCircle size={16} />
-          New intelligence interview
-        </Link>
-      </div>
+
+        <div className="intelligence-hero-panel">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">How it works</p>
+            <BrainCircuit size={18} className="text-accent" />
+          </div>
+          <div className="mt-5 space-y-3">
+            <WorkflowLine num="01" title="Before the interview" detail="Build a focused panel guide" />
+            <WorkflowLine num="02" title="After the interview" detail="Add transcript and panel scores" />
+            <WorkflowLine num="03" title="Human review" detail="Check evidence before approval" />
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Metric title="Question plans" value={generated} icon={ClipboardList} />
-        <Metric title="AI analyses" value={analyzed} icon={BrainCircuit} />
-        <Metric title="Approved reports" value={approved} icon={CheckCircle2} />
+        <Metric title="Guides prepared" value={generated} icon={ClipboardList} detail="Ready for interviewers" />
+        <Metric title="Reviews ready" value={analyzed} icon={BrainCircuit} detail="Transcript and scores analyzed" />
+        <Metric title="Reports approved" value={approved} icon={CheckCircle2} detail="Ready to share" />
       </div>
 
-      <div className="rounded-2xl border border-border bg-surface-elevated p-5">
+      <section className="intelligence-card p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-text-primary">Integration status</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Workspace availability</h2>
             <p className="mt-1 text-xs leading-5 text-text-muted">
-              Live credentials are not required yet. Mock and manual modes keep the workflow testable.
+              Your workspace brings together the interview details and completed meeting transcript when each source is available.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <IntegrationPill label={`Keka: ${status?.keka.mode || 'mock'} mode`} />
-            <IntegrationPill label={`Teams: ${status?.teams.mode || 'mock'} mode`} />
-            <IntegrationPill label="Real credentials not configured yet" muted />
+            <IntegrationPill label={`Interview details: ${status?.keka.configured ? 'Available' : 'In setup'}`} />
+            <IntegrationPill label={`Meeting transcript: ${status?.teams.configured ? 'Available' : 'In setup'}`} />
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="data-table">
-        <div className="border-b border-border px-6 py-4">
-          <h2 className="text-sm font-semibold text-text-primary">Intelligence interviews</h2>
+      <section>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <p className="page-kicker">Records</p>
+            <h2 className="mt-1 text-xl font-semibold text-text-primary">Interview workspaces</h2>
+          </div>
+          <p className="text-xs font-semibold text-text-muted">{items.length} total</p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-border bg-surface">
-                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Candidate</th>
-                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Role</th>
-                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Panel</th>
-                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Status</th>
-                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Created</th>
-                <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-text-muted">Open</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm text-text-muted">Loading intelligence interviews...</td></tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center">
-                    <div className="mx-auto flex max-w-md flex-col items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-surface">
-                        <BrainCircuit size={22} className="text-accent" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-text-primary">No intelligence interviews yet</p>
-                        <p className="mt-1 text-xs text-text-muted">Create one manually or use mock Keka data to test the full workflow.</p>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ) : items.map((item) => (
-                <tr key={item.intelligence_id} className="border-b border-border">
-                  <td className="px-6 py-4 text-sm font-semibold text-text-primary">{item.candidate.name}</td>
-                  <td className="px-6 py-4 text-sm text-text-secondary">{item.job.title}</td>
-                  <td className="px-6 py-4 text-sm text-text-secondary">{item.panel.length} interviewer{item.panel.length === 1 ? '' : 's'}</td>
-                  <td className="px-6 py-4"><StatusPill status={item.status} /></td>
-                  <td className="px-6 py-4 text-xs text-text-muted">{format(new Date(item.created_at), 'MMM d, yyyy')}</td>
-                  <td className="px-6 py-4 text-right">
-                    <Link className="text-sm font-semibold text-accent hover:underline" href={`/interviews/intelligence/view?id=${item.intelligence_id}`}>
-                      View
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+
+        {loading ? (
+          <IntelligenceDashboardSkeleton />
+        ) : items.length === 0 ? (
+          <div className="intelligence-empty">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-surface">
+              <BrainCircuit size={24} className="text-accent" />
+            </div>
+            <h3 className="mt-4 text-base font-semibold text-text-primary">Start with one interview</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-muted">
+              Create a workspace to collect the interview inputs, prepare the panel, and complete the review in one place.
+            </p>
+            <Link href="/interviews/intelligence/new" className="btn-primary mt-5 inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+              <PlusCircle size={16} />
+              Create first workspace
+            </Link>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {items.map((item) => (
+              <InterviewCard key={item.intelligence_id} item={item} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
-function Metric({ title, value, icon: Icon }: { title: string; value: number; icon: typeof CalendarClock }) {
+function IntelligenceDashboardSkeleton() {
   return (
-    <div className="rounded-2xl border border-border bg-surface-elevated p-5">
+    <div className="space-y-4" aria-busy="true" aria-live="polite">
+      {[1, 2, 3].map((item) => (
+        <div key={item} className="intelligence-record-card h-36 animate-pulse">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 shrink-0 rounded-2xl bg-surface" />
+            <div className="min-w-0 flex-1 space-y-3">
+              <div className="h-4 w-48 rounded bg-surface" />
+              <div className="h-3 w-32 rounded bg-surface" />
+              <div className="h-3 w-64 rounded bg-surface" />
+            </div>
+          </div>
+          <div className="w-full space-y-3 md:w-64">
+            <div className="h-3 w-full rounded bg-surface" />
+            <div className="h-2 w-full rounded bg-surface" />
+            <div className="h-3 w-36 rounded bg-surface" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Metric({ title, value, icon: Icon, detail }: { title: string; value: number; icon: LucideIcon; detail: string }) {
+  return (
+    <div className="intelligence-metric">
       <div className="mb-4 flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</p>
         <Icon size={18} className="text-accent" />
       </div>
       <p className="text-2xl font-semibold text-text-primary">{value}</p>
+      <p className="mt-1 text-xs text-text-muted">{detail}</p>
     </div>
+  );
+}
+
+function WorkflowLine({ num, title, detail }: { num: string; title: string; detail: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-3 py-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent/10 font-mono text-xs font-semibold text-accent">
+        {num}
+      </span>
+      <div>
+        <p className="text-sm font-semibold text-text-primary">{title}</p>
+        <p className="text-xs text-text-muted">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function InterviewCard({ item }: { item: InterviewIntelligenceRecord }) {
+  const complete = [
+    !!item.questionPlan,
+    !!item.transcript,
+    item.status === 'scores_submitted' || !!item.aiEvaluation || item.status === 'approved',
+    !!item.aiEvaluation,
+    item.status === 'approved',
+  ].filter(Boolean).length;
+
+  return (
+    <Link href={`/interviews/intelligence/view?id=${item.intelligence_id}`} className="intelligence-record-card group">
+      <div className="flex min-w-0 flex-1 items-start gap-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+          <UsersRound size={20} />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-text-primary">{item.candidate.name}</h3>
+            <StatusPill status={item.status} />
+          </div>
+          <p className="mt-1 text-sm text-text-secondary">{item.job.title || 'Role not provided'}</p>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs text-text-muted">
+            <span className="rounded-full bg-surface px-3 py-1">{item.panel.length} interviewer{item.panel.length === 1 ? '' : 's'}</span>
+            <span className="rounded-full bg-surface px-3 py-1">{format(new Date(item.created_at), 'MMM d, yyyy')}</span>
+            <span className="rounded-full bg-surface px-3 py-1">{item.keka.mode === 'live' ? 'Keka connected' : 'Manual data'}</span>
+          </div>
+        </div>
+      </div>
+      <div className="w-full shrink-0 md:w-64">
+        <div className="mb-3 flex items-center justify-between text-xs font-semibold">
+          <span className="text-text-muted">Progress</span>
+          <span className="text-accent">{complete}/5 stages</span>
+        </div>
+        <div className="grid grid-cols-5 gap-1.5">
+          {['Questions', 'Transcript', 'Scores', 'Analysis', 'Approval'].map((label, index) => (
+            <span
+              key={label}
+              title={label}
+              className={`h-2 rounded-full ${index < complete ? 'bg-accent' : 'bg-surface'}`}
+            />
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-2 text-sm font-semibold text-accent">
+          <span className="text-xs font-medium text-text-muted">Next: {statusNextSteps[item.status] || 'Continue review'}</span>
+          <span className="inline-flex items-center gap-2">
+            Open workspace
+          <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+          </span>
+        </div>
+      </div>
+    </Link>
   );
 }
 

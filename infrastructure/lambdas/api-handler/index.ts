@@ -11,6 +11,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { 
   ddbDocClient, 
+  getFileBuffer,
   getPresignedUploadUrl,
   saveFileContent,
   s3Client,
@@ -32,10 +33,13 @@ import {
 import {
   createKekaIntegration,
   createTeamsIntegration,
+  TeamsIntegrationError,
   InterviewIntelligenceRecord,
   IntelligencePanelist,
   IntelligenceQuestion
 } from './intelligence-integrations.js';
+import { selectQuestionsFromBank, SelectedBankQuestion } from './manual-question-bank.js';
+import { getMinfyCareerJob, listMinfyCareerJobs } from './minfy-careers.js';
 
 type IntelligenceQuestionPlan = NonNullable<InterviewIntelligenceRecord['questionPlan']>;
 type IntelligenceEvaluation = NonNullable<InterviewIntelligenceRecord['aiEvaluation']>;
@@ -49,6 +53,7 @@ import {
 } from '../../schema/mom.js';
 import { generateMomPdfReport } from '../shared/mom-report.js';
 import { generateInterviewPdfReport } from '../processor/index.js';
+import { generateIntelligencePdfReport } from '../shared/intelligence-report.js';
 
 validateEnv(['TABLE_NAME', 'BUCKET_NAME', 'QUEUE_URL', 'MOM_TABLE_NAME', 'MOM_QUEUE_URL', 'INTELLIGENCE_TABLE_NAME']);
 
@@ -79,6 +84,14 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await getIntegrationStatus();
     }
 
+    if (httpMethod === 'GET' && resource === '/minfy-careers/jobs') {
+      return await listMinfyCareers(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/minfy-careers/jobs/{jobId}') {
+      return await getMinfyCareer(event.pathParameters?.jobId, event);
+    }
+
     if (httpMethod === 'GET' && resource === '/intelligence-interviews') {
       return await listIntelligenceInterviews(event);
     }
@@ -87,8 +100,28 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await createIntelligenceInterview(event);
     }
 
+    if (httpMethod === 'POST' && resource === '/interviews/{id}/minfy-jd') {
+      return await attachMinfyCareerJobDescription(pathParameters?.id, event);
+    }
+
     if (httpMethod === 'GET' && resource === '/intelligence-interviews/{id}') {
       return await getIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'DELETE' && resource === '/intelligence-interviews/{id}') {
+      return await deleteIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'PATCH' && resource === '/intelligence-interviews/{id}') {
+      return await updateIntelligenceDetails(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/resume-upload-url') {
+      return await getIntelligenceResumeUploadUrl(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/confirm-resume') {
+      return await confirmIntelligenceResume(pathParameters?.id, event);
     }
 
     if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/generate-questions') {
@@ -97,6 +130,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/transcript') {
       return await updateIntelligenceTranscript(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/sync-teams-transcript') {
+      return await syncIntelligenceTeamsTranscript(pathParameters?.id, event);
     }
 
     if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/scores') {
@@ -195,6 +232,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await runAnalysis(pathParameters?.id, event);
     }
 
+    if (httpMethod === 'POST' && resource === '/interviews/{id}/question-guide') {
+      return await generateInterviewQuestionGuide(pathParameters?.id, event);
+    }
+
     if (httpMethod === 'GET' && resource === '/interviews/{id}/result') {
       return await getEvaluationResult(pathParameters?.id, event);
     }
@@ -216,12 +257,59 @@ function getAuthenticatedUserId(event: APIGatewayProxyEvent): string | null {
   return event.requestContext.authorizer?.claims?.sub || null;
 }
 
-function userInterviewPrefix(userId: string, interviewId: string): string {
-  return `users/${userId}/interviews/${interviewId}`;
+function getAuthenticatedUserEmail(event: APIGatewayProxyEvent): string | null {
+  const email = event.requestContext.authorizer?.claims?.email || event.requestContext.authorizer?.claims?.username || null;
+  if (!email) return null;
+  return String(email).toLowerCase();
 }
 
-function userMomPrefix(userId: string, momId: string): string {
-  return `users/${userId}/moms/${momId}`;
+function normalizeUserFolder(email: string): string {
+  const localPart = email.split('@')[0] || email;
+  return localPart
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'user';
+}
+
+function getUserStorageFolder(event: APIGatewayProxyEvent, fallbackUserId: string): string {
+  const email = getAuthenticatedUserEmail(event);
+  return email ? normalizeUserFolder(email) : fallbackUserId;
+}
+
+function userInterviewPrefix(userFolder: string, interviewId: string): string {
+  return `users/${userFolder}/interviews/${interviewId}`;
+}
+
+function userMomPrefix(userFolder: string, momId: string): string {
+  return `users/${userFolder}/moms/${momId}`;
+}
+
+async function deleteS3ObjectIfExists(key: string | undefined) {
+  if (!key) return;
+  try {
+    await s3Client.send(new DeleteObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    }));
+  } catch (err) {
+    console.warn(`Failed to delete S3 object ${key} (might already be gone):`, err);
+  }
+}
+
+async function deleteS3Prefix(prefix: string) {
+  let continuationToken: string | undefined;
+  do {
+    const listed = await s3Client.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    const objects = (listed.Contents || []).flatMap((object) => object.Key ? [{ Key: object.Key }] : []);
+    if (objects.length) {
+      await s3Client.send(new DeleteObjectsCommand({ Bucket: BUCKET_NAME, Delete: { Objects: objects, Quiet: true } }));
+    }
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
 }
 
 function momProjectKey(projectId: string): string {
@@ -256,6 +344,17 @@ async function getOwnedInterviewRecord(id: string | undefined, event: APIGateway
     return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this interview') };
   }
 
+  const userEmail = getAuthenticatedUserEmail(event);
+  if (!item.owner_email && userEmail) {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+      UpdateExpression: 'SET owner_email = :email',
+      ExpressionAttributeValues: { ':email': userEmail },
+    }));
+    item.owner_email = userEmail;
+  }
+
   return { item, userId };
 }
 
@@ -281,6 +380,17 @@ async function getOwnedMomRecord(id: string | undefined, event: APIGatewayProxyE
 
   if (!isOwnedBy(item, userId)) {
     return { response: errorResponse(403, 'ACCESS_DENIED', 'You do not have access to this MOM') };
+  }
+
+  const userEmail = getAuthenticatedUserEmail(event);
+  if (!item.owner_email && userEmail) {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: id },
+      UpdateExpression: 'SET owner_email = :email',
+      ExpressionAttributeValues: { ':email': userEmail },
+    }));
+    item.owner_email = userEmail;
   }
 
   return { item, userId };
@@ -333,6 +443,7 @@ async function createInterview(event: APIGatewayProxyEvent) {
     interview_id: interviewId, // Keep for backward compatibility/clarity in the object
     status: 'CREATED',
     owner_user_id: userId,
+    owner_email: getAuthenticatedUserEmail(event),
     created_at: now,
     updated_at: now,
     metadata: result.data,
@@ -403,6 +514,7 @@ async function getInterview(id: string | undefined, event: APIGatewayProxyEvent)
     model_id: item.model_id,
     inferred_role: item.inferred_role,
     is_mismatched: item.is_mismatched,
+    question_guide: item.question_guide || null,
     report_s3_key: item.report_s3_key,
     results: item.status === 'COMPLETED' ? {
       overall_score: item.overall_score,
@@ -417,10 +529,219 @@ async function getInterview(id: string | undefined, event: APIGatewayProxyEvent)
 }
 
 
+interface ManualInterviewQuestionGuide {
+  generated_at: number;
+  source: 'approved_question_bank';
+  role_title: string;
+  detected_level: string;
+  focus_areas: string[];
+  optimization_status: 'optimized' | 'bank_only';
+  questions: Array<{
+    id: string;
+    bank_question_id: string;
+    category: string;
+    focus_area: string;
+    source_question: string;
+    question: string;
+    follow_ups: string[];
+    what_to_listen_for: string[];
+  }>;
+}
+
+function normalizeOptimizedQuestion(
+  bankQuestion: SelectedBankQuestion,
+  candidate: any,
+): ManualInterviewQuestionGuide['questions'][number] {
+  const cleanList = (value: unknown, fallback: string[]) => {
+    if (!Array.isArray(value)) return fallback;
+    const cleaned = value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 4);
+    return cleaned.length ? cleaned : fallback;
+  };
+
+  return {
+    id: bankQuestion.id,
+    bank_question_id: bankQuestion.bankQuestionId,
+    category: bankQuestion.category,
+    focus_area: bankQuestion.focusArea,
+    source_question: bankQuestion.question,
+    question: String(candidate?.question || '').trim() || bankQuestion.question,
+    follow_ups: cleanList(candidate?.follow_ups, bankQuestion.followUps),
+    what_to_listen_for: cleanList(candidate?.what_to_listen_for, bankQuestion.whatToListenFor),
+  };
+}
+
+async function optimizeQuestionBankSelection(input: {
+  roleTitle: string;
+  level: string;
+  jdText: string;
+  resumeText: string;
+  questions: SelectedBankQuestion[];
+}): Promise<{ status: 'optimized' | 'bank_only'; questions: ManualInterviewQuestionGuide['questions'] }> {
+  const fallback = input.questions.map((question) => normalizeOptimizedQuestion(question, null));
+
+  try {
+    const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+    const { extractJson } = await import('../shared/utils.js');
+    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+    const modelId = process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6';
+    const prompt = `
+You are editing an interview guide selected from an approved question bank.
+You are NOT allowed to generate, add, remove, merge, split, or reorder questions.
+
+Your only task is to convert each approved question into a fair, current,
+scenario-based question grounded in the supplied role, seniority, job
+description, and resume context. Preserve each question's competency, intent,
+ID, category, and focus area. Do not assume facts about the candidate, reveal
+private resume details in the question, or include an answer.
+
+Write as an experienced interviewer speaking naturally to a candidate: clear,
+specific, and conversational rather than academic, scripted, or AI-generated.
+Each question must sound natural when read aloud in a real interview. Use direct
+interviewer language such as "Could you walk me through...", "Tell me about a
+time when...", or "Imagine you were responsible for...". Frame a realistic
+work situation from the JD and invite the candidate to explain their decisions,
+trade-offs, and outcome. Do not use meta-language such as "assess", "evaluate",
+"as an AI", "based on the prompt", or explain why the question was selected.
+Current practices may shape the scenario only where they are relevant to the JD;
+never add fashionable tools, trends, or requirements that are not supported by it.
+
+Return only valid JSON inside <question_guide> tags using this shape:
+{
+  "questions": [
+    {
+      "id": "REC-01",
+      "question": "string",
+      "follow_ups": ["string"],
+      "what_to_listen_for": ["string"]
+    }
+  ]
+}
+
+Every supplied ID must appear exactly once and in the same order.
+
+Role: ${input.roleTitle}
+Detected level: ${input.level}
+Job description excerpt:
+${input.jdText.slice(0, 12000)}
+
+Resume excerpt (context only; do not expose private details in questions):
+${input.resumeText.slice(0, 12000) || 'No resume uploaded'}
+
+Approved bank selection:
+${JSON.stringify(input.questions)}
+`;
+
+    // This route is browser-facing. The approved-bank wording is already a
+    // complete guide, so refinement must never hold the request long enough
+    // for API Gateway or the browser to time out.
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), 12_000);
+    let response;
+    try {
+      response = await client.send(new InvokeModelCommand({
+        modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify({
+          anthropic_version: 'bedrock-2023-05-31',
+          max_tokens: 2600,
+          temperature: 0,
+          messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        }),
+      }), { abortSignal: abortController.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const payload = JSON.parse(new TextDecoder().decode(response.body));
+    const rawText = payload.content?.[0]?.text || '';
+    const tagged = rawText.match(/<question_guide>([\s\S]*?)<\/question_guide>/i)?.[1];
+    const jsonText = tagged || extractJson(rawText);
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed.questions) || parsed.questions.length !== input.questions.length) {
+      throw new Error('Question optimizer changed the approved question count');
+    }
+
+    const optimizedById = new Map(parsed.questions.map((question: any) => [String(question?.id || ''), question]));
+    const expectedIds = input.questions.map((question) => question.id);
+    if (expectedIds.some((questionId) => !optimizedById.has(questionId))) {
+      throw new Error('Question optimizer changed approved question IDs');
+    }
+
+    return {
+      status: 'optimized',
+      questions: input.questions.map((question) => normalizeOptimizedQuestion(question, optimizedById.get(question.id))),
+    };
+  } catch (error) {
+    console.warn('[Question Guide] Bedrock refinement failed; using curated bank wording.', error);
+    return { status: 'bank_only', questions: fallback };
+  }
+}
+
+async function generateInterviewQuestionGuide(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
+
+  if (!item.jd_s3_key) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Upload the job description before preparing the interview guide.');
+  }
+
+  try {
+    const { getFileBuffer } = await import('../shared/aws.js');
+    const { extractTextFromBuffer } = await import('../shared/utils.js');
+    const jdBuffer = await getFileBuffer(BUCKET_NAME, item.jd_s3_key);
+    const jdText = await extractTextFromBuffer(jdBuffer, item.jd_s3_key);
+    const resumeText = item.resume_s3_key
+      ? await extractTextFromBuffer(await getFileBuffer(BUCKET_NAME, item.resume_s3_key), item.resume_s3_key)
+      : '';
+    const roleTitle = String(item.metadata?.position || item.inferred_role || 'Target role').trim();
+    const selection = selectQuestionsFromBank({
+      interviewId: id!,
+      roleTitle,
+      jdText,
+      count: 8,
+    });
+    const optimized = await optimizeQuestionBankSelection({
+      roleTitle,
+      level: selection.level,
+      jdText,
+      resumeText,
+      questions: selection.questions,
+    });
+
+    const guide: ManualInterviewQuestionGuide = {
+      generated_at: Date.now(),
+      source: 'approved_question_bank',
+      role_title: roleTitle,
+      detected_level: selection.level,
+      focus_areas: selection.focusAreas,
+      optimization_status: optimized.status,
+      questions: optimized.questions,
+    };
+
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+      UpdateExpression: 'SET question_guide = :guide, updated_at = :now',
+      ExpressionAttributeValues: {
+        ':guide': guide,
+        ':now': Date.now(),
+      },
+    }));
+
+    return successResponse(guide);
+  } catch (error: any) {
+    console.error('[Question Guide] Failed to prepare guide:', error);
+    return errorResponse(500, 'QUESTION_GUIDE_FAILED', 'The interview guide could not be prepared from this job description.');
+  }
+}
+
+
 async function getUploadUrl(id: string | undefined, event: APIGatewayProxyEvent) {
   const owned = await getOwnedInterviewRecord(id, event);
   if (owned.response) return owned.response;
   const userId = owned.userId!;
+  const userFolder = getUserStorageFolder(event, userId);
 
   const body = JSON.parse(event.body || '{}');
   const result = UploadUrlSchema.safeParse(body);
@@ -438,7 +759,7 @@ async function getUploadUrl(id: string | undefined, event: APIGatewayProxyEvent)
      return errorResponse(400, 'VALIDATION_ERROR', `Unsupported file extension: .${extension}`);
   }
 
-  const s3Key = `${userInterviewPrefix(userId, id!)}/uploads/${file_type}-${Date.now()}.${extension}`;
+  const s3Key = `${userInterviewPrefix(userFolder, id!)}/uploads/${file_type}-${Date.now()}.${extension}`;
   
   const uploadUrl = await getPresignedUploadUrl(BUCKET_NAME, s3Key, content_type);
 
@@ -454,6 +775,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   if (owned.response) return owned.response;
   const item = owned.item!;
   const userId = owned.userId!;
+  const userFolder = getUserStorageFolder(event, userId);
 
   const body = JSON.parse(event.body || '{}');
   const result = ConfirmUploadSchema.safeParse(body);
@@ -463,7 +785,7 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   }
 
   const { file_type, s3_key } = result.data;
-  const expectedPrefix = `${userInterviewPrefix(userId, id!)}/uploads/`;
+  const expectedPrefix = `${userInterviewPrefix(userFolder, id!)}/uploads/`;
 
   if (!s3_key.startsWith(expectedPrefix)) {
     return errorResponse(403, 'ACCESS_DENIED', 'Upload key does not belong to this user');
@@ -487,6 +809,11 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
   };
   
   const attrName = attrMap[file_type];
+  const previousKey = item[attrName];
+
+  if (previousKey && previousKey !== s3_key) {
+    await deleteS3ObjectIfExists(previousKey);
+  }
   
   // Determine if we should move to FILES_UPLOADED
   // (Only transcript and JD are strictly required for evaluation)
@@ -536,11 +863,16 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
       const selectedModel = item.model_id || 'claude-3-sonnet';
       const mapping: Record<string, string | undefined> = {
         'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+        'claude-sonnet-4-6': process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
         'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
       };
 
       const finalModelId = mapping[selectedModel] || 
-        (selectedModel === 'nova-pro' ? 'amazon.nova-pro-v1:0' : 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0');
+        (selectedModel === 'nova-pro'
+          ? 'amazon.nova-pro-v1:0'
+          : selectedModel === 'claude-sonnet-4-6'
+            ? 'global.anthropic.claude-sonnet-4-6'
+            : 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0');
       
       const bedrockResp = await client.send(new InvokeModelCommand({
         modelId: finalModelId,
@@ -589,6 +921,10 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
     exprValues[':null'] = null;
   }
 
+  if (file_type === 'jd') {
+    updateExpr += ', question_guide = :null';
+  }
+
   await ddbDocClient.send(new UpdateCommand({
     TableName: TABLE_NAME,
     Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
@@ -611,6 +947,10 @@ async function runAnalysis(id: string | undefined, event: APIGatewayProxyEvent) 
   
   if (!item.transcript_s3_key || !item.jd_s3_key) {
     return errorResponse(400, 'VALIDATION_ERROR', 'Both transcript and JD must be uploaded before analysis.');
+  }
+
+  if (!item.question_guide) {
+    return errorResponse(400, 'QUESTION_GUIDE_REQUIRED', 'Prepare the interview question guide before starting the evaluation.');
   }
 
   // 1. Verify BOTH objects exist in S3 (Double check)
@@ -960,6 +1300,7 @@ async function createMom(event: APIGatewayProxyEvent) {
   const item = {
     mom_id: momId,
     owner_user_id: userId,
+    owner_email: getAuthenticatedUserEmail(event),
     item_type: 'MOM',
     status: 'CREATED',
     created_at: now,
@@ -1046,6 +1387,7 @@ async function getMomUploadUrl(id: string | undefined, event: APIGatewayProxyEve
   const owned = await getOwnedMomRecord(id, event);
   if (owned.response) return owned.response;
   const userId = owned.userId!;
+  const userFolder = getUserStorageFolder(event, userId);
 
   const body = JSON.parse(event.body || '{}');
   const result = MomUploadUrlSchema.safeParse(body);
@@ -1061,7 +1403,7 @@ async function getMomUploadUrl(id: string | undefined, event: APIGatewayProxyEve
     return errorResponse(400, 'VALIDATION_ERROR', `Unsupported file extension: .${extension}`);
   }
 
-  const s3Key = `${userMomPrefix(userId, id!)}/uploads/transcript-${Date.now()}.${extension}`;
+  const s3Key = `${userMomPrefix(userFolder, id!)}/uploads/transcript-${Date.now()}.${extension}`;
   const uploadUrl = await getPresignedUploadUrl(BUCKET_NAME, s3Key, content_type);
 
   return successResponse({
@@ -1075,6 +1417,7 @@ async function confirmMomUpload(id: string | undefined, event: APIGatewayProxyEv
   const owned = await getOwnedMomRecord(id, event);
   if (owned.response) return owned.response;
   const userId = owned.userId!;
+  const userFolder = getUserStorageFolder(event, userId);
 
   const body = JSON.parse(event.body || '{}');
   const result = ConfirmMomUploadSchema.safeParse(body);
@@ -1084,9 +1427,14 @@ async function confirmMomUpload(id: string | undefined, event: APIGatewayProxyEv
   }
 
   const { s3_key } = result.data;
-  const expectedPrefix = `${userMomPrefix(userId, id!)}/uploads/`;
+  const expectedPrefix = `${userMomPrefix(userFolder, id!)}/uploads/`;
   if (!s3_key.startsWith(expectedPrefix)) {
     return errorResponse(403, 'ACCESS_DENIED', 'Upload key does not belong to this user');
+  }
+
+  const previousKey = owned.item?.transcript_s3_key;
+  if (previousKey && previousKey !== s3_key) {
+    await deleteS3ObjectIfExists(previousKey);
   }
 
   try {
@@ -1184,7 +1532,8 @@ async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent)
     return errorResponse(500, 'INTERNAL_ERROR', 'Stored MOM result could not be converted to PDF');
   }
 
-  const reportKey = item.report_s3_key || `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
+  const reportFolder = item.owner_email ? normalizeUserFolder(item.owner_email) : item.owner_user_id;
+  const reportKey = item.report_s3_key || `users/${reportFolder}/moms/${id}/processed/report.pdf`;
   const pdfReport = await generateMomPdfReport(validation.data, {
     projectTitle: item.project_title || 'General',
   });
@@ -1287,12 +1636,69 @@ async function getIntegrationStatus() {
     teams: {
       mode: teamsMode,
       label: teamsMode === 'live' ? 'Teams live mode' : teamsMode === 'disabled' ? 'Teams disabled' : 'Teams mock mode',
-      configured: teamsMode === 'live' && !!(process.env.MS_TENANT_ID && process.env.MS_CLIENT_ID && process.env.MS_CLIENT_SECRET),
+      configured: teamsMode === 'live' && !!process.env.MS_TEAMS_SECRET_ARN,
+      credentialSource: teamsMode === 'live' && process.env.MS_TEAMS_SECRET_ARN ? 'AWS Secrets Manager' : undefined,
     },
     message: kekaMode === 'mock' || teamsMode === 'mock'
       ? 'Real credentials not configured yet. Manual and mock workflows are available.'
       : 'Integration modes are configured from backend environment variables.',
   });
+}
+
+async function listMinfyCareers(event: APIGatewayProxyEvent) {
+  if (!getAuthenticatedUserId(event)) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+
+  try {
+    const catalog = await listMinfyCareerJobs(BUCKET_NAME);
+    return successResponse({
+      source: 'Minfy Careers',
+      source_url: 'https://minfytech.zohorecruit.com/jobs/Careers',
+      fetched_at: catalog.fetchedAt,
+      jobs: catalog.jobs,
+    });
+  } catch (error: any) {
+    console.error('[Minfy Careers] Could not load career catalogue:', error);
+    return errorResponse(502, 'CAREERS_SOURCE_UNAVAILABLE', error?.message || 'Minfy Careers could not be reached. Please try again shortly.');
+  }
+}
+
+async function getMinfyCareer(jobId: string | undefined, event: APIGatewayProxyEvent) {
+  if (!getAuthenticatedUserId(event)) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+  try {
+    return successResponse({ job: await getMinfyCareerJob(BUCKET_NAME, String(jobId || '')) });
+  } catch (error: any) {
+    console.error('[Minfy Careers] Could not load job description:', error);
+    return errorResponse(502, 'CAREERS_SOURCE_UNAVAILABLE', error?.message || 'The job description could not be retrieved.');
+  }
+}
+
+async function attachMinfyCareerJobDescription(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, userId, response } = await getOwnedInterviewRecord(id, event);
+  if (response) return response;
+
+  const jobId = String(parseBody(event).job_id || '').trim();
+  try {
+    const job = await getMinfyCareerJob(BUCKET_NAME, jobId);
+    const storageFolder = getUserStorageFolder(event, userId!);
+    const s3Key = `${userInterviewPrefix(storageFolder, id!)}/uploads/jd-minfy-careers-${job.id}.txt`;
+    await saveFileContent(BUCKET_NAME, s3Key, job.description, 'text/plain; charset=utf-8');
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+      UpdateExpression: 'SET jd_s3_key = :key, inferred_role = :role, metadata.#position = :role, jd_source = :source, updated_at = :now',
+      ExpressionAttributeNames: { '#position': 'position' },
+      ExpressionAttributeValues: {
+        ':key': s3Key,
+        ':role': job.title,
+        ':source': { type: 'minfy_careers', job_id: job.id, source_url: job.sourceUrl, fetched_at: job.fetchedAt },
+        ':now': Date.now(),
+      },
+    }));
+    return successResponse({ status: 'CREATED', s3_key: s3Key, job });
+  } catch (error: any) {
+    console.error('[Minfy Careers] Could not attach job description:', error);
+    return errorResponse(502, 'CAREERS_SOURCE_UNAVAILABLE', error?.message || 'The job description could not be attached.');
+  }
 }
 
 function parseBody(event: APIGatewayProxyEvent): any {
@@ -1342,6 +1748,8 @@ function buildQuestion(skill: string, roleTitle: string): IntelligenceQuestion &
       'Decision-making quality',
       'Ability to explain trade-offs clearly',
     ],
+    questionType: 'role',
+    countsTowardPanelEvaluation: true,
     expectedStrongAnswerSignals: [
       'Specific project context and measurable outcome',
       'Clear explanation of constraints, alternatives, and validation',
@@ -1353,6 +1761,41 @@ function buildQuestion(skill: string, roleTitle: string): IntelligenceQuestion &
       'Avoids follow-up detail on failure handling or validation',
     ],
   };
+}
+
+function buildIntroductionQuestion(): IntelligenceQuestion & { expectedStrongAnswerSignals: string[]; redFlags: string[] } {
+  return {
+    question: 'To begin, could you briefly walk us through the experience that has prepared you for this role and one project you are most proud of?',
+    followUps: ['What was your specific contribution?', 'What result or lesson from that work is most relevant here?'],
+    whatToEvaluate: ['Clarity of career narrative', 'Ownership of past work'],
+    questionType: 'introduction',
+    countsTowardPanelEvaluation: false,
+    expectedStrongAnswerSignals: ['Clear, concise career narrative', 'Specific contribution and outcome'],
+    redFlags: ['Cannot explain individual contribution', 'Only vague project descriptions'],
+  };
+}
+
+function buildResumeQuestion(topic: string): IntelligenceQuestion & { expectedStrongAnswerSignals: string[]; redFlags: string[] } {
+  return {
+    question: `Your resume mentions ${topic}. Could you walk us through the situation, the decisions you owned, and the outcome?`,
+    followUps: ['What was the hardest trade-off?', 'How did you measure whether the approach worked?'],
+    whatToEvaluate: ['Accuracy and depth of resume experience', 'Ownership and reflection'],
+    questionType: 'resume',
+    countsTowardPanelEvaluation: false,
+    expectedStrongAnswerSignals: ['Specific context, contribution, and measurable outcome', 'Thoughtful explanation of trade-offs'],
+    redFlags: ['Cannot go beyond the resume headline', 'Attributes all work to the wider team'],
+  };
+}
+
+function resumeTopics(record: InterviewIntelligenceRecord, skills: string[]): string[] {
+  const resume = (record.candidate.resumeText || '').replace(/\s+/g, ' ').trim();
+  if (!resume) return [];
+  const lower = resume.toLowerCase();
+  const jobSkills = skills.filter((skill) => lower.includes(skill.toLowerCase()));
+  const knownTopics = ['AWS', 'Azure', 'GCP', 'Terraform', 'Kubernetes', 'Docker', 'Python', 'Java', 'React', 'Node.js', 'SQL', 'CI/CD', 'IAM', 'Security', 'Observability']
+    .filter((topic) => lower.includes(topic.toLowerCase()));
+  const unique = Array.from(new Set([...jobSkills, ...knownTopics]));
+  return unique.length ? unique.slice(0, 3) : ['the project experience highlighted in your resume'];
 }
 
 function buildQuestionPlan(record: InterviewIntelligenceRecord): IntelligenceQuestionPlan {
@@ -1370,10 +1813,14 @@ function buildQuestionPlan(record: InterviewIntelligenceRecord): IntelligenceQue
       : skills.filter((_, skillIndex) => skillIndex % panel.length === index);
     const focusSkills = assigned.length ? assigned : [skills[index % skills.length] || 'Role fit'];
     const focusArea = interviewer.focusArea || focusSkills.slice(0, 2).join(' / ');
+    const roleQuestions = focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role'));
+    const contextQuestions = index === 0
+      ? [buildIntroductionQuestion(), ...resumeTopics(record, skills).map((topic) => buildResumeQuestion(topic))]
+      : [];
     return {
       interviewerId: interviewer.interviewerId,
-      focusArea,
-      questions: focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role')),
+      focusArea: contextQuestions.length ? `${focusArea} / candidate experience` : focusArea,
+      questions: [...contextQuestions, ...roleQuestions],
     };
   });
 
@@ -1414,11 +1861,41 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
 
   const body = parseBody(event);
-  const sourceMode = body.source_mode === 'mock_keka' ? 'mock_keka' : 'manual';
+  const sourceMode = body.source_mode === 'mock_keka'
+    ? 'mock_keka'
+    : body.source_mode === 'keka_live'
+      ? 'keka_live'
+      : body.source_mode === 'teams_live'
+        ? 'teams_live'
+        : 'manual';
   const now = Date.now();
   const id = uuidv4();
   const kekaMode = getIntegrationMode(process.env.KEKA_INTEGRATION_MODE);
   const teamsMode = getIntegrationMode(process.env.TEAMS_INTEGRATION_MODE);
+
+  if (sourceMode === 'keka_live') {
+    if (kekaMode !== 'live' || teamsMode !== 'live') {
+      return errorResponse(
+        503,
+        'INTEGRATION_NOT_READY',
+        'Automatic interview sync is not ready. Keka Hire and Microsoft Teams must both be configured by an administrator.',
+      );
+    }
+
+    return errorResponse(
+      501,
+      'INTEGRATION_NOT_READY',
+      'Automatic Keka and Microsoft Teams sync is not available yet. Complete the server-side integration setup before creating an interview workspace.',
+    );
+  }
+
+  if (sourceMode === 'teams_live' && teamsMode !== 'live') {
+    return errorResponse(
+      503,
+      'INTEGRATION_NOT_READY',
+      'Microsoft Teams live sync is not ready. Configure the Microsoft Graph credentials and grant the Teams Application Access Policy to the meeting organiser.',
+    );
+  }
 
   let integrationData: Awaited<ReturnType<ReturnType<typeof createKekaIntegration>['getInterviewData']>>;
   if (sourceMode === 'mock_keka') {
@@ -1451,6 +1928,9 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
         focusArea: String(member.focusArea || '').trim() || undefined,
       })),
       meetingUrl: String(body.meetingUrl || '').trim() || undefined,
+      meetingId: String(body.meetingId || '').trim() || undefined,
+      organizerUserId: String(body.organizerUserId || '').trim() || undefined,
+      organizerEmail: String(body.organizerEmail || '').trim() || undefined,
     };
   }
 
@@ -1476,7 +1956,10 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
     teams: {
       mode: sourceMode === 'mock_keka' ? 'mock' : teamsMode,
       meetingUrl: integrationData.meetingUrl,
-      transcriptStatus: integrationData.meetingUrl ? 'pending' : 'not_available',
+      meetingId: integrationData.meetingId,
+      organizerUserId: integrationData.organizerUserId,
+      organizerEmail: integrationData.organizerEmail,
+      transcriptStatus: integrationData.meetingUrl || integrationData.meetingId ? 'pending' : 'not_available',
     },
     job: {
       ...integrationData.job,
@@ -1497,6 +1980,116 @@ async function getIntelligenceInterview(id: string | undefined, event: APIGatewa
   return successResponse(item);
 }
 
+async function deleteIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const storageFolder = getUserStorageFolder(event, userId!);
+  try {
+    await deleteS3Prefix(`users/${storageFolder}/intelligence/${item.intelligence_id}/`);
+  } catch (error) {
+    console.warn('Intelligence workspace objects could not be removed:', error);
+  }
+
+  await ddbDocClient.send(new DeleteCommand({
+    TableName: INTELLIGENCE_TABLE_NAME,
+    Key: { intelligence_id: item.intelligence_id },
+  }));
+  return successResponse({ message: 'Interview intelligence workspace deleted successfully' });
+}
+
+async function updateIntelligenceDetails(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const body = parseBody(event);
+  const candidateEmail = String(body.candidate_email || '').trim();
+  const organizerEmail = String(body.organizer_email || '').trim();
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    candidate: {
+      ...item.candidate,
+      email: candidateEmail || undefined,
+    },
+    teams: {
+      ...item.teams,
+      organizerEmail: organizerEmail || item.teams.organizerEmail,
+    },
+    updated_at: Date.now(),
+  };
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
+async function getIntelligenceResumeUploadUrl(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const body = parseBody(event);
+  const fileName = String(body.file_name || '').trim();
+  const contentType = String(body.content_type || 'application/octet-stream').trim();
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  if (!fileName || !extension || !['pdf', 'docx', 'txt'].includes(extension)) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Upload a resume as a PDF, DOCX, or TXT file.');
+  }
+
+  const userFolder = getUserStorageFolder(event, userId!);
+  const s3Key = `users/${userFolder}/intelligence/${item.intelligence_id}/uploads/resume-${Date.now()}.${extension}`;
+  const uploadUrl = await getPresignedUploadUrl(BUCKET_NAME, s3Key, contentType);
+  return successResponse({ upload_url: uploadUrl, s3_key: s3Key });
+}
+
+async function confirmIntelligenceResume(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  const body = parseBody(event);
+  const s3Key = String(body.s3_key || '').trim();
+  const fileName = String(body.file_name || '').trim();
+  const userFolder = getUserStorageFolder(event, userId!);
+  const expectedPrefix = `users/${userFolder}/intelligence/${item.intelligence_id}/uploads/`;
+  if (!s3Key.startsWith(expectedPrefix) || !fileName) {
+    return errorResponse(403, 'ACCESS_DENIED', 'The uploaded resume does not belong to this workspace.');
+  }
+
+  try {
+    await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
+  } catch {
+    return errorResponse(404, 'UPLOAD_ERROR', 'The resume upload was not found. Upload the file again and retry.');
+  }
+
+  let resumeText = '';
+  try {
+    const { extractTextFromBuffer } = await import('../shared/utils.js');
+    resumeText = (await extractTextFromBuffer(await getFileBuffer(BUCKET_NAME, s3Key), fileName)).replace(/\s+/g, ' ').trim();
+  } catch {
+    return errorResponse(422, 'RESUME_READ_FAILED', 'The resume could not be read. Use a text-based PDF, DOCX, or TXT file.');
+  }
+  if (!resumeText) {
+    return errorResponse(422, 'RESUME_READ_FAILED', 'No readable text was found in the resume. Use a text-based PDF, DOCX, or TXT file.');
+  }
+
+  if (item.candidate.resumeS3Key && item.candidate.resumeS3Key !== s3Key) {
+    await deleteS3ObjectIfExists(item.candidate.resumeS3Key);
+  }
+
+  const updated: InterviewIntelligenceRecord = {
+    ...item,
+    candidate: {
+      ...item.candidate,
+      resumeS3Key: s3Key,
+      resumeFileName: fileName,
+      resumeText,
+      experienceSummary: item.candidate.experienceSummary || summarizeText(resumeText, ''),
+    },
+    questionPlan: undefined,
+    status: 'data_ready',
+    updated_at: Date.now(),
+  };
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+  return successResponse(updated);
+}
+
 async function generateIntelligenceQuestions(id: string | undefined, event: APIGatewayProxyEvent) {
   const { item, response } = await getOwnedIntelligenceRecord(id, event);
   if (response) return response;
@@ -1511,6 +2104,8 @@ async function generateIntelligenceQuestions(id: string | undefined, event: APIG
         question: question.question,
         followUps: question.followUps,
         whatToEvaluate: question.whatToEvaluate,
+        questionType: question.questionType,
+        countsTowardPanelEvaluation: question.countsTowardPanelEvaluation,
       })) || [],
     };
   });
@@ -1568,6 +2163,63 @@ async function updateIntelligenceTranscript(id: string | undefined, event: APIGa
   return successResponse(updated);
 }
 
+async function syncIntelligenceTeamsTranscript(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  if (item.teams.mode !== 'live') {
+    return errorResponse(409, 'INTEGRATION_NOT_READY', 'Microsoft Teams live sync is not enabled for this interview workspace.');
+  }
+
+  if (!item.teams.meetingUrl && !item.teams.meetingId) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'This workspace does not have a Teams meeting reference to sync.');
+  }
+
+  const now = Date.now();
+  try {
+    const transcript = await createTeamsIntegration('live').getTranscript({
+      meetingUrl: item.teams.meetingUrl,
+      meetingId: item.teams.meetingId,
+      organizerUserId: item.teams.organizerUserId,
+      organizerEmail: item.teams.organizerEmail,
+    });
+
+    const updated: InterviewIntelligenceRecord = {
+      ...item,
+      updated_at: now,
+      status: 'transcript_ready',
+      teams: {
+        ...item.teams,
+        meetingId: transcript.meetingId || item.teams.meetingId,
+        organizerUserId: transcript.organizerUserId || item.teams.organizerUserId,
+        transcriptStatus: 'synced',
+        lastSyncAt: now,
+        error: undefined,
+      },
+      transcript: { rawText: transcript.rawText, source: 'teams_live', uploadedAt: now },
+    };
+
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+    return successResponse(updated);
+  } catch (error) {
+    const message = error instanceof TeamsIntegrationError
+      ? error.message
+      : 'Microsoft Teams transcript sync failed. Please try again or contact your administrator.';
+    const failed: InterviewIntelligenceRecord = {
+      ...item,
+      updated_at: now,
+      teams: {
+        ...item.teams,
+        transcriptStatus: 'failed',
+        lastSyncAt: now,
+        error: message,
+      },
+    };
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: failed }));
+    return errorResponse(502, 'TEAMS_SYNC_FAILED', message);
+  }
+}
+
 async function updateIntelligenceScores(id: string | undefined, event: APIGatewayProxyEvent) {
   const { item, response } = await getOwnedIntelligenceRecord(id, event);
   if (response) return response;
@@ -1597,10 +2249,13 @@ async function updateIntelligenceScores(id: string | undefined, event: APIGatewa
   return successResponse(updated);
 }
 
-function countQuestionsAsked(transcript: string, member: IntelligencePanelist): number {
+function countRoleQuestionsAsked(transcript: string, member: IntelligencePanelist, skills: string[]): number {
   const name = member.name.split(' ')[0].toLowerCase();
-  const matches = transcript.toLowerCase().match(new RegExp(`${name}[^.?!]*\\?`, 'g'));
-  return matches?.length || 0;
+  const segments = transcript.toLowerCase().split(/(?<=[.?!])\s+/);
+  return segments.filter((segment) => {
+    if (!segment.includes(name) || !segment.includes('?')) return false;
+    return skills.some((skill) => segment.includes(skill.toLowerCase()));
+  }).length;
 }
 
 function analyzeCoverage(skills: string[], transcript: string): IntelligenceCoverageMatrix {
@@ -1643,9 +2298,13 @@ async function analyzeIntelligenceInterview(id: string | undefined, event: APIGa
         : 'reject';
 
   const interviewerEvaluations = item.panel.map((member) => {
-    const questionsAskedCount = countQuestionsAsked(transcript, member);
-    const assignedSkills = item.questionPlan?.panelPlan.find((plan) => plan.interviewerId === member.interviewerId)?.questions.length || 0;
-    const jdCoveragePercent = assignedSkills ? Math.min(100, Math.round((questionsAskedCount / assignedSkills) * 100)) : coveragePercent;
+    // Opening and resume questions are intentionally excluded: interviewer quality
+    // is assessed from role-specific coverage only.
+    const questionsAskedCount = countRoleQuestionsAsked(transcript, member, skills);
+    const assignedRoleQuestions = item.questionPlan?.panelPlan
+      .find((plan) => plan.interviewerId === member.interviewerId)?.questions
+      .filter((question) => question.countsTowardPanelEvaluation !== false).length || 0;
+    const jdCoveragePercent = assignedRoleQuestions ? Math.min(100, Math.round((questionsAskedCount / assignedRoleQuestions) * 100)) : coveragePercent;
     return {
       interviewerId: member.interviewerId,
       name: member.name,
@@ -1752,16 +2411,28 @@ async function approveIntelligenceInterview(id: string | undefined, event: APIGa
 }
 
 async function getIntelligenceReport(id: string | undefined, event: APIGatewayProxyEvent) {
-  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);
   if (response) return response;
   if (!item.aiEvaluation) {
     return errorResponse(404, 'NOT_FOUND', 'AI-assisted report is not available yet');
   }
+
+  const storageFolder = getUserStorageFolder(event, userId!);
+  const reportKey = `users/${storageFolder}/intelligence/${item.intelligence_id}/processed/report.pdf`;
+  const report = await generateIntelligencePdfReport(item);
+  await saveFileContent(BUCKET_NAME, reportKey, report, 'application/pdf');
+  const downloadUrl = await getSignedUrl(s3Client, new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: reportKey,
+    ResponseContentDisposition: `attachment; filename="interview-intelligence-${item.intelligence_id}.pdf"`,
+  }), { expiresIn: 3600 });
+
   return successResponse({
     intelligence_id: item.intelligence_id,
     status: item.status,
     report: item.aiEvaluation.finalReport,
     approved: item.approved,
+    download_url: downloadUrl,
   });
 }
 

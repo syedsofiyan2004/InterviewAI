@@ -20,7 +20,12 @@ import {
 const region = process.env.AWS_REGION || 'ap-south-1';
 
 const ddbClient = new DynamoDBClient({ region });
-export const ddbDocClient = DynamoDBDocumentClient.from(ddbClient);
+export const ddbDocClient = DynamoDBDocumentClient.from(ddbClient, {
+  marshallOptions: {
+    // Optional integration fields are omitted before DynamoDB marshalling.
+    removeUndefinedValues: true,
+  },
+});
 
 export const s3Client = new S3Client({ region });
 export const bedrockClient = new BedrockRuntimeClient({ region });
@@ -70,4 +75,3 @@ export async function getPresignedUploadUrl(bucket: string, key: string, content
   
   return getSignedUrl(s3Client, command, { expiresIn: 3600 });
 }
-

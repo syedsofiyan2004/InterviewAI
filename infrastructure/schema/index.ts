@@ -103,6 +103,25 @@ export const DetailedEvaluationResultSchema = z.object({
     fit: z.enum(['Strong', 'Partial', 'Gap']),
     evidence: z.string(),
   })).max(12).optional(),
+  interview_execution: z.object({
+    summary: z.string(),
+    panel_assessment: z.object({
+      score: z.number().min(0).max(10),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(8),
+      missed_areas: z.array(z.string()).max(8),
+    }),
+    interviewer_evaluations: z.array(z.object({
+      name: z.string(),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(6),
+      missed_areas: z.array(z.string()).max(6),
+    })).max(12),
+  }).optional().catch(undefined),
 });
 
 export type DetailedEvaluationResult = z.infer<typeof DetailedEvaluationResultSchema>;

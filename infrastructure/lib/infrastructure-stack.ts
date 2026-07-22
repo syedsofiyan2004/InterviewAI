@@ -11,6 +11,7 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as path from 'path';
 
@@ -24,6 +25,7 @@ export class IepStack extends cdk.Stack {
     const region = cdk.Stack.of(this).region;
 
     const prefix = 'iep';
+    const teamsSecretArn = process.env.MS_TEAMS_SECRET_ARN || '';
 
     // Helper for unique names
     const getUniqueName = (resource: string) => `${prefix}-${envName}-${resource}-${account}-${region}`;
@@ -118,12 +120,11 @@ export class IepStack extends cdk.Stack {
         KEKA_CLIENT_SECRET: process.env.KEKA_CLIENT_SECRET || '',
         KEKA_API_KEY: process.env.KEKA_API_KEY || '',
         KEKA_SCOPE: process.env.KEKA_SCOPE || '',
-        MS_TENANT_ID: process.env.MS_TENANT_ID || '',
-        MS_CLIENT_ID: process.env.MS_CLIENT_ID || '',
-        MS_CLIENT_SECRET: process.env.MS_CLIENT_SECRET || '',
-        MS_GRAPH_SCOPES: process.env.MS_GRAPH_SCOPES || '',
-        // Standardized Model Sync (Sonnet 3.7 + Nova)
+        // Microsoft Graph credentials are read only at runtime from Secrets Manager.
+        MS_TEAMS_SECRET_ARN: teamsSecretArn,
+        // Standardized Model Sync (Sonnet 3.7 + Sonnet 4.6 + Nova)
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
         ALLOW_BEDROCK_BASE_MODEL_FALLBACK: 'true',
         PLATFORM_VERSION: `v1.5.0-universal-${Date.now()}`,
@@ -142,6 +143,15 @@ export class IepStack extends cdk.Stack {
     filesBucket.grantDelete(apiHandler);
     evaluationQueue.grantSendMessages(apiHandler);
     momQueue.grantSendMessages(apiHandler);
+
+    if (teamsSecretArn) {
+      const teamsCredentialsSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        'TeamsGraphCredentialsSecret',
+        teamsSecretArn,
+      );
+      teamsCredentialsSecret.grantRead(apiHandler);
+    }
     
     // Emergency Access Restoration: Revert to wildcard to restore Nova + Claude immediately
     const bedrockPolicy = new iam.PolicyStatement({
@@ -166,8 +176,9 @@ export class IepStack extends cdk.Stack {
       environment: {
         TABLE_NAME: interviewsTable.tableName,
         BUCKET_NAME: filesBucket.bucketName,
-        // Standardized Worker Sync (Sonnet 3.7 + Nova)
+        // Standardized Worker Sync (Sonnet 3.7 + Sonnet 4.6 + Nova)
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
         ALLOW_BEDROCK_BASE_MODEL_FALLBACK: 'true',
         PLATFORM_VERSION: `v1.3.5-restored-${Date.now()}`,
@@ -296,6 +307,12 @@ export class IepStack extends cdk.Stack {
     const analyze = singleInterview.addResource('analyze');
     analyze.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
+    const questionGuide = singleInterview.addResource('question-guide');
+    questionGuide.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const minfyJd = singleInterview.addResource('minfy-jd');
+    minfyJd.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
     const result = singleInterview.addResource('result');
     result.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
@@ -314,8 +331,13 @@ export class IepStack extends cdk.Stack {
       }
     });
     singleIntelligenceInterview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('resume-upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('confirm-resume').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('generate-questions').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('transcript').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('sync-teams-transcript').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('scores').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('analyze').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('approve').addMethod('POST', apiHandlerIntegration, authMethodOptions);
@@ -323,6 +345,11 @@ export class IepStack extends cdk.Stack {
 
     const integrations = api.root.addResource('integrations');
     integrations.addResource('status').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const minfyCareers = api.root.addResource('minfy-careers');
+    const minfyCareerJobs = minfyCareers.addResource('jobs');
+    minfyCareerJobs.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    minfyCareerJobs.addResource('{jobId}').addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const moms = api.root.addResource('moms');
     moms.addMethod('POST', apiHandlerIntegration, authMethodOptions);
@@ -442,7 +469,7 @@ function handler(event) {
 
     // 8. Frontend Deployment
     new s3deploy.BucketDeployment(this, 'DeployFrontend', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '../../frontend/out'))],
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../frontend/.next-build'))],
       destinationBucket: frontendBucket,
       distribution,
       distributionPaths: ['/*'], // Invalidate cache on deploy

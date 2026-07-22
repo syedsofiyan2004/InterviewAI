@@ -15,10 +15,10 @@ import {
   ClipboardList,
   FileText,
 } from 'lucide-react';
-import { signIn, signUp, confirmSignUp, resendCode } from '@/lib/auth';
+import { signIn, signUp, confirmSignUp, resendCode, forgotPassword, confirmForgotPassword, completeNewPasswordChallenge } from '@/lib/auth';
 import { useAuth } from '@/contexts/AuthContext';
 
-type AuthMode = 'signin' | 'signup' | 'verify';
+type AuthMode = 'signin' | 'signup' | 'verify' | 'forgot' | 'reset' | 'newPassword';
 
 function LoginContent() {
   const router = useRouter();
@@ -31,6 +31,9 @@ function LoginContent() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +61,13 @@ function LoginContent() {
     setSuccess(null);
   };
 
+  const resetPasswordForm = () => {
+    setResetCode('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setShowPassword(false);
+  };
+
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
@@ -68,7 +78,13 @@ function LoginContent() {
       await refreshSession();
       router.push(nextPath);
     } catch (err: any) {
-      if (err.code === 'UserNotConfirmedException') {
+      if (err.code === 'NEW_PASSWORD_REQUIRED') {
+        resetPasswordForm();
+        setMode('newPassword');
+        setSuccess('Your account needs a new password. Choose one to continue signing in.');
+      } else if (err.code === 'NO_PENDING_NEW_PASSWORD_CHALLENGE') {
+        setError('Your sign-in session expired. Please sign in again.');
+      } else if (err.code === 'UserNotConfirmedException') {
         setMode('verify');
         setError('Please verify your email before signing in. Enter the code we sent you.');
       } else if (err.code === 'NotAuthorizedException') {
@@ -77,6 +93,83 @@ function LoginContent() {
         setError('No account found with this email. Please sign up.');
       } else {
         setError(err.message || 'Sign in failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    if (!email) return setError('Please enter your email address first.');
+    setLoading(true);
+    try {
+      await forgotPassword(email);
+      resetPasswordForm();
+      setMode('reset');
+      setSuccess('We sent a reset code to your email. Enter it below and choose a new password.');
+    } catch (err: any) {
+      if (err.code === 'UserNotFoundException') {
+        setError('No account found with this email.');
+      } else {
+        setError(err.message || 'Failed to send reset code.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    if (!newPassword || !confirmNewPassword) return setError('Please fill in both password fields.');
+    if (newPassword !== confirmNewPassword) return setError('Passwords do not match.');
+    if (newPassword.length < 8) return setError('Password must be at least 8 characters.');
+    if (!/[A-Z]/.test(newPassword)) return setError('Password must contain at least one uppercase letter.');
+    if (!/[0-9]/.test(newPassword)) return setError('Password must contain at least one number.');
+    setLoading(true);
+    try {
+      await completeNewPasswordChallenge(newPassword);
+      await refreshSession();
+      router.push(nextPath);
+    } catch (err: any) {
+      if (err.code === 'InvalidPasswordException') {
+        setError(err.message || 'The new password does not meet the policy requirements.');
+      } else {
+        setError(err.message || 'Failed to set a new password.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    if (!email || !resetCode || !newPassword || !confirmNewPassword) {
+      return setError('Please fill in all fields.');
+    }
+    if (resetCode.length !== 6) {
+      return setError('Please enter the 6-digit reset code from your email.');
+    }
+    if (newPassword !== confirmNewPassword) return setError('Passwords do not match.');
+    if (newPassword.length < 8) return setError('Password must be at least 8 characters.');
+    if (!/[A-Z]/.test(newPassword)) return setError('Password must contain at least one uppercase letter.');
+    if (!/[0-9]/.test(newPassword)) return setError('Password must contain at least one number.');
+    setLoading(true);
+    try {
+      await confirmForgotPassword(email, resetCode, newPassword);
+      await signIn(email, newPassword);
+      await refreshSession();
+      router.push(nextPath);
+    } catch (err: any) {
+      if (err.code === 'CodeMismatchException') {
+        setError('Incorrect reset code. Please try again.');
+      } else if (err.code === 'ExpiredCodeException') {
+        setError('The reset code has expired. Please request a new one.');
+      } else {
+        setError(err.message || 'Password reset failed.');
       }
     } finally {
       setLoading(false);
@@ -235,10 +328,30 @@ function LoginContent() {
           <div className="login-auth-card w-full max-w-[520px] space-y-7 p-10">
             <div className="text-center space-y-2.5">
               <h1 className="text-3xl font-semibold text-white tracking-tight">
-                {mode === 'signin' ? 'Welcome back' : mode === 'signup' ? 'Create account' : 'Verify email'}
+                {mode === 'signin'
+                  ? 'Welcome back'
+                  : mode === 'signup'
+                    ? 'Create account'
+                    : mode === 'verify'
+                      ? 'Verify email'
+                      : mode === 'forgot'
+                        ? 'Reset password'
+                        : mode === 'reset'
+                          ? 'Set a new password'
+                          : 'Set a new password'}
               </h1>
               <p className="text-base text-slate-300">
-                {mode === 'signin' ? 'Enter your details to sign in' : mode === 'signup' ? 'Join Minfy AI today' : 'Enter the code sent to your email'}
+                {mode === 'signin'
+                  ? 'Enter your details to sign in'
+                  : mode === 'signup'
+                    ? 'Join Minfy AI today'
+                    : mode === 'verify'
+                      ? 'Enter the code sent to your email'
+                      : mode === 'forgot'
+                        ? 'We will send a reset code to your email'
+                        : mode === 'reset'
+                          ? 'Use the code from your email to set a new password'
+                          : 'This account needs a new password before sign-in completes'}
               </p>
             </div>
 
@@ -278,6 +391,15 @@ function LoginContent() {
                     autoComplete="current-password"
                   />
                   <SubmitButton loading={loading} label="Sign In" />
+                  <div className="flex items-center justify-between gap-4 text-xs text-slate-400">
+                    <button
+                      type="button"
+                      onClick={() => { setMode('forgot'); clearMessages(); resetPasswordForm(); }}
+                      className="font-medium text-accent hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
                   <p className="text-center text-xs text-slate-400">
                     Don't have an account?{' '}
                     <button
@@ -288,6 +410,135 @@ function LoginContent() {
                       Sign up
                     </button>
                   </p>
+                </form>
+              )}
+
+              {mode === 'forgot' && (
+                <form onSubmit={handleForgotPassword} className="space-y-5">
+                  <InputField
+                    id="email-forgot"
+                    label="Email Address"
+                    type="email"
+                    icon={<Mail size={16} />}
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                  />
+                  <SubmitButton loading={loading} label="Send reset code" />
+                  <div className="flex flex-col gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signin'); clearMessages(); resetPasswordForm(); }}
+                      className="text-center text-xs text-slate-400 transition-colors hover:text-white"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {mode === 'reset' && (
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <InputField
+                    id="email-reset"
+                    label="Email Address"
+                    type="email"
+                    icon={<Mail size={16} />}
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                  />
+                  <div className="space-y-1.5">
+                    <label htmlFor="reset-code" className="block text-sm font-medium text-slate-300">
+                      Reset Code
+                    </label>
+                    <input
+                      id="reset-code"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={resetCode}
+                      onChange={(e) => setResetCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="000000"
+                      className="w-full h-12 rounded-lg border border-white/10 bg-white/[0.08] px-4 text-center text-lg font-bold tracking-[0.35em] text-white outline-none transition-all placeholder:text-slate-500 focus:border-accent focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  <PasswordField
+                    id="new-password"
+                    label="New Password"
+                    value={newPassword}
+                    onChange={setNewPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                  />
+                  <PasswordField
+                    id="confirm-new-password"
+                    label="Confirm New Password"
+                    value={confirmNewPassword}
+                    onChange={setConfirmNewPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                  />
+                  <SubmitButton loading={loading} label="Reset password" />
+                  <div className="flex flex-col gap-3">
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={loading}
+                      className="flex items-center justify-center gap-2 text-xs font-medium text-slate-400 transition-colors hover:text-white"
+                    >
+                      <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                      Resend reset code
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signin'); clearMessages(); resetPasswordForm(); }}
+                      className="text-center text-xs text-slate-400 transition-colors hover:text-white"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {mode === 'newPassword' && (
+                <form onSubmit={handleNewPassword} className="space-y-4">
+                  <div className="rounded-lg border border-white/10 bg-white/[0.06] p-4 text-sm text-slate-300">
+                    This account has a temporary password. Choose a new one to finish signing in.
+                  </div>
+                  <PasswordField
+                    id="temp-new-password"
+                    label="New Password"
+                    value={newPassword}
+                    onChange={setNewPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                    hint="Min. 8 chars"
+                  />
+                  <PasswordField
+                    id="temp-confirm-new-password"
+                    label="Confirm New Password"
+                    value={confirmNewPassword}
+                    onChange={setConfirmNewPassword}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(!showPassword)}
+                    autoComplete="new-password"
+                  />
+                  <SubmitButton loading={loading} label="Set new password" />
+                  <div className="flex flex-col gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setMode('signin'); clearMessages(); resetPasswordForm(); setPassword(''); }}
+                      className="text-center text-xs text-slate-400 transition-colors hover:text-white"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
                 </form>
               )}
 

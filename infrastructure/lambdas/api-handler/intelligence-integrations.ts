@@ -1,4 +1,6 @@
-export type IntelligenceSourceMode = 'manual' | 'mock_keka' | 'keka_live';
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+
+export type IntelligenceSourceMode = 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
 export type IntegrationMode = 'mock' | 'disabled' | 'live';
 export type IntelligenceStatus =
   | 'draft'
@@ -13,6 +15,9 @@ export interface IntelligenceQuestion {
   question: string;
   followUps: string[];
   whatToEvaluate: string[];
+  /** Context questions help the panel understand the candidate but are excluded from interviewer coverage scoring. */
+  questionType?: 'introduction' | 'resume' | 'role';
+  countsTowardPanelEvaluation?: boolean;
 }
 
 export interface IntelligencePanelist {
@@ -47,6 +52,8 @@ export interface InterviewIntelligenceRecord {
     mode: IntegrationMode;
     meetingUrl?: string;
     meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
     transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
     lastSyncAt?: number;
     error?: string;
@@ -63,6 +70,8 @@ export interface InterviewIntelligenceRecord {
     email?: string;
     resumeText?: string;
     experienceSummary?: string;
+    resumeS3Key?: string;
+    resumeFileName?: string;
   };
   panel: IntelligencePanelist[];
   questionPlan?: {
@@ -154,6 +163,9 @@ export interface KekaIntegration {
     candidate: InterviewIntelligenceRecord['candidate'];
     panel: InterviewIntelligenceRecord['panel'];
     meetingUrl?: string;
+    meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
   }>;
 }
 
@@ -161,10 +173,213 @@ export interface TeamsIntegration {
   getTranscript(input: {
     meetingUrl?: string;
     meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
   }): Promise<{
     rawText: string;
     meetingId?: string;
+    organizerUserId?: string;
   }>;
+}
+
+type TeamsGraphCredentials = {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+};
+
+const graphClient = new SecretsManagerClient({});
+let cachedTeamsCredentials: { value: TeamsGraphCredentials; expiresAt: number } | undefined;
+
+export class TeamsIntegrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TeamsIntegrationError';
+  }
+}
+
+function getRequiredString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function getTeamsGraphCredentials(): Promise<TeamsGraphCredentials> {
+  if (cachedTeamsCredentials && cachedTeamsCredentials.expiresAt > Date.now()) {
+    return cachedTeamsCredentials.value;
+  }
+
+  const secretId = getRequiredString(process.env.MS_TEAMS_SECRET_ARN);
+  if (!secretId) {
+    throw new TeamsIntegrationError('Microsoft Teams credentials are not configured in AWS Secrets Manager.');
+  }
+
+  let secretString = '';
+  try {
+    const response = await graphClient.send(new GetSecretValueCommand({ SecretId: secretId }));
+    secretString = response.SecretString || '';
+  } catch {
+    throw new TeamsIntegrationError('Microsoft Teams credentials could not be read from AWS Secrets Manager.');
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(secretString) as Record<string, unknown>;
+  } catch {
+    throw new TeamsIntegrationError('Microsoft Teams credentials are not stored as valid JSON.');
+  }
+
+  const credentials: TeamsGraphCredentials = {
+    tenantId: getRequiredString(payload.tenantId || payload.MS_TENANT_ID),
+    clientId: getRequiredString(payload.clientId || payload.MS_CLIENT_ID),
+    clientSecret: getRequiredString(payload.clientSecret || payload.MS_CLIENT_SECRET),
+  };
+
+  if (!credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
+    throw new TeamsIntegrationError('Microsoft Teams credentials must contain tenantId, clientId, and clientSecret.');
+  }
+
+  cachedTeamsCredentials = { value: credentials, expiresAt: Date.now() + 15 * 60 * 1000 };
+  return credentials;
+}
+
+function normalizeTranscript(vtt: string): string {
+  const lines = vtt
+    .replace(/^WEBVTT\s*/i, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (/^\d+$/.test(line)) return false;
+      if (/^\d{2}:\d{2}:\d{2}[.,]\d{3}\s+-->/.test(line)) return false;
+      if (/^(NOTE|STYLE|REGION)\b/i.test(line)) return false;
+      return true;
+    })
+    .map((line) => line.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(lines)).join('\n').trim();
+}
+
+export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
+  private accessToken?: { value: string; expiresAt: number };
+
+  private async getAccessToken(): Promise<string> {
+    if (this.accessToken && this.accessToken.expiresAt > Date.now()) {
+      return this.accessToken.value;
+    }
+
+    const credentials = await getTeamsGraphCredentials();
+    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(credentials.tenantId)}/oauth2/v2.0/token`;
+    const form = new URLSearchParams({
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials',
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+    } catch {
+      throw new TeamsIntegrationError('Microsoft identity service could not be reached. Please try again shortly.');
+    }
+
+    if (!response.ok) {
+      throw new TeamsIntegrationError('Microsoft Graph credentials were rejected. Verify the client secret and tenant configuration.');
+    }
+
+    const payload = await response.json() as { access_token?: string; expires_in?: number };
+    if (!payload.access_token) {
+      throw new TeamsIntegrationError('Microsoft identity service did not return an access token.');
+    }
+
+    this.accessToken = {
+      value: payload.access_token,
+      expiresAt: Date.now() + Math.max(60, Number(payload.expires_in || 3600) - 120) * 1000,
+    };
+    return this.accessToken.value;
+  }
+
+  private async graphGet(path: string, accept = 'application/json'): Promise<Response> {
+    const token = await this.getAccessToken();
+    let response: Response;
+    try {
+      response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: accept },
+      });
+    } catch {
+      throw new TeamsIntegrationError('Microsoft Graph could not be reached. Please try again shortly.');
+    }
+
+    if (response.ok) return response;
+    if (response.status === 401) {
+      throw new TeamsIntegrationError('Microsoft Graph rejected the configured application credentials.');
+    }
+    if (response.status === 403) {
+      throw new TeamsIntegrationError('Microsoft Graph denied access. Verify application permissions and the Teams Application Access Policy for this meeting organiser.');
+    }
+    if (response.status === 404) {
+      throw new TeamsIntegrationError('The Teams meeting or transcript was not found. It may not be available yet.');
+    }
+    throw new TeamsIntegrationError('Microsoft Graph could not retrieve the meeting transcript.');
+  }
+
+  async getTranscript(input: {
+    meetingUrl?: string;
+    meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
+  }): Promise<{ rawText: string; meetingId?: string; organizerUserId?: string }> {
+    const organizer = input.organizerUserId || input.organizerEmail;
+    if (!organizer) {
+      throw new TeamsIntegrationError('Teams sync needs the meeting organiser ID or email from the interview schedule.');
+    }
+
+    const userId = encodeURIComponent(organizer);
+    let meetingId = input.meetingId;
+    if (!meetingId) {
+      if (!input.meetingUrl) {
+        throw new TeamsIntegrationError('Teams sync needs a meeting link or a Microsoft Graph online meeting ID.');
+      }
+
+      const filter = new URLSearchParams({
+        '$filter': `JoinWebUrl eq '${input.meetingUrl.replace(/'/g, "''")}'`,
+        '$select': 'id,joinWebUrl',
+      });
+      const meetingResponse = await this.graphGet(`/users/${userId}/onlineMeetings?${filter.toString()}`);
+      const meetings = await meetingResponse.json() as { value?: Array<{ id?: string }> };
+      meetingId = meetings.value?.[0]?.id;
+    }
+
+    if (!meetingId) {
+      throw new TeamsIntegrationError('Microsoft Graph could not resolve this Teams meeting for the authorised organiser.');
+    }
+
+    const encodedMeetingId = encodeURIComponent(meetingId);
+    const transcriptResponse = await this.graphGet(`/users/${userId}/onlineMeetings/${encodedMeetingId}/transcripts?$select=id,createdDateTime`);
+    const transcripts = await transcriptResponse.json() as { value?: Array<{ id?: string; createdDateTime?: string }> };
+    const transcript = [...(transcripts.value || [])]
+      .filter((entry) => entry.id)
+      .sort((left, right) => String(right.createdDateTime || '').localeCompare(String(left.createdDateTime || '')))[0];
+
+    if (!transcript?.id) {
+      throw new TeamsIntegrationError('No Teams transcript is available for this meeting yet. Confirm transcription has finished and try again.');
+    }
+
+    const contentResponse = await this.graphGet(
+      `/users/${userId}/onlineMeetings/${encodedMeetingId}/transcripts/${encodeURIComponent(transcript.id)}/content`,
+      'text/vtt',
+    );
+    const rawText = normalizeTranscript(await contentResponse.text());
+    if (!rawText) {
+      throw new TeamsIntegrationError('Microsoft Teams returned an empty transcript. Please confirm the meeting transcript is ready.');
+    }
+
+    return { rawText, meetingId, organizerUserId: input.organizerUserId || organizer };
+  }
 }
 
 export class MockKekaIntegration implements KekaIntegration {
@@ -247,6 +462,6 @@ export function createKekaIntegration(mode: string | undefined): KekaIntegration
 
 export function createTeamsIntegration(mode: string | undefined): TeamsIntegration {
   if (mode === 'mock') return new MockTeamsIntegration();
-  // TODO: Implement Microsoft Graph Teams adapter with server-side credentials.
+  if (mode === 'live') return new MicrosoftGraphTeamsIntegration();
   return new ManualIntegration();
 }

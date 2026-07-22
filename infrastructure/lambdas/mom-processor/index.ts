@@ -18,6 +18,18 @@ const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const MOM_MODEL_ID = process.env.MOM_MODEL_ID!;
 
+function getUserFolder(item: any): string {
+  const email = String(item?.owner_email || '').trim().toLowerCase();
+  if (email) {
+    const localPart = email.split('@')[0] || email;
+    return localPart
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || item.owner_user_id || 'user';
+  }
+  return item.owner_user_id || 'user';
+}
+
 export const handler = async (event: SQSEvent) => {
   for (const record of event.Records) {
     const { mom_id } = JSON.parse(record.body || '{}');
@@ -59,8 +71,9 @@ async function runMomPipeline(id: string) {
   }
 
   const result = await analyzeTranscript(item.title || 'Untitled meeting', transcript);
-  const resultS3Key = `users/${item.owner_user_id}/moms/${id}/processed/result.json`;
-  const reportS3Key = `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
+  const userFolder = getUserFolder(item);
+  const resultS3Key = `users/${userFolder}/moms/${id}/processed/result.json`;
+  const reportS3Key = `users/${userFolder}/moms/${id}/processed/report.pdf`;
   const pdfReport = await generateMomPdfReport(result, {
     projectTitle: item.project_title || 'General',
   });
@@ -191,6 +204,7 @@ Field rules:
 - Do not invent facts, deadlines, owners, attendees, costs, decisions, tools, or platforms that are not supported by the transcript.
 - Preserve important names, dates, products, cloud services, costs, environment names, and delivery commitments exactly when they are mentioned.
 - Do not narrate the conversation. Write outcomes and conclusions.
+- Keep every field concise and avoid repeating the same point across sections. Prefer a complete, valid JSON document over additional prose.
 - Put the final JSON inside <mom_json>...</mom_json>. Do not include markdown or commentary outside the tags.
 
 Meeting title provided by user: ${title}
@@ -205,17 +219,37 @@ ${transcript.slice(0, 180000)}
     accept: 'application/json',
     body: JSON.stringify({
       anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 8000,
+      // Rich MOMs can contain several structured sections. Sonnet 4.6 must
+      // have enough output budget to close the JSON document cleanly.
+      max_tokens: 16000,
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
       temperature: 0,
     }),
   }));
 
   const payload = JSON.parse(new TextDecoder().decode(response.body));
-  const text = payload.content?.[0]?.text || '';
+  // Sonnet 4.6 may return an adaptive-thinking block before its final text.
+  // Read every text block rather than assuming the first content block is text.
+  const text = Array.isArray(payload.content)
+    ? payload.content
+      .filter((block: { type?: string; text?: unknown }) => (
+        block.type === 'text' && typeof block.text === 'string'
+      ))
+      .map((block: { text: string }) => block.text)
+      .join('\n')
+    : '';
   const tagged = text.match(/<mom_json>([\s\S]*?)<\/mom_json>/i)?.[1]?.trim();
   const jsonText = tagged || extractJson(text);
-  if (!jsonText) throw new Error('AI_EMPTY_RESPONSE');
+  if (!jsonText) {
+    const contentTypes = Array.isArray(payload.content)
+      ? payload.content.map((block: { type?: string }) => block.type || 'unknown').join(',')
+      : 'none';
+    console.error('MOM model response did not contain JSON text', {
+      stopReason: payload.stop_reason || 'unknown',
+      contentTypes,
+    });
+    throw new Error('AI_EMPTY_RESPONSE');
+  }
 
   const parsed = JSON.parse(jsonText);
   const validation = MomResultSchema.safeParse(parsed);
