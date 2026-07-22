@@ -303,7 +303,11 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
     return this.accessToken.value;
   }
 
-  private async graphGet(path: string, accept = 'application/json'): Promise<Response> {
+  private async graphGet(
+    path: string,
+    accept = 'application/json',
+    forbiddenMessage = 'Microsoft Graph denied access. Verify application permissions and the Teams Application Access Policy for this meeting organiser.',
+  ): Promise<Response> {
     const token = await this.getAccessToken();
     let response: Response;
     try {
@@ -319,12 +323,39 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
       throw new TeamsIntegrationError('Microsoft Graph rejected the configured application credentials.');
     }
     if (response.status === 403) {
-      throw new TeamsIntegrationError('Microsoft Graph denied access. Verify application permissions and the Teams Application Access Policy for this meeting organiser.');
+      throw new TeamsIntegrationError(forbiddenMessage);
     }
     if (response.status === 404) {
       throw new TeamsIntegrationError('The Teams meeting or transcript was not found. It may not be available yet.');
     }
     throw new TeamsIntegrationError('Microsoft Graph could not retrieve the meeting transcript.');
+  }
+
+  private async resolveOrganizerUserId(input: {
+    organizerUserId?: string;
+    organizerEmail?: string;
+  }): Promise<string> {
+    const suppliedUserId = getRequiredString(input.organizerUserId);
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedUserId)) {
+      return suppliedUserId;
+    }
+
+    const email = getRequiredString(input.organizerEmail) || suppliedUserId;
+    if (!email) {
+      throw new TeamsIntegrationError('Teams sync needs the meeting organiser ID or email from the interview schedule.');
+    }
+
+    const response = await this.graphGet(
+      `/users/${encodeURIComponent(email)}?$select=id`,
+      'application/json',
+      'Microsoft Graph could not resolve the meeting organiser. Verify the organiser email and grant the User.ReadBasic.All application permission.',
+    );
+    const user = await response.json() as { id?: string };
+    if (!user.id) {
+      throw new TeamsIntegrationError('Microsoft Graph returned no user ID for the meeting organiser. Verify the organiser email.');
+    }
+
+    return user.id;
   }
 
   async getTranscript(input: {
@@ -333,12 +364,8 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
     organizerUserId?: string;
     organizerEmail?: string;
   }): Promise<{ rawText: string; meetingId?: string; organizerUserId?: string }> {
-    const organizer = input.organizerUserId || input.organizerEmail;
-    if (!organizer) {
-      throw new TeamsIntegrationError('Teams sync needs the meeting organiser ID or email from the interview schedule.');
-    }
-
-    const userId = encodeURIComponent(organizer);
+    const organizerUserId = await this.resolveOrganizerUserId(input);
+    const userId = encodeURIComponent(organizerUserId);
     let meetingId = input.meetingId;
     if (!meetingId) {
       if (!input.meetingUrl) {
@@ -378,7 +405,7 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
       throw new TeamsIntegrationError('Microsoft Teams returned an empty transcript. Please confirm the meeting transcript is ready.');
     }
 
-    return { rawText, meetingId, organizerUserId: input.organizerUserId || organizer };
+    return { rawText, meetingId, organizerUserId };
   }
 }
 
