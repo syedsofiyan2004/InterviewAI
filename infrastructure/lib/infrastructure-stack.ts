@@ -116,11 +116,13 @@ export class IepStack extends cdk.Stack {
         INTELLIGENCE_TABLE_NAME: intelligenceTable.tableName,
         KEKA_INTEGRATION_MODE: process.env.KEKA_INTEGRATION_MODE || 'mock',
         TEAMS_INTEGRATION_MODE: process.env.TEAMS_INTEGRATION_MODE || 'mock',
-        KEKA_BASE_URL: process.env.KEKA_BASE_URL || '',
-        KEKA_CLIENT_ID: process.env.KEKA_CLIENT_ID || '',
-        KEKA_CLIENT_SECRET: process.env.KEKA_CLIENT_SECRET || '',
-        KEKA_API_KEY: process.env.KEKA_API_KEY || '',
-        KEKA_SCOPE: process.env.KEKA_SCOPE || '',
+        // Do not place Keka credentials in Lambda environment variables when
+        // the runtime secret is configured.
+        KEKA_BASE_URL: kekaSecretArn ? '' : (process.env.KEKA_BASE_URL || ''),
+        KEKA_CLIENT_ID: kekaSecretArn ? '' : (process.env.KEKA_CLIENT_ID || ''),
+        KEKA_CLIENT_SECRET: kekaSecretArn ? '' : (process.env.KEKA_CLIENT_SECRET || ''),
+        KEKA_API_KEY: kekaSecretArn ? '' : (process.env.KEKA_API_KEY || ''),
+        KEKA_SCOPE: kekaSecretArn ? '' : (process.env.KEKA_SCOPE || ''),
         // Keka credentials can be supplied through a dedicated runtime secret.
         // Environment values remain a local-development fallback only.
         KEKA_SECRET_ARN: kekaSecretArn,
@@ -297,8 +299,20 @@ export class IepStack extends cdk.Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     };
 
-    const apiHandlerIntegration = new apigateway.LambdaIntegration(apiHandler, {
-      allowTestInvoke: false,
+    // Use a single API Gateway invoke role rather than adding one Lambda
+    // resource-policy statement per route. The latter has a fixed 20 KB limit
+    // and becomes unreliable as the API grows.
+    const apiInvokeRole = new iam.Role(this, 'ApiHandlerInvokeRole', {
+      assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
+    });
+    apiHandler.grantInvoke(apiInvokeRole);
+    const apiHandlerIntegration = new apigateway.Integration({
+      type: apigateway.IntegrationType.AWS_PROXY,
+      integrationHttpMethod: 'POST',
+      uri: `arn:${cdk.Aws.PARTITION}:apigateway:${region}:lambda:path/2015-03-31/functions/${apiHandler.functionArn}/invocations`,
+      options: {
+        credentialsRole: apiInvokeRole,
+      },
     });
 
     const interviewsSource = api.root.addResource('interviews');
