@@ -34,6 +34,7 @@ import {
 import {
   createKekaIntegration,
   createTeamsIntegration,
+  KekaIntegrationError,
   TeamsIntegrationError,
   InterviewIntelligenceRecord,
   IntelligencePanelist,
@@ -99,6 +100,18 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'GET' && resource === '/intelligence-interviews') {
       return await listIntelligenceInterviews(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/keka/jobs') {
+      return await listKekaJobs(event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/keka/jobs/{jobId}/candidates') {
+      return await listKekaCandidates(event.pathParameters?.jobId, event);
+    }
+
+    if (httpMethod === 'GET' && resource === '/keka/jobs/{jobId}/candidates/{candidateId}/interviews') {
+      return await listKekaInterviews(event.pathParameters?.jobId, event.pathParameters?.candidateId, event);
     }
 
     if (httpMethod === 'POST' && resource === '/intelligence-interviews') {
@@ -1653,7 +1666,11 @@ async function getIntegrationStatus() {
     keka: {
       mode: kekaMode,
       label: kekaMode === 'live' ? 'Keka live mode' : kekaMode === 'disabled' ? 'Keka disabled' : 'Keka mock mode',
-      configured: kekaMode === 'live' && !!(process.env.KEKA_BASE_URL && (process.env.KEKA_API_KEY || process.env.KEKA_CLIENT_ID)),
+      configured: kekaMode === 'live' && !!(
+        process.env.KEKA_SECRET_ARN ||
+        (process.env.KEKA_BASE_URL && process.env.KEKA_CLIENT_ID && process.env.KEKA_CLIENT_SECRET && process.env.KEKA_API_KEY)
+      ),
+      credentialSource: kekaMode === 'live' && process.env.KEKA_SECRET_ARN ? 'AWS Secrets Manager' : undefined,
     },
     teams: {
       mode: teamsMode,
@@ -1665,6 +1682,47 @@ async function getIntegrationStatus() {
       ? 'Real credentials not configured yet. Manual and mock workflows are available.'
       : 'Integration modes are configured from backend environment variables.',
   });
+}
+
+function ensureLiveKeka(event: APIGatewayProxyEvent): APIGatewayProxyResult | undefined {
+  if (!getAuthenticatedUserId(event)) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+  if (getIntegrationMode(process.env.KEKA_INTEGRATION_MODE) !== 'live') {
+    return errorResponse(503, 'INTEGRATION_NOT_READY', 'Keka Hire is not configured for live interview selection yet.');
+  }
+  return undefined;
+}
+
+async function listKekaJobs(event: APIGatewayProxyEvent) {
+  const response = ensureLiveKeka(event);
+  if (response) return response;
+  try {
+    return successResponse({ items: await createKekaIntegration('live').listJobs() });
+  } catch (error: any) {
+    console.warn('[Keka Hire] Could not list jobs:', error instanceof Error ? error.message : 'Unknown error');
+    return errorResponse(502, 'KEKA_SYNC_FAILED', error instanceof KekaIntegrationError ? error.message : 'Keka Hire could not load jobs.');
+  }
+}
+
+async function listKekaCandidates(jobId: string | undefined, event: APIGatewayProxyEvent) {
+  const response = ensureLiveKeka(event);
+  if (response) return response;
+  try {
+    return successResponse({ items: await createKekaIntegration('live').listCandidates(String(jobId || '')) });
+  } catch (error: any) {
+    console.warn('[Keka Hire] Could not list candidates:', error instanceof Error ? error.message : 'Unknown error');
+    return errorResponse(502, 'KEKA_SYNC_FAILED', error instanceof KekaIntegrationError ? error.message : 'Keka Hire could not load candidates.');
+  }
+}
+
+async function listKekaInterviews(jobId: string | undefined, candidateId: string | undefined, event: APIGatewayProxyEvent) {
+  const response = ensureLiveKeka(event);
+  if (response) return response;
+  try {
+    return successResponse({ items: await createKekaIntegration('live').listInterviews(String(jobId || ''), String(candidateId || '')) });
+  } catch (error: any) {
+    console.warn('[Keka Hire] Could not list interviews:', error instanceof Error ? error.message : 'Unknown error');
+    return errorResponse(502, 'KEKA_SYNC_FAILED', error instanceof KekaIntegrationError ? error.message : 'Keka Hire could not load interviews.');
+  }
 }
 
 async function listMinfyCareers(event: APIGatewayProxyEvent) {
@@ -1903,12 +1961,6 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
         'Automatic interview sync is not ready. Keka Hire and Microsoft Teams must both be configured by an administrator.',
       );
     }
-
-    return errorResponse(
-      501,
-      'INTEGRATION_NOT_READY',
-      'Automatic Keka and Microsoft Teams sync is not available yet. Complete the server-side integration setup before creating an interview workspace.',
-    );
   }
 
   if (sourceMode === 'teams_live' && teamsMode !== 'live') {
@@ -1920,12 +1972,17 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
   }
 
   let integrationData: Awaited<ReturnType<ReturnType<typeof createKekaIntegration>['getInterviewData']>>;
-  if (sourceMode === 'mock_keka') {
-    integrationData = await createKekaIntegration('mock').getInterviewData({
-      jobId: body.jobId,
-      candidateId: body.candidateId,
-      interviewId: body.interviewId,
-    });
+  if (sourceMode === 'mock_keka' || sourceMode === 'keka_live') {
+    try {
+      integrationData = await createKekaIntegration(sourceMode === 'mock_keka' ? 'mock' : 'live').getInterviewData({
+        jobId: body.jobId,
+        candidateId: body.candidateId,
+        interviewId: body.interviewId,
+      });
+    } catch (error: any) {
+      console.warn('[Keka Hire] Could not create interview workspace:', error instanceof Error ? error.message : 'Unknown error');
+      return errorResponse(502, 'KEKA_SYNC_FAILED', error instanceof KekaIntegrationError ? error.message : 'Keka Hire could not create this interview workspace.');
+    }
   } else {
     const panel = Array.isArray(body.panel) ? body.panel : [];
     integrationData = {
@@ -1968,12 +2025,12 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
     source_mode: sourceMode,
     status: 'data_ready',
     keka: {
-      mode: sourceMode === 'mock_keka' ? 'mock' : kekaMode,
+      mode: sourceMode === 'mock_keka' ? 'mock' : sourceMode === 'keka_live' ? 'live' : kekaMode,
       jobId: body.jobId,
       candidateId: body.candidateId,
       interviewId: body.interviewId,
-      syncStatus: sourceMode === 'mock_keka' ? 'mocked' : 'not_connected',
-      lastSyncAt: sourceMode === 'mock_keka' ? now : undefined,
+      syncStatus: sourceMode === 'mock_keka' ? 'mocked' : sourceMode === 'keka_live' ? 'synced' : 'not_connected',
+      lastSyncAt: sourceMode === 'mock_keka' || sourceMode === 'keka_live' ? now : undefined,
     },
     teams: {
       mode: sourceMode === 'mock_keka' ? 'mock' : teamsMode,

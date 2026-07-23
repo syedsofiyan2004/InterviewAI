@@ -26,6 +26,7 @@ export class IepStack extends cdk.Stack {
 
     const prefix = 'iep';
     const teamsSecretArn = process.env.MS_TEAMS_SECRET_ARN || '';
+    const kekaSecretArn = process.env.KEKA_SECRET_ARN || '';
 
     // Helper for unique names
     const getUniqueName = (resource: string) => `${prefix}-${envName}-${resource}-${account}-${region}`;
@@ -120,6 +121,9 @@ export class IepStack extends cdk.Stack {
         KEKA_CLIENT_SECRET: process.env.KEKA_CLIENT_SECRET || '',
         KEKA_API_KEY: process.env.KEKA_API_KEY || '',
         KEKA_SCOPE: process.env.KEKA_SCOPE || '',
+        // Keka credentials can be supplied through a dedicated runtime secret.
+        // Environment values remain a local-development fallback only.
+        KEKA_SECRET_ARN: kekaSecretArn,
         // Microsoft Graph credentials are read only at runtime from Secrets Manager.
         MS_TEAMS_SECRET_ARN: teamsSecretArn,
         // Standardized Model Sync (Sonnet 3.7 + Sonnet 4.6 + Nova)
@@ -157,6 +161,14 @@ export class IepStack extends cdk.Stack {
         teamsSecretArn,
       );
       teamsCredentialsSecret.grantRead(apiHandler);
+    }
+    if (kekaSecretArn) {
+      const kekaCredentialsSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        'KekaHireCredentialsSecret',
+        kekaSecretArn,
+      );
+      kekaCredentialsSecret.grantRead(apiHandler);
     }
     
     // Emergency Access Restoration: Revert to wildcard to restore Nova + Claude immediately
@@ -328,6 +340,15 @@ export class IepStack extends cdk.Stack {
     const intelligenceInterviews = api.root.addResource('intelligence-interviews');
     intelligenceInterviews.addMethod('GET', apiHandlerIntegration, authMethodOptions);
     intelligenceInterviews.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const keka = api.root.addResource('keka');
+    const kekaJobs = keka.addResource('jobs');
+    kekaJobs.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    const kekaJob = kekaJobs.addResource('{jobId}');
+    const kekaCandidates = kekaJob.addResource('candidates');
+    kekaCandidates.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    const kekaCandidate = kekaCandidates.addResource('{candidateId}');
+    kekaCandidate.addResource('interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const singleIntelligenceInterview = intelligenceInterviews.addResource('{id}', {
       defaultCorsPreflightOptions: {

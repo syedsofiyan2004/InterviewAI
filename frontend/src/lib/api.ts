@@ -348,9 +348,31 @@ export interface InterviewIntelligenceRecord {
 }
 
 export interface IntegrationStatus {
-  keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
+  keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean; credentialSource?: string };
   teams: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
   message: string;
+}
+
+export interface KekaJobOption {
+  id: string;
+  title: string;
+  department?: string;
+  experience?: string;
+}
+
+export interface KekaCandidateOption {
+  id: string;
+  name: string;
+  email?: string;
+  status?: string;
+}
+
+export interface KekaInterviewOption {
+  id: string;
+  scheduledAt?: string;
+  status?: string;
+  meetingUrl?: string;
+  organizerEmail?: string;
 }
 
 export interface MinfyCareerJob {
@@ -591,6 +613,21 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getKekaJobs(): Promise<{ items: KekaJobOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs`);
+    return handleResponse(res);
+  },
+
+  async getKekaCandidates(jobId: string): Promise<{ items: KekaCandidateOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs/${encodeURIComponent(jobId)}/candidates`);
+    return handleResponse(res);
+  },
+
+  async getKekaInterviews(jobId: string, candidateId: string): Promise<{ items: KekaInterviewOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/interviews`);
+    return handleResponse(res);
+  },
+
   async createIntelligenceInterview(data: {
     source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
     job?: {
@@ -617,6 +654,9 @@ export const api = {
     meetingId?: string;
     organizerUserId?: string;
     organizerEmail?: string;
+    jobId?: string;
+    candidateId?: string;
+    interviewId?: string;
   }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord }> {
     const res = await authFetch(`${API_URL}/intelligence-interviews`, {
       method: 'POST',

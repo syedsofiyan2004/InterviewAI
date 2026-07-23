@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api, IntegrationStatus, MinfyCareerJob } from '@/lib/api';
+import { api, IntegrationStatus, KekaCandidateOption, KekaInterviewOption, KekaJobOption, MinfyCareerJob } from '@/lib/api';
 import {
   ArrowLeft,
   ArrowRight,
@@ -34,6 +34,13 @@ export default function NewInterviewIntelligencePage() {
     meetingUrl: '',
     organizerEmail: '',
   });
+  const [kekaJobs, setKekaJobs] = useState<KekaJobOption[]>([]);
+  const [kekaCandidates, setKekaCandidates] = useState<KekaCandidateOption[]>([]);
+  const [kekaInterviews, setKekaInterviews] = useState<KekaInterviewOption[]>([]);
+  const [selectedKekaJobId, setSelectedKekaJobId] = useState('');
+  const [selectedKekaCandidateId, setSelectedKekaCandidateId] = useState('');
+  const [selectedKekaInterviewId, setSelectedKekaInterviewId] = useState('');
+  const [kekaLoading, setKekaLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -52,6 +59,58 @@ export default function NewInterviewIntelligencePage() {
   }, []);
 
   const automaticReady = !!status?.keka.configured && !!status?.teams.configured;
+
+  const loadKekaJobs = async () => {
+    setKekaLoading(true);
+    try {
+      const response = await api.getKekaJobs();
+      setKekaJobs(response.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load roles from Keka Hire.');
+    } finally {
+      setKekaLoading(false);
+    }
+  };
+
+  const selectKekaJob = async (jobId: string) => {
+    setSelectedKekaJobId(jobId);
+    setSelectedKekaCandidateId('');
+    setSelectedKekaInterviewId('');
+    setKekaCandidates([]);
+    setKekaInterviews([]);
+    if (!jobId) return;
+    setError(null);
+    setKekaLoading(true);
+    try {
+      const response = await api.getKekaCandidates(jobId);
+      setKekaCandidates(response.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load candidates from Keka Hire.');
+    } finally {
+      setKekaLoading(false);
+    }
+  };
+
+  const selectKekaCandidate = async (candidateId: string) => {
+    setSelectedKekaCandidateId(candidateId);
+    setSelectedKekaInterviewId('');
+    setKekaInterviews([]);
+    if (!candidateId || !selectedKekaJobId) return;
+    setError(null);
+    setKekaLoading(true);
+    try {
+      const response = await api.getKekaInterviews(selectedKekaJobId, candidateId);
+      setKekaInterviews(response.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load scheduled interviews from Keka Hire.');
+    } finally {
+      setKekaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (status?.keka.configured) void loadKekaJobs();
+  }, [status?.keka.configured]);
 
   const loadCareerJobs = async () => {
     setCareerError(null);
@@ -82,7 +141,16 @@ export default function NewInterviewIntelligencePage() {
     setError(null);
     setCreating(true);
     try {
-      const created = await api.createIntelligenceInterview({ source_mode: 'keka_live' });
+      if (!selectedKekaJobId || !selectedKekaCandidateId || !selectedKekaInterviewId) {
+        setError('Choose the role, candidate, and scheduled interview before creating the workspace.');
+        return;
+      }
+      const created = await api.createIntelligenceInterview({
+        source_mode: 'keka_live',
+        jobId: selectedKekaJobId,
+        candidateId: selectedKekaCandidateId,
+        interviewId: selectedKekaInterviewId,
+      });
       router.push(`/interviews/intelligence/view?id=${created.intelligence_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The automatic interview sync could not start');
@@ -178,6 +246,41 @@ export default function NewInterviewIntelligencePage() {
           />
         </div>
 
+        {status?.keka.configured && (
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Choose the scheduled interview</p>
+                <p className="mt-1 text-xs leading-5 text-text-muted">Keka supplies the role, candidate, panel, schedule, and meeting details for this workspace.</p>
+              </div>
+              {kekaLoading && <span className="inline-flex items-center gap-2 text-xs font-medium text-text-muted"><RefreshCw size={14} className="animate-spin" /> Loading Keka data</span>}
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <label className="block">
+                <span className="text-sm font-semibold text-text-primary">Open role</span>
+                <select value={selectedKekaJobId} onChange={(event) => void selectKekaJob(event.target.value)} disabled={kekaLoading || !kekaJobs.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
+                  <option value="">{kekaJobs.length ? 'Select a role' : 'No roles available'}</option>
+                  {kekaJobs.map((job) => <option key={job.id} value={job.id}>{job.title}{job.department ? ` - ${job.department}` : ''}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-text-primary">Candidate</span>
+                <select value={selectedKekaCandidateId} onChange={(event) => void selectKekaCandidate(event.target.value)} disabled={kekaLoading || !selectedKekaJobId || !kekaCandidates.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
+                  <option value="">{!selectedKekaJobId ? 'Choose a role first' : kekaCandidates.length ? 'Select a candidate' : 'No candidates available'}</option>
+                  {kekaCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.email ? ` - ${candidate.email}` : ''}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-text-primary">Scheduled interview</span>
+                <select value={selectedKekaInterviewId} onChange={(event) => setSelectedKekaInterviewId(event.target.value)} disabled={kekaLoading || !selectedKekaCandidateId || !kekaInterviews.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
+                  <option value="">{!selectedKekaCandidateId ? 'Choose a candidate first' : kekaInterviews.length ? 'Select an interview' : 'No scheduled interviews'}</option>
+                  {kekaInterviews.map((interview) => <option key={interview.id} value={interview.id}>{interview.scheduledAt || 'Scheduled interview'}{interview.status ? ` - ${interview.status}` : ''}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+        )}
+
         {!loading && !automaticReady && (
           <div className="mt-5 rounded-2xl border border-warning/30 bg-warning/5 p-4">
             <div className="flex items-start gap-3">
@@ -195,11 +298,11 @@ export default function NewInterviewIntelligencePage() {
         {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-medium text-danger" role="alert" aria-live="assertive">{error}</div>}
 
         <div className="mt-6 flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs leading-5 text-text-muted">Once Keka is connected, this screen creates the complete interview workspace automatically.</p>
+          <p className="text-xs leading-5 text-text-muted">The selected Keka interview becomes one connected workspace. The meeting transcript is retrieved after the call ends.</p>
           <button
             type="button"
             onClick={createWorkspace}
-            disabled={loading || !automaticReady || creating}
+            disabled={loading || !automaticReady || creating || !selectedKekaInterviewId}
             className="btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creating ? <RefreshCw size={16} className="animate-spin" /> : <ArrowRight size={16} />}
