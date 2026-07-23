@@ -7,11 +7,12 @@ import { api, IntegrationStatus, KekaCandidateOption, KekaInterviewOption, KekaJ
 import {
   ArrowLeft,
   ArrowRight,
+  BriefcaseBusiness,
   CheckCircle2,
   CircleAlert,
-  Link2,
   RefreshCw,
   ShieldCheck,
+  UserRound,
   Video,
 } from 'lucide-react';
 
@@ -196,88 +197,64 @@ export default function NewInterviewIntelligencePage() {
 
       <section className="intelligence-create-hero">
         <div className="min-w-0">
-            <p className="page-kicker">Interview workspace</p>
+          <p className="page-kicker">Interview intelligence</p>
           <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-text-primary md:text-4xl">
-            Create a connected interview workspace.
+            Start with the interview, not the paperwork.
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-text-secondary">
-            Prepare the candidate and role context, then retrieve the Teams transcript after the interview. Additional HR-system data will appear automatically when it is available.
+            Select a scheduled interview. MiMo brings together the role, candidate, panel, and meeting context in one review workspace.
           </p>
         </div>
-        <div className="rounded-2xl border border-border bg-surface-elevated p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">What happens here</p>
+        <div className="rounded-2xl border border-border bg-surface p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Workspace includes</p>
           <div className="mt-4 space-y-3">
-            <FlowRow number="01" title="Interview context" detail="Role, candidate, resume, and panel" />
-            <FlowRow number="02" title="Meeting transcript" detail="Retrieved once the interview ends" />
-            <FlowRow number="03" title="Decision support" detail="Guide, review, and report" />
+            <FlowRow number="01" title="Interview brief" detail="Role, candidate, resume, and panel" />
+            <FlowRow number="02" title="Panel guide" detail="Structured questions and evidence signals" />
+            <FlowRow number="03" title="Final review" detail="Transcript analysis and shareable report" />
           </div>
         </div>
       </section>
 
-      <section className="intelligence-card p-5 md:p-6">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="page-kicker">Workspace availability</p>
-            <h2 className="mt-1 text-xl font-semibold text-text-primary">Set up your interview workspace</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-              The workspace uses the approved interview and meeting sources as they become available.
-            </p>
+      <section className="intelligence-card overflow-hidden">
+        <div className="border-b border-border px-5 py-5 md:px-7 md:py-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="page-kicker">Create workspace</p>
+              <h2 className="mt-1 text-xl font-semibold text-text-primary">Select the scheduled interview</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
+                Choose the role first, then the candidate and their scheduled interview. The workspace is created with the right context already attached.
+              </p>
+            </div>
+            <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+              {automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
+              {loading ? 'Checking connections' : automaticReady ? 'Connections ready' : 'Connection needs attention'}
+            </span>
           </div>
-          <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
-            {automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
-            {loading ? 'Checking availability' : automaticReady ? 'Ready to create' : 'Partially available'}
-          </span>
-        </div>
-
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <ConnectionCard
-            icon={<Link2 size={18} />}
-            name="Interview details"
-            detail="Role, candidate, resume, interview schedule, and panel."
-            connected={!!status?.keka.configured}
-            state={loading ? 'Checking' : status?.keka.configured ? 'Available' : 'In setup'}
-          />
-          <ConnectionCard
-            icon={<Video size={18} />}
-            name="Meeting transcript"
-            detail="The completed meeting transcript used for evidence review."
-            connected={!!status?.teams.configured}
-            state={loading ? 'Checking' : status?.teams.configured ? 'Available' : 'In setup'}
-          />
         </div>
 
         {status?.keka.configured && (
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">Choose the scheduled interview</p>
-                <p className="mt-1 text-xs leading-5 text-text-muted">Keka supplies the role, candidate, panel, schedule, and meeting details for this workspace.</p>
-              </div>
-              {kekaLoading && <span className="inline-flex items-center gap-2 text-xs font-medium text-text-muted"><RefreshCw size={14} className="animate-spin" /> Loading Keka data</span>}
-            </div>
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
-              <label className="block">
-                <span className="text-sm font-semibold text-text-primary">Open role</span>
-                <select value={selectedKekaJobId} onChange={(event) => void selectKekaJob(event.target.value)} disabled={kekaLoading || !kekaJobs.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
-                  <option value="">{kekaJobs.length ? 'Select a role' : 'No roles available'}</option>
+          <div className="p-5 md:p-7">
+            <div className="grid gap-3 md:grid-cols-3">
+              <SelectionStep number="1" icon={<BriefcaseBusiness size={17} />} title="Open role" complete={!!selectedKekaJobId}>
+                <select value={selectedKekaJobId} onChange={(event) => void selectKekaJob(event.target.value)} disabled={kekaLoading || !kekaJobs.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
+                  <option value="">{kekaJobs.length ? 'Choose a role' : 'No roles available'}</option>
                   {kekaJobs.map((job) => <option key={job.id} value={job.id}>{job.title}{job.department ? ` - ${job.department}` : ''}</option>)}
                 </select>
-              </label>
-              <label className="block">
-                <span className="text-sm font-semibold text-text-primary">Candidate</span>
-                <select value={selectedKekaCandidateId} onChange={(event) => void selectKekaCandidate(event.target.value)} disabled={kekaLoading || !selectedKekaJobId || !kekaCandidates.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
-                  <option value="">{!selectedKekaJobId ? 'Choose a role first' : kekaCandidates.length ? 'Select a candidate' : 'No candidates available'}</option>
+              </SelectionStep>
+              <SelectionStep number="2" icon={<UserRound size={17} />} title="Candidate" complete={!!selectedKekaCandidateId} muted={!selectedKekaJobId}>
+                <select value={selectedKekaCandidateId} onChange={(event) => void selectKekaCandidate(event.target.value)} disabled={kekaLoading || !selectedKekaJobId || !kekaCandidates.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
+                  <option value="">{!selectedKekaJobId ? 'Choose a role first' : kekaCandidates.length ? 'Choose a candidate' : 'No candidates available'}</option>
                   {kekaCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.email ? ` - ${candidate.email}` : ''}</option>)}
                 </select>
-              </label>
-              <label className="block">
-                <span className="text-sm font-semibold text-text-primary">Scheduled interview</span>
-                <select value={selectedKekaInterviewId} onChange={(event) => setSelectedKekaInterviewId(event.target.value)} disabled={kekaLoading || !selectedKekaCandidateId || !kekaInterviews.length} className="mt-2 w-full rounded-xl border border-border bg-surface-elevated px-3 py-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50">
-                  <option value="">{!selectedKekaCandidateId ? 'Choose a candidate first' : kekaInterviews.length ? 'Select an interview' : 'No scheduled interviews'}</option>
+              </SelectionStep>
+              <SelectionStep number="3" icon={<Video size={17} />} title="Scheduled interview" complete={!!selectedKekaInterviewId} muted={!selectedKekaCandidateId}>
+                <select value={selectedKekaInterviewId} onChange={(event) => setSelectedKekaInterviewId(event.target.value)} disabled={kekaLoading || !selectedKekaCandidateId || !kekaInterviews.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
+                  <option value="">{!selectedKekaCandidateId ? 'Choose a candidate first' : kekaInterviews.length ? 'Choose an interview' : 'No scheduled interviews'}</option>
                   {kekaInterviews.map((interview) => <option key={interview.id} value={interview.id}>{interview.scheduledAt || 'Scheduled interview'}{interview.status ? ` - ${interview.status}` : ''}</option>)}
                 </select>
-              </label>
+              </SelectionStep>
             </div>
+            {kekaLoading && <div className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-text-muted"><RefreshCw size={14} className="animate-spin" /> Updating interview options</div>}
           </div>
         )}
 
@@ -297,8 +274,8 @@ export default function NewInterviewIntelligencePage() {
 
         {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-medium text-danger" role="alert" aria-live="assertive">{error}</div>}
 
-        <div className="mt-6 flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs leading-5 text-text-muted">The selected Keka interview becomes one connected workspace. The meeting transcript is retrieved after the call ends.</p>
+        <div className="flex flex-col gap-3 border-t border-border bg-surface px-5 py-5 sm:flex-row sm:items-center sm:justify-between md:px-7">
+          <p className="text-xs leading-5 text-text-muted">{selectedKekaInterviewId ? 'Everything is selected. Create the workspace to prepare the panel guide.' : 'Complete the three selections above to prepare the interview workspace.'}</p>
           <button
             type="button"
             onClick={createWorkspace}
@@ -306,7 +283,7 @@ export default function NewInterviewIntelligencePage() {
             className="btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creating ? <RefreshCw size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-            {creating ? 'Syncing interview...' : 'Sync interview automatically'}
+            {creating ? 'Creating workspace...' : 'Create workspace'}
           </button>
         </div>
       </section>
@@ -420,19 +397,33 @@ function FlowRow({ number, title, detail }: { number: string; title: string; det
   );
 }
 
-function ConnectionCard({ icon, name, detail, connected, state }: { icon: React.ReactNode; name: string; detail: string; connected: boolean; state: string }) {
+function SelectionStep({
+  number,
+  icon,
+  title,
+  complete,
+  muted = false,
+  children,
+}: {
+  number: string;
+  icon: React.ReactNode;
+  title: string;
+  complete: boolean;
+  muted?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">{icon}</span>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{name}</p>
-            <p className="mt-1 text-xs leading-5 text-text-muted">{detail}</p>
-          </div>
+    <div className={`rounded-2xl border p-4 transition-colors ${complete ? 'border-success/35 bg-success/5' : muted ? 'border-border bg-surface opacity-75' : 'border-border bg-surface-elevated'}`}>
+      <div className="flex items-center gap-3">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${complete ? 'bg-success text-white' : 'bg-accent/10 text-accent'}`}>
+          {complete ? <CheckCircle2 size={18} /> : icon}
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Step {number}</p>
+          <p className="mt-0.5 text-sm font-semibold text-text-primary">{title}</p>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${connected ? 'bg-success/10 text-success' : 'bg-surface-elevated text-text-muted'}`}>{state}</span>
       </div>
+      {children}
     </div>
   );
 }
