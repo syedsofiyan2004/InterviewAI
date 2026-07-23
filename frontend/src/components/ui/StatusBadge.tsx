@@ -42,7 +42,7 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
         "px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wide",
         currentStyle,
         className
-      )}>
+      )} aria-label={`Status: ${label.toLowerCase()}`}>
         {label}
       </span>
     );
@@ -54,8 +54,8 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
       "inline-flex items-center gap-1.5 rounded-full border border-current/15 bg-current/5 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide",
       currentStyle,
       className
-    )}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current inline-block shadow-[0_0_12px_currentColor]" />
+    )} aria-label={`Status: ${label.toLowerCase()}`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current inline-block" aria-hidden="true" />
       {label}
     </span>
   );
