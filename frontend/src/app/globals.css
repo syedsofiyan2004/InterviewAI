@@ -441,7 +441,7 @@ textarea {
   .app-workspace::after {
     content: "";
     position: fixed;
-    inset: 56px 0 0 220px;
+    inset: 64px 0 0 var(--sidebar-width, 220px);
     z-index: 0;
     pointer-events: none;
     background:

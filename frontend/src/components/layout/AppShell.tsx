@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -17,7 +17,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useAuth();
-  const [pointer, setPointer] = useState({ x: 50, y: 42 });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const pointerFrameRef = useRef<number | null>(null);
+  const pointerPositionRef = useRef({ x: 50, y: 42 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
@@ -26,6 +30,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [isLoading, user, isPublic, router]);
+
+  useEffect(() => () => {
+    if (pointerFrameRef.current) window.cancelAnimationFrame(pointerFrameRef.current);
+  }, []);
 
   if (isLoading) {
     return (
@@ -53,20 +61,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <TourProvider>
-      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        <Sidebar />
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          overflow: 'hidden',
+          '--sidebar-width': isSidebarCollapsed ? '76px' : '220px',
+        } as React.CSSProperties}
+      >
+        <Sidebar
+          collapsed={isSidebarCollapsed}
+          onToggleCollapsed={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
+          mobileOpen={isMobileNavigationOpen}
+          onCloseMobile={() => setIsMobileNavigationOpen(false)}
+        />
         <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
-          <Topbar />
+          <Topbar onOpenNavigation={() => setIsMobileNavigationOpen(true)} />
           <main
+            ref={workspaceRef}
             className="app-workspace flex-1 overflow-y-auto p-7 lg:p-8"
             onMouseMove={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
-              setPointer({
+              pointerPositionRef.current = {
                 x: ((event.clientX - rect.left) / rect.width) * 100,
                 y: ((event.clientY - rect.top) / rect.height) * 100,
+              };
+
+              if (pointerFrameRef.current) return;
+              pointerFrameRef.current = window.requestAnimationFrame(() => {
+                const workspace = workspaceRef.current;
+                if (workspace) {
+                  workspace.style.setProperty('--mx', `${pointerPositionRef.current.x}%`);
+                  workspace.style.setProperty('--my', `${pointerPositionRef.current.y}%`);
+                }
+                pointerFrameRef.current = null;
               });
             }}
-            style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
           >
             <div className="relative z-10">
               {children}
