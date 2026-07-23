@@ -461,13 +461,25 @@ export default function InterviewIntelligenceViewPage() {
       <Section visible={visibleStep === 3 && !!record.aiEvaluation} icon={FileText} title="Final decision" detail="Review the AI recommendation, approve it, and download the formatted report.">
         {record.aiEvaluation ? (
           <div className="space-y-4">
-            <div className="rounded-xl border border-border bg-surface p-4">
-              <pre className="whitespace-pre-wrap text-sm leading-6 text-text-secondary">{record.aiEvaluation.finalReport}</pre>
+            <div className="card overflow-hidden">
+              <div className="border-b border-border px-5 py-4">
+                <p className="page-kicker">Decision summary</p>
+                <h3 className="mt-1 text-base font-semibold text-text-primary">Review before approval</h3>
+              </div>
+              <div className="p-5">
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-text-secondary">{record.aiEvaluation.finalReport}</p>
+              </div>
             </div>
-            <button type="button" onClick={downloadReport} disabled={busy === 'report'} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
-              {busy === 'report' ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
-              Download formatted PDF
-            </button>
+            <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Shareable interview report</p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">Download the formatted PDF when the hiring review is ready to circulate.</p>
+              </div>
+              <button type="button" onClick={downloadReport} disabled={busy === 'report'} className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+                {busy === 'report' ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
+                {busy === 'report' ? 'Preparing PDF...' : 'Download PDF'}
+              </button>
+            </div>
             <div className="rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-text-secondary">
               AI-assisted recommendation. Final hiring decision requires human review.
             </div>

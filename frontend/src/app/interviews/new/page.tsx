@@ -227,8 +227,9 @@ export default function NewInterview() {
       </Link>
 
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold text-text-primary tracking-tight">New Evaluation</h1>
-        <p className="text-text-secondary">Follow the steps to prepare and trigger an automated AI assessment.</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-accent">Interview evaluator</p>
+        <h1 className="text-2xl font-semibold text-text-primary">New evaluation</h1>
+        <p className="text-sm leading-6 text-text-secondary">Choose the candidate and published role first. The interview workspace will then guide you through the remaining documents.</p>
       </div>
 
       {/* Progress Steps */}
@@ -239,7 +240,7 @@ export default function NewInterview() {
       </div>
 
       {error && (
-        <div className="card p-4 border-danger/30 bg-danger/5 text-danger font-bold text-sm mb-6 flex items-center gap-3 animate-head-shake">
+        <div className="card mb-6 flex items-center gap-3 border-danger/30 bg-danger/5 p-4 text-sm font-semibold text-danger" role="alert" aria-live="assertive">
           <AlertCircle size={20} />
           {error}
         </div>
@@ -247,6 +248,10 @@ export default function NewInterview() {
 
       {step === 'CREATE' && (
         <form onSubmit={handleCreate} className="card p-8 space-y-6">
+          <div className="border-b border-border pb-5">
+            <h2 className="text-lg font-semibold text-text-primary">Candidate and role</h2>
+            <p className="mt-1 text-sm leading-6 text-text-secondary">The selected Minfy Careers description becomes the scoring context for this evaluation.</p>
+          </div>
           <div className="space-y-4">
             <div id="tour-candidate-name">
               <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
@@ -318,6 +323,12 @@ export default function NewInterview() {
                 <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-danger/25 bg-danger/5 px-3 py-2">
                   <span className="text-xs text-danger">{careerError}</span>
                   <button type="button" onClick={loadCareerJobs} className="shrink-0 text-xs font-semibold text-accent">Try again</button>
+                </div>
+              )}
+              {selectedCareerJobId && (
+                <div className="mt-3 rounded-lg border border-success/25 bg-success/5 px-3 py-2" role="status" aria-live="polite">
+                  <p className="text-xs font-semibold text-success">Official role selected</p>
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">The published Minfy Careers job description will be attached automatically when you continue.</p>
                 </div>
               )}
             </div>
@@ -455,6 +466,7 @@ function UploadCard({ title, description, status, fileName, onUpload }: { title:
         status === 'IDLE' ? (isDragging ? 'bg-accent/5 border-accent ring-2 ring-accent/20' : 'bg-surface/50 border-dashed hover:border-accent/40') : 
         status === 'DONE' ? 'bg-success/5 border-success/30' : ''
       )}
+      aria-live="polite"
     >
       <div className="w-full h-4" />
       <div className={`p-3 rounded-full transition-transform duration-300 ${isDragging ? 'scale-110' : ''} ${

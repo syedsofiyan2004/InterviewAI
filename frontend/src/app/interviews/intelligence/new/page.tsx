@@ -155,7 +155,7 @@ export default function NewInterviewIntelligencePage() {
               The workspace uses the approved interview and meeting sources as they become available.
             </p>
           </div>
-          <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+          <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
             {automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
             {loading ? 'Checking availability' : automaticReady ? 'Ready to create' : 'Partially available'}
           </span>
@@ -192,7 +192,7 @@ export default function NewInterviewIntelligencePage() {
           </div>
         )}
 
-        {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">{error}</div>}
+        {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-medium text-danger" role="alert" aria-live="assertive">{error}</div>}
 
         <div className="mt-6 flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-5 text-text-muted">Once Keka is connected, this screen creates the complete interview workspace automatically.</p>
@@ -221,6 +221,8 @@ export default function NewInterviewIntelligencePage() {
             <button
               type="button"
               onClick={() => setShowTeamsPilot((current) => !current)}
+              aria-expanded={showTeamsPilot}
+              aria-controls="teams-workspace-form"
               className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
             >
               <Video size={16} />
@@ -229,13 +231,14 @@ export default function NewInterviewIntelligencePage() {
           </div>
 
           {showTeamsPilot && (
-            <div className="mt-6 border-t border-border pt-5">
+            <div id="teams-workspace-form" className="mt-6 border-t border-border pt-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="block md:col-span-2">
                   <span className="text-sm font-semibold text-text-primary">Minfy role and job description</span>
                   <span className="mt-1 block text-xs leading-5 text-text-muted">Choose the department and role. The official JD is fetched directly from Minfy Careers when the workspace is created.</span>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <select
+                      aria-label="Department"
                       value={selectedCareerDepartment}
                       disabled={careerLoading || !careerDepartments.length}
                       onChange={(event) => {
@@ -248,6 +251,7 @@ export default function NewInterviewIntelligencePage() {
                       {careerDepartments.map((department) => <option key={department} value={department}>{department}</option>)}
                     </select>
                     <select
+                      aria-label="Published Minfy role"
                       value={selectedCareerJobId}
                       disabled={!selectedCareerDepartment || careerLoading || !rolesForSelectedDepartment.length}
                       onChange={(event) => setSelectedCareerJobId(event.target.value)}
