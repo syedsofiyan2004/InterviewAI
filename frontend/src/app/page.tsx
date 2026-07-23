@@ -70,7 +70,7 @@ export default function HubPage() {
             <div className="mb-8 flex items-center gap-3">
               <img src="/minfy-ai-logo.png" alt="" className="h-12 w-12 rounded-xl object-contain shadow-sm" />
               <div>
-                <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy AI</p>
+                <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy MiMo AI Hub</p>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Internal tools</p>
               </div>
             </div>

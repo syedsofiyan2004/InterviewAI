@@ -379,6 +379,7 @@ function InterviewDetailsContent() {
         <QuestionGuideSection
           guide={interview.question_guide || null}
           canGenerate={!!interview.jd_s3_key}
+          canRefresh={!interview.transcript_s3_key && !result}
           loading={guideLoading}
           onGenerate={handlePrepareQuestionGuide}
         />
@@ -796,14 +797,22 @@ function InterviewWorkflowRail({
 function QuestionGuideSection({
   guide,
   canGenerate,
+  canRefresh,
   loading,
   onGenerate,
 }: {
   guide: InterviewQuestionGuide | null;
   canGenerate: boolean;
+  canRefresh: boolean;
   loading: boolean;
   onGenerate: () => void;
 }) {
+  const questionGroups = guide?.questions.reduce<Record<string, InterviewQuestionGuide['questions']>>((groups, question) => {
+    const category = question.category || 'Interview questions';
+    (groups[category] ||= []).push(question);
+    return groups;
+  }, {}) || {};
+
   return (
     <section id="tour-question-guide" className="card overflow-hidden">
       <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-start sm:justify-between">
@@ -819,12 +828,12 @@ function QuestionGuideSection({
               </span>
             </div>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">
-              Questions are selected from the approved bank using the uploaded JD and optional resume. Bedrock turns them into fair, scenario-based prompts, but it cannot invent, add, remove, or reorder questions.
+              A structured guide built from the approved question bank, tailored to the role, level, job description, and optional resume. Each prompt is written to sound natural in a live interview.
             </p>
           </div>
         </div>
 
-        {!guide && (
+        {(!guide || canRefresh) && (
           <button
             type="button"
             onClick={onGenerate}
@@ -832,7 +841,7 @@ function QuestionGuideSection({
             className="btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading ? <RefreshCw size={16} className="animate-spin" /> : <BookOpenCheck size={16} />}
-            {loading ? 'Preparing guide...' : 'Prepare interview guide'}
+            {loading ? 'Preparing guide...' : guide ? 'Refresh interview guide' : 'Prepare interview guide'}
           </button>
         )}
       </div>
@@ -841,8 +850,8 @@ function QuestionGuideSection({
         <div className="border-t border-border bg-surface px-6 py-4">
           <p className="text-xs leading-5 text-text-muted">
             {canGenerate
-              ? 'The JD is ready. Prepare the guide to see the recommended questions, follow-ups, and evidence signals.'
-              : 'Upload the job description first. The transcript is not required to prepare questions.'}
+              ? 'The role profile is ready. Prepare the guide to review scenario prompts, follow-ups, and the evidence to listen for.'
+              : 'Add the job description first. A transcript is not needed to prepare the interview guide.'}
           </p>
         </div>
       )}
@@ -853,8 +862,8 @@ function QuestionGuideSection({
             <GuideMetric label="Expected level" value={guide.detected_level} />
             <GuideMetric label="Questions selected" value={String(guide.questions.length)} />
             <GuideMetric
-              label="Question wording"
-              value={guide.optimization_status === 'optimized' ? 'JD calibrated' : 'Bank standard'}
+              label="Guide style"
+              value="Interview-ready scenarios"
             />
           </div>
 
@@ -866,14 +875,26 @@ function QuestionGuideSection({
             ))}
           </div>
 
-          <div className="divide-y divide-border border-t border-border">
-            {guide.questions.map((item) => (
-              <details key={item.id} className="group px-6 py-1">
+          <div className="space-y-6 border-t border-border px-6 py-6">
+            {Object.entries(questionGroups).map(([category, questions]) => (
+              <section key={category} className="overflow-hidden rounded-xl border border-border bg-surface-elevated">
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">{category}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">{questions.length} interview-ready {questions.length === 1 ? 'prompt' : 'prompts'}</p>
+                  </div>
+                </div>
+                <div className="divide-y divide-border">
+                  {questions.map((item) => (
+              <details key={item.id} className="group px-4 py-1">
                 <summary className="flex cursor-pointer list-none items-start gap-4 py-4">
                   <span className="mt-0.5 font-mono text-xs font-semibold text-accent">{item.id}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                      {/*
                       Scenario question · {item.category} / {item.focus_area}
+                      */}
+                      Scenario prompt - {item.focus_area}
                     </p>
                     <p className="mt-1 text-sm font-semibold leading-6 text-text-primary">{item.question}</p>
                   </div>
@@ -881,7 +902,7 @@ function QuestionGuideSection({
                 </summary>
                 <div className="space-y-4 pb-5 pl-12">
                   <div className="rounded-lg border border-border bg-surface px-4 py-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Approved bank intent</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Question purpose</p>
                     <p className="mt-1 text-xs leading-5 text-text-secondary">{item.source_question}</p>
                   </div>
                   <div className="grid gap-5 md:grid-cols-2">
@@ -890,6 +911,9 @@ function QuestionGuideSection({
                   </div>
                 </div>
               </details>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         </div>

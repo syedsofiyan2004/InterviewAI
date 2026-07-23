@@ -9,9 +9,9 @@ function palette() {
   return {
     navy: rgb(0.055, 0.102, 0.18),
     navySoft: rgb(0.08, 0.15, 0.25),
-    teal: rgb(0.05, 0.58, 0.53),
-    tealLight: rgb(0.91, 0.98, 0.97),
-    violet: rgb(0.31, 0.27, 0.9),
+    teal: rgb(0.02, 0.51, 0.47),
+    tealLight: rgb(0.92, 0.98, 0.96),
+    violet: rgb(0.29, 0.25, 0.72),
     ink: rgb(0.12, 0.15, 0.2),
     text: rgb(0.24, 0.29, 0.36),
     muted: rgb(0.39, 0.45, 0.54),
@@ -49,6 +49,30 @@ function compact(value: unknown, fallback = 'Not available'): string {
   return text || fallback;
 }
 
+function transcriptQuote(transcript: unknown, requirement: unknown): string | undefined {
+  const keywords = String(requirement || '')
+    .toLowerCase()
+    .split(/[^a-z0-9+#.]+/)
+    .filter((word) => word.length >= 3)
+    .slice(0, 4);
+  if (!keywords.length) return undefined;
+
+  const candidates = String(transcript || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/);
+  const match = candidates.find((candidate) => {
+    const normalised = candidate.toLowerCase();
+    return keywords.some((keyword) => normalised.includes(keyword));
+  });
+  if (!match) return undefined;
+  return match.length > 180 ? `${match.slice(0, 177).trim()}...` : match.trim();
+}
+
+function evidenceWithQuote(evidence: unknown, transcript: unknown, requirement: unknown): string {
+  const text = compact(evidence);
+  if (/["“][^"”]+["”]/.test(text)) return text;
+  const quote = transcriptQuote(transcript, requirement);
+  return quote ? `${text} Transcript: "${quote}"` : text;
+}
+
 export async function generateIntelligencePdfReport(record: InterviewIntelligenceRecord): Promise<Buffer> {
   if (!record.aiEvaluation) throw new Error('An intelligence evaluation is required before generating a report.');
 
@@ -62,7 +86,7 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
 
   const footer = (target: PDFPage) => {
     target.drawLine({ start: { x: PAGE.left, y: 31 }, end: { x: PAGE.width - PAGE.right, y: 31 }, thickness: 0.5, color: C.line });
-    target.drawText('MINFY AI  |  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: 19, size: 6.5, font: regular, color: C.muted });
+    target.drawText('MINFY MIMO AI HUB  |  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: 19, size: 6.5, font: regular, color: C.muted });
     target.drawText('Confidential - Internal hiring use only', { x: PAGE.width / 2 - 72, y: 19, size: 6.5, font: regular, color: C.muted });
     target.drawText(`Page ${pdf.getPageCount()}`, { x: PAGE.width - PAGE.right - 32, y: 19, size: 6.5, font: regular, color: C.muted });
   };
@@ -71,7 +95,7 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
     if (page) footer(page);
     page = pdf.addPage([PAGE.width, PAGE.height]);
     page.drawRectangle({ x: 0, y: PAGE.height - 34, width: PAGE.width, height: 34, color: C.navy });
-    page.drawText('MINFY AI  /  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: PAGE.height - 21, size: 7.5, font: bold, color: C.white });
+    page.drawText('MINFY MIMO AI HUB  /  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: PAGE.height - 21, size: 7.5, font: bold, color: C.white });
     page.drawText(compact(record.job.title), { x: PAGE.width - PAGE.right - 180, y: PAGE.height - 21, size: 7.5, font: regular, color: rgb(0.75, 0.84, 0.92), maxWidth: 180 });
     y = PAGE.height - 58;
   };
@@ -95,7 +119,8 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   };
 
   const section = (number: string, title: string, color = C.teal) => {
-    ensure(39);
+    // Keep each section heading with at least one row of its content.
+    ensure(88);
     y -= 12;
     page.drawRectangle({ x: PAGE.left, y: y - 16, width: 20, height: 20, color });
     page.drawText(number, { x: PAGE.left + 5.8, y: y - 10, size: 8, font: bold, color: C.white });
@@ -120,7 +145,7 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   // Cover page
   page = pdf.addPage([PAGE.width, PAGE.height]);
   page.drawRectangle({ x: 0, y: PAGE.height - 218, width: PAGE.width, height: 218, color: C.navy });
-  page.drawText('MINFY AI  /  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: PAGE.height - 49, size: 8, font: bold, color: rgb(0.5, 0.9, 0.83) });
+  page.drawText('MINFY MIMO AI HUB  /  INTERVIEW INTELLIGENCE', { x: PAGE.left, y: PAGE.height - 49, size: 8, font: bold, color: rgb(0.5, 0.9, 0.83) });
   const nameLines = wrap(compact(record.candidate.name, 'Candidate'), bold, 27, usableWidth);
   nameLines.slice(0, 2).forEach((line, index) => page.drawText(line, { x: PAGE.left, y: PAGE.height - 91 - (index * 32), size: 27, font: bold, color: C.white }));
   page.drawText(compact(record.job.title), { x: PAGE.left, y: PAGE.height - 161, size: 11, font: regular, color: rgb(0.77, 0.84, 0.91), maxWidth: usableWidth });
@@ -129,12 +154,16 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   const evaluation = record.aiEvaluation;
   const decisions = evaluation.candidateEvaluation.recommendation.replace('_', ' ').toUpperCase();
   const covered = evaluation.coverageMatrix.filter((item) => item.covered === 'yes').length;
-  const avg = record.panel.filter((member) => typeof member.score === 'number').map((member) => member.score as number);
-  const average = avg.length ? (avg.reduce((sum, score) => sum + score, 0) / avg.length).toFixed(1) : '-';
+  const panelScores = evaluation.interviewerEvaluations
+    .map((member) => Number.isFinite(Number(member.panelScore))
+      ? Number(member.panelScore)
+      : Math.round(member.jdCoveragePercent / 10))
+    .filter((score) => Number.isFinite(score));
+  const average = panelScores.length ? (panelScores.reduce((sum, score) => sum + score, 0) / panelScores.length).toFixed(1) : '-';
   const stats: Array<{ label: string; value: string; color: ReturnType<typeof rgb> }> = [
     { label: 'PANEL', value: String(record.panel.length), color: C.teal },
     { label: 'SKILLS', value: `${covered}/${evaluation.coverageMatrix.length}`, color: C.violet },
-    { label: 'SCORE', value: average, color: C.teal },
+    { label: 'PANEL SCORE', value: average, color: C.teal },
     { label: 'DECISION', value: decisions === 'PROCEED' ? 'GO' : decisions === 'REJECT' ? 'NO' : 'REVIEW', color: decisions === 'PROCEED' ? C.success : decisions === 'REJECT' ? C.danger : C.warning },
   ];
   stats.forEach((item, index) => stat(PAGE.left + index * 85, item.label, item.value, item.color));
@@ -148,11 +177,11 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   labelValue('Report status', record.status === 'approved' ? 'Approved by human reviewer' : 'Awaiting human approval', PAGE.left + 260, metaTop - 82, 230);
   labelValue('Prepared', new Date(evaluation.generatedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }), PAGE.left, metaTop - 134, 210);
   labelValue('Panel calibration', evaluation.panelCalibration?.humanReviewRequired ? 'Discussion recommended' : 'No material variance identified', PAGE.left + 260, metaTop - 134, 230);
-  page.drawRectangle({ x: PAGE.left, y: 120, width: usableWidth, height: 92, color: C.tealLight });
-  page.drawRectangle({ x: PAGE.left, y: 120, width: 4, height: 92, color: C.teal });
-  page.drawText('EXECUTIVE POSITION', { x: PAGE.left + 16, y: 190, size: 7, font: bold, color: C.teal });
+  page.drawRectangle({ x: PAGE.left, y: 205, width: usableWidth, height: 92, color: C.tealLight });
+  page.drawRectangle({ x: PAGE.left, y: 205, width: 4, height: 92, color: C.teal });
+  page.drawText('EXECUTIVE POSITION', { x: PAGE.left + 16, y: 275, size: 7, font: bold, color: C.teal });
   const reason = wrap(evaluation.candidateEvaluation.recommendationReason, regular, 9, usableWidth - 32);
-  reason.slice(0, 4).forEach((line, index) => page.drawText(line, { x: PAGE.left + 16, y: 170 - (index * 14), size: 9, font: regular, color: C.ink }));
+  reason.slice(0, 4).forEach((line, index) => page.drawText(line, { x: PAGE.left + 16, y: 255 - (index * 14), size: 9, font: regular, color: C.ink }));
   footer(page);
 
   startContentPage();
@@ -167,14 +196,20 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   if (evaluation.coverageMatrix.length) {
     for (const item of evaluation.coverageMatrix) {
       const level = item.covered === 'yes' ? C.success : item.covered === 'partial' ? C.warning : C.danger;
-      const evidenceLines = wrap(item.evidence, regular, 8, usableWidth - 132);
-      const height = Math.max(38, evidenceLines.length * 11 + 18);
+      const requirementWidth = 145;
+      const evidenceX = PAGE.left + requirementWidth + 14;
+      const evidenceWidth = usableWidth - requirementWidth - 14;
+      const requirementLines = wrap(compact(item.jdSkill), bold, 8.5, requirementWidth - 24);
+      const evidenceLines = wrap(evidenceWithQuote(item.evidence, record.transcript?.rawText, item.jdSkill), regular, 8, evidenceWidth - 24);
+      const height = Math.max(58, (requirementLines.length * 11) + 32, (evidenceLines.length * 11) + 33);
       ensure(height + 6);
       page.drawRectangle({ x: PAGE.left, y: y - height, width: usableWidth, height, color: C.white, borderColor: C.line, borderWidth: 0.5 });
       page.drawRectangle({ x: PAGE.left, y: y - height, width: 4, height, color: level });
-      page.drawText(compact(item.jdSkill), { x: PAGE.left + 14, y: y - 16, size: 8.5, font: bold, color: C.ink, maxWidth: 150 });
-      page.drawText(item.covered.toUpperCase(), { x: PAGE.left + 14, y: y - 29, size: 6.5, font: bold, color: level });
-      evidenceLines.forEach((line, index) => page.drawText(line, { x: PAGE.left + 126, y: y - 16 - (index * 11), size: 8, font: regular, color: C.text }));
+      page.drawLine({ start: { x: evidenceX - 8, y: y - 7 }, end: { x: evidenceX - 8, y: y - height + 7 }, thickness: 0.45, color: C.line });
+      requirementLines.forEach((line, index) => page.drawText(line, { x: PAGE.left + 14, y: y - 16 - (index * 11), size: 8.5, font: bold, color: C.ink }));
+      page.drawText(item.covered.toUpperCase(), { x: PAGE.left + 14, y: y - 20 - (requirementLines.length * 11), size: 6.5, font: bold, color: level });
+      page.drawText('TRANSCRIPT EVIDENCE', { x: evidenceX, y: y - 16, size: 6.2, font: bold, color: C.muted });
+      evidenceLines.forEach((line, index) => page.drawText(line, { x: evidenceX, y: y - 30 - (index * 11), size: 8, font: regular, color: C.text }));
       y -= height + 6;
     }
   } else paragraph('No job requirement coverage was recorded.', { color: C.muted });
@@ -208,23 +243,42 @@ export async function generateIntelligencePdfReport(record: InterviewIntelligenc
   section('4', 'Interviewer and panel review', C.violet);
   for (const interviewer of evaluation.interviewerEvaluations) {
     const observation = interviewer.observations.join(' ');
-    const lines = wrap(observation, regular, 8, usableWidth - 170);
-    const height = Math.max(48, lines.length * 11 + 20);
+    const score = Math.max(0, Math.min(10, Number.isFinite(Number(interviewer.panelScore))
+      ? Number(interviewer.panelScore)
+      : Math.round(interviewer.jdCoveragePercent / 10)));
+    const scoreColor = score >= 7 ? C.success : score >= 5 ? C.warning : C.danger;
+    const leftWidth = 146;
+    const contentX = PAGE.left + leftWidth + 16;
+    const contentWidth = usableWidth - leftWidth - 16;
+    const scoreReason = wrap(
+      interviewer.panelScoreReason || 'Based on role-question coverage visible in the transcript.',
+      regular,
+      7.5,
+      contentWidth,
+    );
+    const lines = wrap(observation || 'No role-specific interviewer observations were returned.', regular, 8, contentWidth);
+    const height = Math.max(70, (scoreReason.length + lines.length) * 11 + 34);
     ensure(height + 6);
     page.drawRectangle({ x: PAGE.left, y: y - height, width: usableWidth, height, color: C.white, borderColor: C.line, borderWidth: 0.5 });
+    page.drawLine({ start: { x: contentX - 9, y: y - 7 }, end: { x: contentX - 9, y: y - height + 7 }, thickness: 0.45, color: C.line });
     page.drawText(interviewer.name, { x: PAGE.left + 12, y: y - 17, size: 8.5, font: bold, color: C.ink, maxWidth: 130 });
-    page.drawText(`${interviewer.questionsAskedCount} visible questions`, { x: PAGE.left + 12, y: y - 31, size: 7, font: regular, color: C.muted });
-    page.drawText(`${interviewer.jdCoveragePercent}% coverage`, { x: PAGE.left + 12, y: y - 42, size: 7, font: regular, color: C.teal });
-    lines.forEach((line, index) => page.drawText(line, { x: PAGE.left + 160, y: y - 17 - (index * 11), size: 8, font: regular, color: C.text }));
+    page.drawText(`PANEL SCORE  ${score.toFixed(1)} / 10`, { x: PAGE.left + 12, y: y - 31, size: 7, font: bold, color: scoreColor });
+    page.drawText(`${interviewer.questionsAskedCount} role questions`, { x: PAGE.left + 12, y: y - 43, size: 7, font: regular, color: C.muted });
+    page.drawText(`${interviewer.jdCoveragePercent}% JD coverage`, { x: PAGE.left + 12, y: y - 54, size: 7, font: regular, color: C.teal });
+    page.drawText('SCORE BASIS', { x: contentX, y: y - 16, size: 6.2, font: bold, color: C.muted });
+    scoreReason.forEach((line, index) => page.drawText(line, { x: contentX, y: y - 29 - (index * 10), size: 7.5, font: regular, color: C.text }));
+    const observationStart = y - 33 - (scoreReason.length * 10);
+    lines.forEach((line, index) => page.drawText(line, { x: contentX, y: observationStart - (index * 11), size: 8, font: regular, color: C.text }));
     y -= height + 6;
   }
   if (evaluation.panelCalibration) {
-    ensure(76);
-    page.drawRectangle({ x: PAGE.left, y: y - 68, width: usableWidth, height: 68, color: C.tealLight, borderColor: C.line, borderWidth: 0.5 });
-    page.drawText('PANEL CALIBRATION', { x: PAGE.left + 12, y: y - 17, size: 7, font: bold, color: C.teal });
     const calibration = wrap(evaluation.panelCalibration.summary, regular, 8, usableWidth - 24);
-    calibration.slice(0, 3).forEach((line, index) => page.drawText(line, { x: PAGE.left + 12, y: y - 32 - (index * 11), size: 8, font: regular, color: C.text }));
-    y -= 80;
+    const calibrationHeight = Math.max(62, calibration.length * 11 + 29);
+    ensure(calibrationHeight + 8);
+    page.drawRectangle({ x: PAGE.left, y: y - calibrationHeight, width: usableWidth, height: calibrationHeight, color: C.tealLight, borderColor: C.line, borderWidth: 0.5 });
+    page.drawText('PANEL CALIBRATION', { x: PAGE.left + 12, y: y - 17, size: 7, font: bold, color: C.teal });
+    calibration.forEach((line, index) => page.drawText(line, { x: PAGE.left + 12, y: y - 32 - (index * 11), size: 8, font: regular, color: C.text }));
+    y -= calibrationHeight + 10;
   }
 
   section('5', 'Human approval', C.navySoft);

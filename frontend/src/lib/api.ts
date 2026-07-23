@@ -212,6 +212,8 @@ export type IntelligenceStatus =
   | 'questions_generated'
   | 'transcript_ready'
   | 'scores_submitted'
+  | 'analysis_processing'
+  | 'analysis_failed'
   | 'analysis_generated'
   | 'approved';
 
@@ -337,6 +339,7 @@ export interface InterviewIntelligenceRecord {
     };
     finalReport: string;
   };
+  analysisError?: string;
   approved?: {
     approvedBy: string;
     approvedAt: number;

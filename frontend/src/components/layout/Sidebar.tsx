@@ -56,13 +56,13 @@ export function Sidebar() {
       className="flex flex-col h-screen border-r border-border/80 bg-surface text-text-primary overflow-hidden shadow-[10px_0_28px_rgba(15,23,42,0.06)]"
       style={{ width: '220px', flexShrink: 0 }}
     >
-      <div className="h-14 flex items-center gap-3 px-5 border-b border-border/70 flex-shrink-0">
+      <Link href="/" className="h-14 flex items-center gap-3 px-5 border-b border-border/70 flex-shrink-0 hover:bg-surface-elevated/70 transition-colors" aria-label="Go to Minfy MiMo AI Hub home">
         <img src="/minfy-ai-logo.png" alt="" className="h-9 w-9 rounded-lg object-contain shadow-sm" />
-        <div className="flex items-baseline">
-          <span className="font-semibold text-text-primary tracking-tight">Minfy</span>
-          <span className="font-normal text-text-muted ml-1">AI</span>
+        <div className="min-w-0 leading-tight">
+          <span className="block font-semibold text-text-primary tracking-tight">Minfy MiMo</span>
+          <span className="block text-[11px] font-medium text-text-muted">AI Hub</span>
         </div>
-      </div>
+      </Link>
       
       <nav className="flex-1 px-3 py-6 space-y-6 overflow-y-auto">
         <Link

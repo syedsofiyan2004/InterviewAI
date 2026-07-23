@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { v4 as uuidv4 } from 'uuid';
 import { S3Client, HeadObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { 
   PutCommand, 
   GetCommand, 
@@ -65,9 +66,13 @@ const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
 const INTELLIGENCE_TABLE_NAME = process.env.INTELLIGENCE_TABLE_NAME!;
 
 const sqsClient = new SQSClient({});
+const lambdaClient = new LambdaClient({});
 
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  if ((event as any).__internalTask === 'intelligence-analysis') {
+    return await runIntelligenceAnalysisWorker(String((event as any).intelligenceId || ''));
+  }
   const { httpMethod, resource, pathParameters } = event;
   console.log(`Request: ${httpMethod} ${resource} (ID: ${pathParameters?.id || 'N/A'})`);
 
@@ -551,11 +556,21 @@ interface ManualInterviewQuestionGuide {
 function normalizeOptimizedQuestion(
   bankQuestion: SelectedBankQuestion,
   candidate: any,
+  roleTitle: string,
 ): ManualInterviewQuestionGuide['questions'][number] {
   const cleanList = (value: unknown, fallback: string[]) => {
     if (!Array.isArray(value)) return fallback;
     const cleaned = value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 4);
     return cleaned.length ? cleaned : fallback;
+  };
+
+  const interviewerQuestion = (value: unknown) => {
+    const question = String(value || '').trim();
+    if (!question) {
+      return `Could you walk me through a situation relevant to this ${roleTitle} role where ${bankQuestion.focusArea} was important? Please explain the context, the decision you made, and the outcome.`;
+    }
+    if (/\b(could you|can you|would you|tell me about|walk me through|imagine)\b/i.test(question)) return question;
+    return `Let’s use a practical ${bankQuestion.focusArea} situation relevant to this ${roleTitle} role. ${question} Please talk me through the context, your decision-making, and the outcome.`;
   };
 
   return {
@@ -564,7 +579,7 @@ function normalizeOptimizedQuestion(
     category: bankQuestion.category,
     focus_area: bankQuestion.focusArea,
     source_question: bankQuestion.question,
-    question: String(candidate?.question || '').trim() || bankQuestion.question,
+    question: interviewerQuestion(candidate?.question || bankQuestion.question),
     follow_ups: cleanList(candidate?.follow_ups, bankQuestion.followUps),
     what_to_listen_for: cleanList(candidate?.what_to_listen_for, bankQuestion.whatToListenFor),
   };
@@ -577,7 +592,7 @@ async function optimizeQuestionBankSelection(input: {
   resumeText: string;
   questions: SelectedBankQuestion[];
 }): Promise<{ status: 'optimized' | 'bank_only'; questions: ManualInterviewQuestionGuide['questions'] }> {
-  const fallback = input.questions.map((question) => normalizeOptimizedQuestion(question, null));
+  const fallback = input.questions.map((question) => normalizeOptimizedQuestion(question, null, input.roleTitle));
 
   try {
     const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
@@ -602,6 +617,13 @@ time when...", or "Imagine you were responsible for...". Frame a realistic
 work situation from the JD and invite the candidate to explain their decisions,
 trade-offs, and outcome. Do not use meta-language such as "assess", "evaluate",
 "as an AI", "based on the prompt", or explain why the question was selected.
+For every role-specific question, include a concrete situation or operational
+constraint and end with a natural invitation to explain the candidate's own
+approach. Avoid textbook wording such as "What is", "Define", or "Explain the
+concept of" unless the approved bank explicitly requires foundational knowledge.
+Write follow-ups as short interviewer prompts that deepen the same scenario,
+for example by testing ownership, trade-offs, failure handling, validation, or
+stakeholder communication.
 Current practices may shape the scenario only where they are relevant to the JD;
 never add fashionable tools, trends, or requirements that are not supported by it.
 
@@ -670,7 +692,7 @@ ${JSON.stringify(input.questions)}
 
     return {
       status: 'optimized',
-      questions: input.questions.map((question) => normalizeOptimizedQuestion(question, optimizedById.get(question.id))),
+      questions: input.questions.map((question) => normalizeOptimizedQuestion(question, optimizedById.get(question.id), input.roleTitle)),
     };
   } catch (error) {
     console.warn('[Question Guide] Bedrock refinement failed; using curated bank wording.', error);
@@ -1733,15 +1755,15 @@ function inferSkills(job: InterviewIntelligenceRecord['job']): string[] {
   return inferred.length ? inferred : ['Problem solving', 'Communication', 'Role fit'];
 }
 
-function buildQuestion(skill: string, roleTitle: string): IntelligenceQuestion & {
+function buildQuestion(skill: string, roleTitle: string, seniority?: string): IntelligenceQuestion & {
   expectedStrongAnswerSignals: string[];
   redFlags: string[];
 } {
   return {
-    question: `Describe a real project where you used ${skill} for a ${roleTitle} responsibility. What trade-offs did you make?`,
+    question: `Imagine you are working as ${seniority ? `a ${seniority} ` : 'a '}${roleTitle} and a delivery or production decision depends on ${skill}. Could you walk me through a comparable situation you have handled, the options you considered, the decision you made, and how you measured the outcome?`,
     followUps: [
-      `What would you change if you had to solve the same ${skill} problem again?`,
-      `How did you validate that the ${skill} approach worked in production?`,
+      `What information did you gather before deciding how to approach the ${skill} problem?`,
+      `What trade-off did you make, and how did you validate that the ${skill} approach worked?`,
     ],
     whatToEvaluate: [
       'Depth of hands-on experience',
@@ -1813,7 +1835,7 @@ function buildQuestionPlan(record: InterviewIntelligenceRecord): IntelligenceQue
       : skills.filter((_, skillIndex) => skillIndex % panel.length === index);
     const focusSkills = assigned.length ? assigned : [skills[index % skills.length] || 'Role fit'];
     const focusArea = interviewer.focusArea || focusSkills.slice(0, 2).join(' / ');
-    const roleQuestions = focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role'));
+    const roleQuestions = focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role', record.job.seniority));
     const contextQuestions = index === 0
       ? [buildIntroductionQuestion(), ...resumeTopics(record, skills).map((topic) => buildResumeQuestion(topic))]
       : [];
@@ -2271,7 +2293,7 @@ function analyzeCoverage(skills: string[], transcript: string): IntelligenceCove
   });
 }
 
-async function analyzeIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+async function legacyAnalyzeIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
   const { item, response } = await getOwnedIntelligenceRecord(id, event);
   if (response) return response;
 
@@ -2308,6 +2330,8 @@ async function analyzeIntelligenceInterview(id: string | undefined, event: APIGa
     return {
       interviewerId: member.interviewerId,
       name: member.name,
+      panelScore: Math.max(0, Math.min(10, Math.round((jdCoveragePercent / 10) + (questionsAskedCount >= 2 ? 1 : questionsAskedCount ? 0 : -1)))),
+      panelScoreReason: 'Calculated from role-question coverage and transcript-visible follow-up depth.',
       questionsAskedCount,
       jdCoveragePercent,
       followUpQuality: questionsAskedCount >= 2 ? 'strong' as const : questionsAskedCount === 1 ? 'average' as const : 'not_enough_data' as const,
@@ -2385,6 +2409,309 @@ async function analyzeIntelligenceInterview(id: string | undefined, event: APIGa
   await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
   return successResponse(updated);
 }
+
+function cleanAiText(value: unknown, fallback: string): string {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+}
+
+function cleanAiList(value: unknown, limit = 8): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry ?? '').trim()).filter(Boolean).slice(0, limit)
+    : [];
+}
+
+function cleanAiEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  const candidate = String(value ?? '').trim() as T;
+  return allowed.includes(candidate) ? candidate : fallback;
+}
+
+function cleanAiScore(value: unknown): number {
+  const score = Number(value);
+  return Number.isFinite(score) ? Math.max(0, Math.min(10, Math.round(score))) : 0;
+}
+
+async function analyzeIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+
+  if (!item.questionPlan) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Generate pre-interview questions before running analysis.');
+  }
+  if (!item.transcript?.rawText) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Transcript is required before analysis.');
+  }
+
+  if (item.aiEvaluation && item.status === 'analysis_generated') {
+    return successResponse(item);
+  }
+
+  if (item.status === 'analysis_processing') {
+    return successResponse(item);
+  }
+
+  const queued: InterviewIntelligenceRecord = {
+    ...item,
+    status: 'analysis_processing',
+    analysisError: undefined,
+    updated_at: Date.now(),
+  };
+  await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: queued }));
+
+  try {
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      InvocationType: 'Event',
+      Payload: new TextEncoder().encode(JSON.stringify({
+        __internalTask: 'intelligence-analysis',
+        intelligenceId: item.intelligence_id,
+      })),
+    }));
+    return successResponse(queued);
+  } catch (error) {
+    console.error('Could not queue intelligence AI review:', error);
+    const failed: InterviewIntelligenceRecord = {
+      ...queued,
+      status: 'analysis_failed',
+      analysisError: 'The AI review could not be started. Please retry.',
+      updated_at: Date.now(),
+    };
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: failed }));
+    return errorResponse(502, 'AI_ANALYSIS_QUEUE_FAILED', failed.analysisError || 'The AI review could not be started. Please retry.');
+  }
+}
+
+async function runIntelligenceAnalysisWorker(intelligenceId: string): Promise<APIGatewayProxyResult> {
+  if (!intelligenceId) return errorResponse(400, 'VALIDATION_ERROR', 'Missing intelligence workspace id.');
+
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: INTELLIGENCE_TABLE_NAME,
+    Key: { intelligence_id: intelligenceId },
+    ConsistentRead: true,
+  }));
+  const item = result.Item as InterviewIntelligenceRecord | undefined;
+  if (!item) return errorResponse(404, 'NOT_FOUND', 'Intelligence workspace not found.');
+  if (!item.questionPlan || !item.transcript?.rawText) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Interview guide and transcript are required before analysis.');
+  }
+
+  try {
+    const aiEvaluation = await generateIntelligenceEvaluation(item, 105_000);
+    const updated: InterviewIntelligenceRecord = {
+      ...item,
+      aiEvaluation,
+      analysisError: undefined,
+      status: 'analysis_generated',
+      updated_at: Date.now(),
+    };
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+    return successResponse({ intelligence_id: intelligenceId, status: updated.status });
+  } catch (error) {
+    console.error('Intelligence background AI review failed:', error);
+    const failed: InterviewIntelligenceRecord = {
+      ...item,
+      status: 'analysis_failed',
+      analysisError: 'The AI review could not be completed. Please retry.',
+      updated_at: Date.now(),
+    };
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: failed }));
+    return errorResponse(502, 'AI_ANALYSIS_FAILED', failed.analysisError || 'The AI review could not be completed. Please retry.');
+  }
+}
+
+async function generateIntelligenceEvaluation(item: InterviewIntelligenceRecord, timeoutMs = 105_000): Promise<IntelligenceEvaluation> {
+  const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+  const { extractJson } = await import('../shared/utils.js');
+  const modelId = process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6';
+  const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+  // Keep the synchronous browser request inside API Gateway's response window.
+  // The selected excerpts still cover the interview evidence, role context,
+  // and guide without making Sonnet wait on a needlessly large prompt.
+  const transcript = item.transcript?.rawText.slice(0, 26000) || '';
+  const resume = (item.candidate.resumeText || '').slice(0, 9000);
+  const jobDescription = item.job.description.slice(0, 12000);
+  const questionPlan = JSON.stringify(item.questionPlan?.panelPlan || []).slice(0, 16000);
+  const panel = JSON.stringify(item.panel.map((member) => ({
+    interviewerId: member.interviewerId,
+    name: member.name,
+    role: member.role,
+    focusArea: member.focusArea,
+  }))).slice(0, 5000);
+  const prompt = `
+You are a senior interview reviewer. Analyze one completed interview using only
+facts supported by the supplied job description, resume, approved interview
+question plan, panel, and transcript. Do not invent candidate achievements,
+questions, scores, names, or decisions. Return only valid JSON inside
+<intelligence_json>...</intelligence_json> tags.
+
+Evaluate BOTH:
+1. The candidate against the job description. Use transcript evidence and short
+quotes or precise paraphrases for every skill conclusion.
+2. Each interviewer. Identify which planned questions were actually asked,
+whether follow-ups probed the answer, whether questions covered the assigned
+JD focus, and whether the question quality was fair and relevant.
+
+For each interviewer, provide a panelScore from 0-10. This is a score for the
+quality of the interviewer's role-specific questioning, not a score for the
+candidate. Weight JD coverage, meaningful follow-ups, fairness, and depth.
+Do not penalise opening, introduction, or resume-walkthrough questions.
+
+Introduction and resume/background questions are useful for the panel but must
+be excluded from interviewer JD coverage and question-quality scoring. Only
+questions with countsTowardPanelEvaluation=true (or without that field) count.
+Do not use human panel scores because this workflow is AI-led. Set
+scoreJustification to "not_available" unless a score is explicitly present in
+this input. The final recommendation is an evidence-based recommendation, not
+an irreversible hiring decision; human approval remains required.
+
+Return exactly this shape:
+{
+  "candidateEvaluation": {
+    "summary": "3 concise executive-ready sentences",
+    "strengths": ["up to 4 evidence-backed strengths"],
+    "concerns": ["up to 4 evidence-backed concerns or missing evidence"],
+    "skillScores": [{"skill":"string","score":0,"evidence":"one concise evidence statement"}],
+    "recommendation":"proceed|hold|reject|needs_review",
+    "recommendationReason":"string"
+  },
+  "interviewerEvaluations": [{
+    "interviewerId":"string","name":"string","panelScore":0,"panelScoreReason":"one concise evidence-based reason","questionsAskedCount":0,
+    "jdCoveragePercent":0,"followUpQuality":"strong|average|weak|not_enough_data",
+    "scoreJustification":"well_supported|partially_supported|weakly_supported|not_available",
+    "observations":["up to 3 concise observations"],"missedAreas":["up to 3 concise missed areas"]
+  }],
+  "coverageMatrix": [{
+    "jdSkill":"string","covered":"yes|partial|no","evidence":"string","askedBy":["string"]
+  }],
+  "panelCalibration": {
+    "panelSize":0,"outliers":[],"summary":"string","humanReviewRequired":true
+  },
+  "finalReport":"A concise structured summary under 250 words for the downloadable report"
+}
+
+Keep the response compact so it can be returned as one complete JSON document:
+- Return at most 5 skillScores and 5 coverageMatrix rows.
+- Return at most 4 interviewer evaluations and at most 3 observations/missed areas per interviewer.
+- Keep each evidence item to one sentence and avoid repeating the same transcript evidence.
+- Every candidate skill and coverage evidence must include one short exact transcript quote in double quotation marks when one exists. Keep each quote under 18 words. If no direct quote exists, state that explicitly rather than inventing one.
+- Return no Markdown, commentary, or text outside <intelligence_json> tags.
+
+Candidate: ${item.candidate.name}
+Role: ${item.job.title}
+
+JOB DESCRIPTION:
+${jobDescription}
+
+RESUME:
+${resume || 'No resume was supplied for this interview.'}
+
+PANEL:
+${panel}
+
+APPROVED QUESTION PLAN:
+${questionPlan}
+
+COMPLETED INTERVIEW TRANSCRIPT:
+${transcript}
+`;
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  try {
+    const response = await client.send(new InvokeModelCommand({
+      modelId,
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 4096,
+        temperature: 0,
+        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      }),
+    }), { abortSignal: abortController.signal });
+    const payload = JSON.parse(new TextDecoder().decode(response.body));
+    const rawText = payload.content?.[0]?.text || '';
+    const tagged = rawText.match(/<intelligence_json>([\s\S]*?)<\/intelligence_json>/i)?.[1];
+    const parsed = JSON.parse(tagged || extractJson(rawText));
+    return normalizeIntelligenceEvaluation(parsed, item);
+  } catch (error) {
+    console.error('Intelligence AI review failed:', error);
+    throw new Error('The AI interview review could not be completed. Please retry once Bedrock is available.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeIntelligenceEvaluation(value: any, item: InterviewIntelligenceRecord): IntelligenceEvaluation {
+  const skills = inferSkills(item.job);
+  const candidate = value?.candidateEvaluation || {};
+  const coverage = (Array.isArray(value?.coverageMatrix) ? value.coverageMatrix : []).map((entry: any) => ({
+    jdSkill: cleanAiText(entry?.jdSkill, 'Unclassified requirement'),
+    covered: cleanAiEnum(entry?.covered, ['yes', 'partial', 'no'] as const, 'partial'),
+    evidence: cleanAiText(entry?.evidence, 'The transcript did not provide enough explicit evidence.'),
+    askedBy: cleanAiList(entry?.askedBy, 10),
+  }));
+  const fallbackCoverage = skills.map((skill) => ({
+    jdSkill: skill,
+    covered: 'partial' as const,
+    evidence: 'AI review did not return explicit evidence for this requirement.',
+    askedBy: [],
+  }));
+  const interviewerEvaluations = item.panel.map((member) => {
+    const found = Array.isArray(value?.interviewerEvaluations)
+      ? value.interviewerEvaluations.find((entry: any) => String(entry?.interviewerId) === member.interviewerId)
+      : undefined;
+    return {
+      interviewerId: member.interviewerId,
+      name: cleanAiText(found?.name, member.name),
+      panelScore: Number.isFinite(Number(found?.panelScore))
+        ? cleanAiScore(found?.panelScore)
+        : Math.max(0, Math.min(10, Math.round((Number(found?.jdCoveragePercent) || 0) / 10))),
+      panelScoreReason: cleanAiText(found?.panelScoreReason, 'Based on role-question coverage visible in the transcript.'),
+      questionsAskedCount: Math.max(0, Math.round(Number(found?.questionsAskedCount) || 0)),
+      jdCoveragePercent: Math.max(0, Math.min(100, Math.round(Number(found?.jdCoveragePercent) || 0))),
+      followUpQuality: cleanAiEnum(found?.followUpQuality, ['strong', 'average', 'weak', 'not_enough_data'] as const, 'not_enough_data'),
+      scoreJustification: cleanAiEnum(found?.scoreJustification, ['well_supported', 'partially_supported', 'weakly_supported', 'not_available'] as const, 'not_available'),
+      observations: cleanAiList(found?.observations, 6),
+      missedAreas: cleanAiList(found?.missedAreas, 6),
+    };
+  });
+  const rawCalibration = value?.panelCalibration;
+  const panelCalibration = {
+    panelSize: item.panel.length,
+    outliers: Array.isArray(rawCalibration?.outliers) ? rawCalibration.outliers.map((entry: any) => ({
+      interviewerId: cleanAiText(entry?.interviewerId, ''),
+      name: cleanAiText(entry?.name, 'Panel member'),
+      score: cleanAiScore(entry?.score),
+      reason: cleanAiText(entry?.reason, 'Review this panel member against the transcript evidence.'),
+    })).filter((entry: any) => entry.interviewerId) : [],
+    summary: cleanAiText(rawCalibration?.summary, 'The panel was reviewed against the planned guide and completed transcript.'),
+    humanReviewRequired: rawCalibration?.humanReviewRequired !== false,
+  };
+  return {
+    generatedAt: Date.now(),
+    candidateEvaluation: {
+      summary: cleanAiText(candidate.summary, `AI review completed for ${item.candidate.name}.`),
+      strengths: cleanAiList(candidate.strengths),
+      concerns: cleanAiList(candidate.concerns),
+      skillScores: (Array.isArray(candidate.skillScores) ? candidate.skillScores : []).map((entry: any) => ({
+        skill: cleanAiText(entry?.skill, 'Unclassified requirement'),
+        score: cleanAiScore(entry?.score),
+        evidence: cleanAiText(entry?.evidence, 'No explicit evidence was returned.'),
+      })),
+      recommendation: cleanAiEnum(candidate.recommendation, ['proceed', 'hold', 'reject', 'needs_review'] as const, 'needs_review'),
+      recommendationReason: cleanAiText(candidate.recommendationReason, 'Human review is required before a final decision.'),
+    },
+    interviewerEvaluations,
+    coverageMatrix: coverage.length ? coverage : fallbackCoverage,
+    panelCalibration,
+    finalReport: cleanAiText(value?.finalReport, [
+      `AI interview review for ${item.candidate.name} (${item.job.title}).`,
+      cleanAiText(candidate.recommendationReason, 'Human review is required before a final decision.'),
+    ].join('\n\n')),
+  };
+}
+
 
 async function approveIntelligenceInterview(id: string | undefined, event: APIGatewayProxyEvent) {
   const { item, userId, response } = await getOwnedIntelligenceRecord(id, event);

@@ -256,7 +256,7 @@ function LoginContent() {
           <div className="flex items-center justify-between">
             <div className="relative flex items-center gap-3">
               <img src="/minfy-ai-logo.png" alt="" className="h-11 w-11 rounded-lg object-contain" />
-              <span className="text-lg font-semibold tracking-tight text-white">Minfy AI</span>
+              <span className="text-lg font-semibold tracking-tight text-white">Minfy MiMo AI Hub</span>
             </div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">
               Interview intelligence / Meeting clarity

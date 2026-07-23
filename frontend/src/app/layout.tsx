@@ -4,8 +4,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
-  title: "Minfy AI",
-  description: "AI-powered interview evaluation platform by Minfy",
+  title: "Minfy MiMo AI Hub",
+  description: "Minfy's interview and meeting intelligence hub",
   icons: {
     icon: "/minfy-ai-logo.png",
     shortcut: "/minfy-ai-logo.png",

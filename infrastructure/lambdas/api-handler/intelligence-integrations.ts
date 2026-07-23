@@ -8,6 +8,8 @@ export type IntelligenceStatus =
   | 'questions_generated'
   | 'transcript_ready'
   | 'scores_submitted'
+  | 'analysis_processing'
+  | 'analysis_failed'
   | 'analysis_generated'
   | 'approved';
 
@@ -119,6 +121,8 @@ export interface InterviewIntelligenceRecord {
     interviewerEvaluations: Array<{
       interviewerId: string;
       name: string;
+      panelScore: number;
+      panelScoreReason: string;
       questionsAskedCount: number;
       jdCoveragePercent: number;
       followUpQuality: 'strong' | 'average' | 'weak' | 'not_enough_data';
@@ -146,6 +150,7 @@ export interface InterviewIntelligenceRecord {
     };
     finalReport: string;
   };
+  analysisError?: string;
   approved?: {
     approvedBy: string;
     approvedAt: number;

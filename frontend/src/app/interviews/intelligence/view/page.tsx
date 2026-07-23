@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, InterviewIntelligenceRecord } from '@/lib/api';
@@ -10,10 +10,9 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 // Retained for the lightweight loading placeholder and legacy navigation helpers.
 const steps = [
   { label: 'Interview data', anchor: 'stage-data' },
-  { label: 'Panel guide', anchor: 'stage-questions' },
+  { label: 'Interview guide', anchor: 'stage-questions' },
   { label: 'Transcript', anchor: 'stage-transcript' },
-  { label: 'Panel scores', anchor: 'stage-scores' },
-  { label: 'Analysis', anchor: 'stage-analysis' },
+  { label: 'AI review', anchor: 'stage-analysis' },
   { label: 'Report approval', anchor: 'stage-report' },
 ];
 const workspaceTabs = ['Overview', 'Interview guide', 'Interview evidence', 'Decision'];
@@ -27,39 +26,25 @@ export default function InterviewIntelligenceViewPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [transcriptText, setTranscriptText] = useState('');
-  const [scores, setScores] = useState<Record<string, { score: string; feedback: string; opinion: 'proceed' | 'hold' | 'reject' | 'needs_review' }>>({});
   const [approvalNotes, setApprovalNotes] = useState('');
   const [visibleStep, setVisibleStep] = useState(0);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [candidateEmail, setCandidateEmail] = useState('');
   const [organizerEmail, setOrganizerEmail] = useState('');
+  const automaticAnalysisRef = useRef<string | null>(null);
 
   const activeStep = useMemo(() => {
     if (!record) return 0;
-    if (record.status === 'approved') return 5;
-    if (record.aiEvaluation) return 4;
-    if (record.status === 'scores_submitted') return 3;
+    if (record.status === 'approved') return 4;
+    if (record.aiEvaluation) return 3;
     if (record.transcript) return 2;
     if (record.questionPlan) return 1;
     return 0;
   }, [record]);
 
   useEffect(() => {
-    if (!record?.candidate.resumeS3Key) {
-      setVisibleStep(0);
-      return;
-    }
-    if (activeStep <= 0) {
-      setVisibleStep(0);
-      return;
-    }
-    if (activeStep === 1) {
-      const transcriptView = typeof window !== 'undefined' && window.sessionStorage.getItem(`intelligence-transcript-${id}`) === 'open';
-      setVisibleStep(transcriptView ? 2 : 1);
-      return;
-    }
-    setVisibleStep(activeStep <= 3 ? 2 : 3);
-  }, [activeStep, id, record?.candidate.resumeS3Key]);
+    setVisibleStep(activeStep);
+  }, [activeStep]);
 
   useEffect(() => {
     let mounted = true;
@@ -72,14 +57,6 @@ export default function InterviewIntelligenceViewPage() {
         setTranscriptText(data.transcript?.rawText || '');
         setCandidateEmail(data.candidate.email || '');
         setOrganizerEmail(data.teams.organizerEmail || '');
-        setScores(Object.fromEntries(data.panel.map((member) => [
-          member.interviewerId,
-          {
-            score: member.score === undefined ? '' : String(member.score),
-            feedback: member.feedback || '',
-            opinion: member.opinion || 'needs_review',
-          },
-        ])));
       } catch (err) {
         if (mounted) setError(err instanceof Error ? err.message : 'Failed to load intelligence interview');
       } finally {
@@ -118,6 +95,39 @@ export default function InterviewIntelligenceViewPage() {
     }
   };
 
+  useEffect(() => {
+    if (!record?.transcript || !record.questionPlan || record.aiEvaluation || busy) return;
+    if (record.status === 'analysis_processing' || record.status === 'analysis_failed') return;
+    if (automaticAnalysisRef.current === record.intelligence_id) return;
+    automaticAnalysisRef.current = record.intelligence_id;
+    void runAction('analysis', () => api.analyzeIntelligenceInterview(record.intelligence_id));
+  }, [record?.intelligence_id, record?.transcript?.uploadedAt, record?.questionPlan?.generatedAt, record?.aiEvaluation, busy]);
+
+  useEffect(() => {
+    if (!record || record.status !== 'analysis_processing') return;
+    let cancelled = false;
+
+    const refreshReview = async () => {
+      try {
+        const latest = await api.getIntelligenceInterview(record.intelligence_id);
+        if (cancelled) return;
+        setRecord(latest);
+        if (latest.status === 'analysis_failed' && latest.analysisError) {
+          setError(latest.analysisError);
+        }
+      } catch {
+        // Keep the saved processing state visible; the next poll can recover.
+      }
+    };
+
+    void refreshReview();
+    const timer = window.setInterval(() => { void refreshReview(); }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [record?.intelligence_id, record?.status]);
+
   if (loading) {
     return <IntelligenceViewSkeleton />;
   }
@@ -131,12 +141,7 @@ export default function InterviewIntelligenceViewPage() {
     );
   }
 
-  const saveScores = () => runAction('scores', () => api.updateIntelligenceScores(record.intelligence_id, record.panel.map((member) => ({
-    interviewerId: member.interviewerId,
-    score: scores[member.interviewerId]?.score ? Number(scores[member.interviewerId].score) : undefined,
-    feedback: scores[member.interviewerId]?.feedback || '',
-    opinion: scores[member.interviewerId]?.opinion || 'needs_review',
-  }))));
+  const reviewInProgress = busy === 'analysis' || record.status === 'analysis_processing';
 
   const downloadReport = async () => {
     setBusy('report');
@@ -214,11 +219,10 @@ export default function InterviewIntelligenceViewPage() {
         <div className="intelligence-progress-banner" role="status" aria-live="polite">
           <RefreshCw size={16} className="animate-spin text-accent" />
           <span>
-            {busy === 'questions' && 'Preparing the panel guide...'}
+            {busy === 'questions' && 'Preparing your interview guide...'}
             {busy === 'transcript' && 'Saving the Teams transcript...'}
             {busy === 'mock transcript' && 'Loading the demo transcript...'}
             {busy === 'teams transcript' && 'Syncing the completed Teams transcript...'}
-            {busy === 'scores' && 'Saving panel scores...'}
             {busy === 'analysis' && 'Reviewing the interview evidence...'}
             {busy === 'approve' && 'Approving the final report...'}
             {busy === 'report' && 'Preparing the PDF report...'}
@@ -267,7 +271,7 @@ export default function InterviewIntelligenceViewPage() {
           <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-text-primary">Setup complete</p>
-              <p className="mt-1 text-sm leading-6 text-text-secondary">The interview context is ready. Prepare the panel guide when you are ready to schedule the conversation.</p>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">The interview brief is ready. Prepare a structured guide before the conversation is scheduled.</p>
             </div>
             <button type="button" onClick={() => setVisibleStep(1)} className="btn-primary shrink-0 px-4 py-2.5 text-sm font-semibold">Next step</button>
           </div>
@@ -284,12 +288,12 @@ export default function InterviewIntelligenceViewPage() {
         </details>
       </Section>
 
-      <Section visible={visibleStep === 1} icon={ClipboardCheck} title="Interview guide" detail="Questions, follow-ups, and evidence signals for the panel.">
+      <Section visible={visibleStep === 1} icon={ClipboardCheck} title="Interview guide" detail="A structured set of scenario prompts, follow-ups, and evidence signals for the panel.">
         {!record.questionPlan ? (
           <ActionBlock
             title="Prepare the panel guide"
-            body="Create the question plan before the interview. Each interviewer receives a focused guide with follow-ups and evaluation signals."
-            button="Prepare guide"
+            body="Create an interview-ready guide before the conversation. Each interviewer receives focused scenario prompts, follow-ups, and evaluation signals."
+            button="Prepare interview guide"
             loading={busy === 'questions'}
             onClick={() => runAction('questions', () => api.generateIntelligenceQuestions(record.intelligence_id))}
           />
@@ -312,15 +316,26 @@ export default function InterviewIntelligenceViewPage() {
                   <p className="text-sm font-semibold text-text-primary">{member?.name || 'Interviewer'} / {plan.focusArea}</p>
                   <div className="mt-4 space-y-4">
                     {plan.questions.map((question, index) => (
-                      <div key={`${plan.interviewerId}-${index}`} className="rounded-xl border border-border bg-surface-elevated p-4">
+                      <div key={`${plan.interviewerId}-${index}`}>
+                        {(index === 0 || plan.questions[index - 1]?.questionType !== question.questionType) && (
+                          <p className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                            {question.questionType === 'introduction'
+                              ? 'Opening and candidate context'
+                              : question.questionType === 'resume'
+                                ? 'Resume and experience discussion'
+                                : 'Role scenarios and technical depth'}
+                          </p>
+                        )}
+                        <div className="rounded-xl border border-border bg-surface-elevated p-4">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <p className="text-sm font-semibold text-text-primary">{index + 1}. {question.question}</p>
-                          {question.countsTowardPanelEvaluation === false && <span className="rounded-full border border-border bg-surface px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Context question</span>}
+                          {question.countsTowardPanelEvaluation === false && <span className="rounded-full border border-border bg-surface px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Candidate context</span>}
                         </div>
                         <List title="Follow-ups" items={question.followUps} />
                         <List title="What to evaluate" items={question.whatToEvaluate} />
                         <List title="Strong signals" items={question.expectedStrongAnswerSignals} />
                         <List title="Red flags" items={question.redFlags} danger />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -332,7 +347,7 @@ export default function InterviewIntelligenceViewPage() {
                 <p className="text-sm font-semibold text-text-primary">After the interview</p>
                 <p className="mt-1 text-sm leading-6 text-text-secondary">When the call is complete and Teams has finished transcription, continue here to retrieve it.</p>
               </div>
-              <button type="button" onClick={() => { window.sessionStorage.setItem(`intelligence-transcript-${id}`, 'open'); setVisibleStep(2); }} className="btn-secondary shrink-0 px-4 py-2.5 text-sm font-semibold">Next step</button>
+              <button type="button" onClick={() => setVisibleStep(2)} className="btn-secondary shrink-0 px-4 py-2.5 text-sm font-semibold">Next step</button>
             </div>
           </div>
         )}
@@ -378,53 +393,13 @@ export default function InterviewIntelligenceViewPage() {
         )}
       </Section>
 
-      <Section visible={visibleStep === 2 && !!record.transcript && record.status !== 'scores_submitted'} icon={Users} title="Panel feedback" detail="Record each interviewer's score and reasoning after the transcript is available.">
-        <div className="space-y-4">
-          {record.panel.map((member) => (
-            <div key={member.interviewerId} className="rounded-xl border border-border bg-surface p-4">
-              <p className="text-sm font-semibold text-text-primary">{member.name}</p>
-              <div className="mt-3 grid gap-3 md:grid-cols-[140px_180px_1fr]">
-                <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={scores[member.interviewerId]?.score || ''}
-                  onChange={(event) => setScores({ ...scores, [member.interviewerId]: { ...(scores[member.interviewerId] || { feedback: '', opinion: 'needs_review' }), score: event.target.value } })}
-                  placeholder="Score / 10"
-                  className="rounded-xl border border-border bg-surface-elevated px-4 py-3 text-sm text-text-primary outline-none focus:border-accent"
-                />
-                <select
-                  value={scores[member.interviewerId]?.opinion || 'needs_review'}
-                  onChange={(event) => setScores({ ...scores, [member.interviewerId]: { ...(scores[member.interviewerId] || { score: '', feedback: '' }), opinion: event.target.value as 'proceed' | 'hold' | 'reject' | 'needs_review' } })}
-                  className="rounded-xl border border-border bg-surface-elevated px-4 py-3 text-sm text-text-primary outline-none focus:border-accent"
-                >
-                  <option value="proceed">Proceed</option>
-                  <option value="hold">Hold</option>
-                  <option value="reject">Reject</option>
-                  <option value="needs_review">Needs review</option>
-                </select>
-                <input
-                  value={scores[member.interviewerId]?.feedback || ''}
-                  onChange={(event) => setScores({ ...scores, [member.interviewerId]: { ...(scores[member.interviewerId] || { score: '', opinion: 'needs_review' }), feedback: event.target.value } })}
-                  placeholder="Feedback or justification"
-                  className="rounded-xl border border-border bg-surface-elevated px-4 py-3 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        <button type="button" onClick={saveScores} disabled={busy === 'scores'} className="btn-primary mt-4 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
-          Save human scores
-        </button>
-      </Section>
-
-      <Section visible={visibleStep === 3 && !record.aiEvaluation} icon={BrainCircuit} title="Evidence review" detail="Compare the JD, interview evidence, and panel feedback before making a decision.">
+      <Section visible={visibleStep === 2 && !!record.transcript && !record.aiEvaluation} icon={BrainCircuit} title="AI interview review" detail="Minfy AI is evaluating the candidate and the panel against the job description, guide, resume, and transcript.">
         {!record.aiEvaluation ? (
           <ActionBlock
-            title="Run the evidence review"
-            body="Analysis uses JD, resume, generated questions, transcript, and human panel scores. It does not replace human hiring judgment."
-            button="Review interview"
-            loading={busy === 'analysis'}
+            title={reviewInProgress ? 'Preparing the interview review' : error ? 'Interview review could not be completed' : 'Preparing the interview review'}
+            body={reviewInProgress || !error ? 'The candidate and panel assessment is being prepared from the interview evidence. The completed report will appear here automatically.' : 'The report could not be completed. Please try the review again.'}
+            button={error ? 'Run interview review again' : 'Preparing report...'}
+            loading={reviewInProgress || !error}
             onClick={() => runAction('analysis', () => api.analyzeIntelligenceInterview(record.intelligence_id))}
           />
         ) : (
@@ -472,7 +447,7 @@ export default function InterviewIntelligenceViewPage() {
         )}
       </Section>
 
-      <Section visible={visibleStep === 3 && !!record.aiEvaluation} icon={FileText} title="Final decision" detail="Review the recommendation, approve it, and download the report.">
+      <Section visible={visibleStep >= 3 && !!record.aiEvaluation} icon={FileText} title="Final decision" detail="Review the AI recommendation, approve it, and download the formatted report.">
         {record.aiEvaluation ? (
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-surface p-4">
@@ -556,7 +531,7 @@ function InterviewIntelligenceRail({ record, activeStep }: { record: InterviewIn
           <p className="page-kicker">Workflow</p>
           <p className="mt-1 text-sm font-semibold text-text-primary">From data to decision</p>
         </div>
-        <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">{activeStep + 1}/6</span>
+        <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">{activeStep + 1}/5</span>
       </div>
       <nav className="mt-4 space-y-1" aria-label="Interview intelligence workflow">
         {steps.map((step, index) => {
@@ -586,7 +561,7 @@ function InterviewIntelligenceRail({ record, activeStep }: { record: InterviewIn
 
 function WorkflowTabs({ activeStep, visibleStep, onSelect }: { activeStep: number; visibleStep: number; onSelect: (step: number) => void }) {
   return (
-    <nav className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6" aria-label="Interview intelligence workflow">
+    <nav className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="Interview intelligence workflow">
       {steps.map((step, index) => {
         const complete = index < activeStep;
         const current = index === visibleStep;

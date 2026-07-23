@@ -104,7 +104,7 @@ export class IepStack extends cdk.Stack {
       handler: 'handler',
 
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(60), // Increased for Bedrock alignment
+      timeout: cdk.Duration.seconds(120), // Allows the asynchronous Sonnet review to finish reliably.
       memorySize: 512,                  // Increased to prevent OOM/Initialization lag
       environment: {
         TABLE_NAME: interviewsTable.tableName,
@@ -143,6 +143,12 @@ export class IepStack extends cdk.Stack {
     filesBucket.grantDelete(apiHandler);
     evaluationQueue.grantSendMessages(apiHandler);
     momQueue.grantSendMessages(apiHandler);
+    // The handler invokes itself asynchronously for long-running AI reviews.
+    // A direct grant to itself creates a CloudFormation dependency cycle.
+    apiHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: ['*'],
+    }));
 
     if (teamsSecretArn) {
       const teamsCredentialsSecret = secretsmanager.Secret.fromSecretCompleteArn(
