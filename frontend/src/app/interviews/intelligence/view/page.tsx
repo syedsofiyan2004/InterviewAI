@@ -7,15 +7,8 @@ import { api, InterviewIntelligenceRecord } from '@/lib/api';
 import { ArrowLeft, BrainCircuit, CheckCircle2, ClipboardCheck, Download, FileText, MessageSquareText, RefreshCw, ShieldCheck, Trash2, Upload, Users, type LucideIcon } from 'lucide-react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
-// Retained for the lightweight loading placeholder and legacy navigation helpers.
-const steps = [
-  { label: 'Interview data', anchor: 'stage-data' },
-  { label: 'Interview guide', anchor: 'stage-questions' },
-  { label: 'Transcript', anchor: 'stage-transcript' },
-  { label: 'AI review', anchor: 'stage-analysis' },
-  { label: 'Report approval', anchor: 'stage-report' },
-];
-const workspaceTabs = ['Overview', 'Interview guide', 'Interview evidence', 'Decision'];
+const workspaceTabs = ['Overview', 'Interview guide', 'Transcript', 'Review & report'];
+const steps = workspaceTabs.map((label, index) => ({ label, anchor: `workspace-${index}` }));
 
 export default function InterviewIntelligenceViewPage() {
   const searchParams = useSearchParams();
@@ -35,9 +28,9 @@ export default function InterviewIntelligenceViewPage() {
 
   const activeStep = useMemo(() => {
     if (!record) return 0;
-    if (record.status === 'approved') return 4;
+    if (record.status === 'approved') return 3;
     if (record.aiEvaluation) return 3;
-    if (record.transcript) return 2;
+    if (record.transcript) return 3;
     if (record.questionPlan) return 1;
     return 0;
   }, [record]);
@@ -206,7 +199,7 @@ export default function InterviewIntelligenceViewPage() {
           <p className="mt-2 text-sm text-text-secondary">{record.job.title}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Pill>Interview workspace</Pill>
-            <Pill muted>{record.teams.mode === 'live' ? 'Transcript connection ready' : 'Transcript capture ready'}</Pill>
+            <Pill muted>{record.teams.mode === 'live' ? 'Microsoft Teams connected' : 'Transcript ready for upload'}</Pill>
           </div>
         </div>
 
@@ -234,6 +227,8 @@ export default function InterviewIntelligenceViewPage() {
       )}
 
       {error && <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+
+      <WorkspaceTabs activeTab={visibleStep} onSelect={setVisibleStep} />
 
       <div className="min-w-0">
       <Section visible={visibleStep === 0} icon={Users} title="Interview setup" detail="Confirm the meeting organiser and add the candidate resume before preparing the guide.">
@@ -353,8 +348,8 @@ export default function InterviewIntelligenceViewPage() {
         )}
       </Section>
 
-      <Section visible={visibleStep === 2 && !record.transcript} icon={MessageSquareText} title="Teams transcript" detail="Retrieve the transcript only after the meeting has ended and Teams has finished processing it.">
-        {record.teams.mode === 'live' ? (
+      <Section visible={visibleStep === 2} icon={MessageSquareText} title="Interview transcript" detail="Bring in the completed interview conversation before the evidence review starts.">
+        {!record.transcript && record.teams.mode === 'live' ? (
           <ActionBlock
             title="Sync transcript from Microsoft Teams"
             body="Minfy AI will retrieve the transcript from the scheduled Teams meeting. If it is not ready yet, wait for Teams transcription to finish and try again."
@@ -362,7 +357,7 @@ export default function InterviewIntelligenceViewPage() {
             loading={busy === 'teams transcript'}
             onClick={() => runAction('teams transcript', () => api.syncTeamsTranscript(record.intelligence_id))}
           />
-        ) : (
+        ) : !record.transcript ? (
           <>
             <textarea
               value={transcriptText}
@@ -390,11 +385,27 @@ export default function InterviewIntelligenceViewPage() {
               </button>
             </div>
           </>
+        ) : (
+          <ActionBlock
+            title="Transcript received"
+            body="The interview conversation is saved and ready for the AI evidence review."
+            button="Open review"
+            loading={false}
+            onClick={() => setVisibleStep(3)}
+          />
         )}
       </Section>
 
-      <Section visible={visibleStep === 2 && !!record.transcript && !record.aiEvaluation} icon={BrainCircuit} title="AI interview review" detail="Minfy AI is evaluating the candidate and the panel against the job description, guide, resume, and transcript.">
-        {!record.aiEvaluation ? (
+      <Section visible={visibleStep === 3} icon={BrainCircuit} title="AI interview review" detail="Minfy AI evaluates the candidate and panel against the job description, guide, resume, and transcript.">
+        {!record.transcript ? (
+          <ActionBlock
+            title="Transcript needed"
+            body="Add the completed interview transcript before starting the evidence review."
+            button="Open transcript"
+            loading={false}
+            onClick={() => setVisibleStep(2)}
+          />
+        ) : !record.aiEvaluation ? (
           <ActionBlock
             title={reviewInProgress ? 'Preparing the interview review' : error ? 'Interview review could not be completed' : 'Preparing the interview review'}
             body={reviewInProgress || !error ? 'The candidate and panel assessment is being prepared from the interview evidence. The completed report will appear here automatically.' : 'The report could not be completed. Please try the review again.'}
@@ -447,7 +458,7 @@ export default function InterviewIntelligenceViewPage() {
         )}
       </Section>
 
-      <Section visible={visibleStep >= 3 && !!record.aiEvaluation} icon={FileText} title="Final decision" detail="Review the AI recommendation, approve it, and download the formatted report.">
+      <Section visible={visibleStep === 3 && !!record.aiEvaluation} icon={FileText} title="Final decision" detail="Review the AI recommendation, approve it, and download the formatted report.">
         {record.aiEvaluation ? (
           <div className="space-y-4">
             <div className="rounded-xl border border-border bg-surface p-4">
@@ -586,13 +597,15 @@ function WorkflowTabs({ activeStep, visibleStep, onSelect }: { activeStep: numbe
 
 function WorkspaceTabs({ activeTab, onSelect }: { activeTab: number; onSelect: (tab: number) => void }) {
   return (
-    <nav className="flex gap-1 overflow-x-auto border-b border-border" aria-label="Interview workspace sections">
+    <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="Interview workspace sections" role="tablist">
       {workspaceTabs.map((label, index) => (
         <button
           type="button"
           key={label}
           onClick={() => onSelect(index)}
-          className={`shrink-0 border-b-2 px-4 py-3 text-sm font-semibold transition-colors ${activeTab === index ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}`}
+          role="tab"
+          aria-selected={activeTab === index}
+          className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeTab === index ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
         >
           {label}
         </button>

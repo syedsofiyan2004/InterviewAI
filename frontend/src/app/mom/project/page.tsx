@@ -9,6 +9,7 @@ import { api, Mom } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
 type InputMode = 'file' | 'text';
+type ProjectView = 'reports' | 'add' | 'bulk';
 
 function MomProjectContent() {
   const router = useRouter();
@@ -28,6 +29,7 @@ function MomProjectContent() {
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ total: number; completed: number; failed: number } | null>(null);
+  const [activeView, setActiveView] = useState<ProjectView>('reports');
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
   const bulkFolderInputRef = useRef<HTMLInputElement>(null);
 
@@ -208,13 +210,32 @@ function MomProjectContent() {
 
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase">Project MOMs</p>
-          <h1 className="text-3xl font-bold text-text-primary tracking-tight">{projectTitle}</h1>
-          <p className="text-sm text-text-muted mt-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-accent">Meeting project</p>
+          <h1 className="mt-1 text-2xl font-semibold text-text-primary">{projectTitle}</h1>
+          <p className="mt-1 text-sm text-text-secondary">
             {stats.total} meetings / {stats.completed} completed / {stats.processing} in progress
           </p>
         </div>
       </div>
+
+      <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="Project sections" role="tablist">
+        {([
+          ['reports', 'Project reports'],
+          ['add', 'Add a meeting'],
+          ['bulk', 'Bulk upload'],
+        ] as const).map(([view, label]) => (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={activeView === view}
+            onClick={() => setActiveView(view)}
+            className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeView === view ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
       {error && (
         <div className="card p-4 border-danger/30 bg-danger/5 text-danger font-bold text-sm flex items-center gap-2">
@@ -223,7 +244,8 @@ function MomProjectContent() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="card p-6 space-y-5">
+      {activeView === 'add' && (
+      <form onSubmit={handleSubmit} className="card p-6 space-y-5" role="tabpanel">
         <div className="flex items-center gap-2">
           <Plus size={18} className="text-accent" />
           <h2 className="text-lg font-semibold text-text-primary">Add Meeting Transcript</h2>
@@ -321,8 +343,10 @@ function MomProjectContent() {
           {creating ? 'Preparing MOM...' : 'Generate MOM In This Project'}
         </button>
       </form>
+      )}
 
-      <section className="card p-6 space-y-5">
+      {activeView === 'bulk' && (
+      <section className="card p-6 space-y-5" role="tabpanel">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <FolderUp size={18} className="text-accent" />
@@ -422,8 +446,10 @@ function MomProjectContent() {
           {bulkUploading ? 'Queueing files...' : 'Upload Files To This Project'}
         </button>
       </section>
+      )}
 
-      <div className="data-table">
+      {activeView === 'reports' && (
+      <div className="data-table" role="tabpanel">
         <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <h3 className="text-sm font-semibold text-text-primary">Project Reports</h3>
           <p className="text-xs text-text-muted mt-1">All MOM reports created under {projectTitle}.</p>
@@ -469,6 +495,7 @@ function MomProjectContent() {
           </table>
         </div>
       </div>
+      )}
     </div>
   );
 }

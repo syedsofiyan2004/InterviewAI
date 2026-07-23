@@ -7,6 +7,8 @@ import { AlertCircle, ArrowLeft, CheckCircle2, Clock, Download, Loader2 } from '
 import { api, DetailedMom, MomResult } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
+type MomDetailView = 'summary' | 'discussion' | 'actions' | 'report';
+
 function MomViewContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get('id') || '';
@@ -15,6 +17,7 @@ function MomViewContent() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<MomDetailView>('summary');
 
   const fetchMom = useCallback(async () => {
     if (!id) {
@@ -152,7 +155,10 @@ function MomViewContent() {
       )}
 
       {result && (
-        <div className="space-y-6">
+        <>
+          <MomDetailTabs activeView={activeView} onChange={setActiveView} />
+          <div className="space-y-6">
+          <div className={activeView === 'summary' ? 'space-y-6' : 'hidden'} role="tabpanel">
           <section className="card p-6 space-y-4">
             <div className="flex items-center gap-2">
               <CheckCircle2 size={18} className="text-success" />
@@ -171,7 +177,9 @@ function MomViewContent() {
               ))}
             </div>
           </section>
+          </div>
 
+          <div className={activeView === 'discussion' ? 'space-y-6' : 'hidden'} role="tabpanel">
           <section className="card p-6 space-y-5">
             <h2 className="text-lg font-semibold text-text-primary">Discussion Points</h2>
             {result.discussion_points.map((point, index) => (
@@ -214,15 +222,68 @@ function MomViewContent() {
               </div>
             ))}
           </section>
+          </div>
 
+          <div className={activeView === 'actions' ? 'space-y-6' : 'hidden'} role="tabpanel">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <ListSection title="Agenda Items" items={result.agenda_items} />
             <ListSection title="Risks" items={result.risks.map((risk: any) => typeof risk === 'string' ? risk : risk.description)} />
           </div>
           <ListSection title="Next Steps" items={result.next_steps} numbered />
+          </div>
+
+          <div className={activeView === 'report' ? 'space-y-6' : 'hidden'} role="tabpanel">
+            <section className="card overflow-hidden">
+              <div className="border-b border-border bg-surface px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Shareable outcome</p>
+                <h2 className="mt-1 text-xl font-semibold text-text-primary">Minutes of Meeting report</h2>
+              </div>
+              <div className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
+                <p className="max-w-2xl text-sm leading-6 text-text-secondary">
+                  Download the structured PDF with the meeting summary, decisions, action items, risks, and next steps.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDownloadReport}
+                  disabled={downloading}
+                  className="btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                >
+                  {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  {downloading ? 'Preparing PDF' : 'Download PDF report'}
+                </button>
+              </div>
+            </section>
+          </div>
         </div>
+        </>
       )}
     </div>
+  );
+}
+
+function MomDetailTabs({ activeView, onChange }: { activeView: MomDetailView; onChange: (view: MomDetailView) => void }) {
+  const views: Array<{ id: MomDetailView; label: string }> = [
+    { id: 'summary', label: 'Summary' },
+    { id: 'discussion', label: 'Discussion' },
+    { id: 'actions', label: 'Actions & risks' },
+    { id: 'report', label: 'Report' },
+  ];
+
+  return (
+    <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="MOM report sections" role="tablist">
+      {views.map((view) => (
+        <button
+          key={view.id}
+          type="button"
+          role="tab"
+          aria-selected={activeView === view.id}
+          onClick={() => onChange(view.id)}
+          className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeView === view.id ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
+        >
+          {view.label}
+        </button>
+      ))}
+    </nav>
   );
 }
 
