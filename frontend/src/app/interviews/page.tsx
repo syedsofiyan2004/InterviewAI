@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentType, CSSProperties } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api, Interview } from '@/lib/api';
 import { 
   BrainCircuit,
@@ -21,15 +22,41 @@ import { Toast } from '@/components/ui/Toast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useTour, checkTourStatus } from '@/contexts/TourContext';
 
+const STATUS_FILTERS = ['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'] as const;
+type StatusFilter = typeof STATUS_FILTERS[number];
+
+function isProcessingStatus(status: string) {
+  return status === 'CREATED' || status === 'PROCESSING';
+}
+
 export default function Dashboard() {
-   const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [stats, setStats] = useState({ total: 0, completed: 0, pending: 0, failed: 0 });
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [filter, setFilter] = useState('ALL');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedFilter = searchParams.get('status')?.toUpperCase();
+  const filter: StatusFilter = STATUS_FILTERS.includes(requestedFilter as StatusFilter)
+    ? requestedFilter as StatusFilter
+    : 'ALL';
 
-  const filteredInterviews = interviews.filter(i => filter === 'ALL' || i.status === filter);
+  const setActiveFilter = useCallback((nextFilter: StatusFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextFilter === 'ALL') params.delete('status');
+    else params.set('status', nextFilter.toLowerCase());
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const filteredInterviews = useMemo(() => interviews.filter((interview) => {
+    if (filter === 'ALL') return true;
+    if (filter === 'PROCESSING') return isProcessingStatus(interview.status);
+    return interview.status === filter;
+  }), [filter, interviews]);
 
   const { startTour } = useTour();
 
@@ -62,10 +89,10 @@ export default function Dashboard() {
     });
   }, [startTour]);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const data = await api.getInterviews();
+  const loadData = useCallback(async () => {
+    try {
+      setLoadError(false);
+      const data = await api.getInterviews();
         const normalized = (data.items || [])
           .filter((item) => item && item.interview_id)
           .map((item) => ({
@@ -87,15 +114,21 @@ export default function Dashboard() {
           return acc;
         }, { total: 0, completed: 0, pending: 0, failed: 0 });
         
-        setStats(summary);
-      } catch (err) {
-        console.error('Failed to load interviews', err);
-      } finally {
-        setLoading(false);
-      }
+      setStats(summary);
+    } catch (err) {
+      console.error('Failed to load interviews', err);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    loadData();
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -136,7 +169,7 @@ export default function Dashboard() {
     <div className="max-w-6xl mx-auto space-y-8 pb-8">
 
       {/* ── Page header ── */}
-      <div className="flex items-end justify-between pt-2">
+      <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase mb-1">
             Minfy AI · Evaluation Platform
@@ -171,16 +204,16 @@ export default function Dashboard() {
       <div id="tour-stats" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Total interviews" value={stats.total}
           icon={Users} type="teal"
-          onClick={() => setFilter('ALL')} active={filter === 'ALL'} />
+          onClick={() => setActiveFilter('ALL')} active={filter === 'ALL'} />
         <StatCard title="Evaluating" value={stats.pending}
           icon={Clock} type="amber"
-          onClick={() => setFilter('PROCESSING')} active={filter === 'PROCESSING'} />
+          onClick={() => setActiveFilter('PROCESSING')} active={filter === 'PROCESSING'} />
         <StatCard title="Completed" value={stats.completed}
           icon={CheckCircle2} type="green"
-          onClick={() => setFilter('COMPLETED')} active={filter === 'COMPLETED'} />
+          onClick={() => setActiveFilter('COMPLETED')} active={filter === 'COMPLETED'} />
         <StatCard title="Needs attention" value={stats.failed}
           icon={AlertCircle} type="red"
-          onClick={() => setFilter('FAILED')} active={filter === 'FAILED'} />
+          onClick={() => setActiveFilter('FAILED')} active={filter === 'FAILED'} />
       </div>
 
       {/* ── Evaluations table ── */}
@@ -195,7 +228,7 @@ export default function Dashboard() {
               <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium"
                     style={{ background: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--accent)', border: '1px solid color-mix(in srgb, var(--accent) 28%, transparent)' }}>
                 {filter.charAt(0) + filter.slice(1).toLowerCase()}
-                <button onClick={() => setFilter('ALL')}
+                <button onClick={() => setActiveFilter('ALL')}
                         className="ml-0.5 opacity-60 hover:opacity-100 leading-none">×</button>
               </span>
             )}
@@ -207,7 +240,7 @@ export default function Dashboard() {
                 type="button"
                 className="status-tab"
                 data-active={filter === status}
-                onClick={() => setFilter(status)}
+                onClick={() => setActiveFilter(status as StatusFilter)}
               >
                 {status}
               </button>
@@ -236,6 +269,14 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ))
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-16 text-center">
+                    <p className="text-sm font-semibold text-text-primary">Evaluations could not be loaded</p>
+                    <p className="mt-1 text-xs text-text-muted">Your records are unchanged. Try loading the list again.</p>
+                    <button type="button" onClick={loadData} className="btn-secondary mt-5 px-3 py-2 text-xs font-semibold">Try again</button>
+                  </td>
+                </tr>
               ) : filteredInterviews.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-20 text-center">
@@ -253,7 +294,7 @@ export default function Dashboard() {
                         </p>
                       </div>
                       {filter !== 'ALL' && (
-                        <button onClick={() => setFilter('ALL')}
+                        <button onClick={() => setActiveFilter('ALL')}
                                 className="text-xs font-semibold text-accent hover:underline">
                           Clear filter
                         </button>
@@ -369,9 +410,10 @@ function StatCard({ title, value, icon: Icon, type, onClick, active }: {
   const { color } = config[type] || config.teal;
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="metric-card p-5 transition-all duration-150 cursor-pointer select-none hover:-translate-y-0.5"
+      className="metric-card cursor-pointer select-none p-5 text-left transition-all duration-150 hover:-translate-y-0.5"
       style={{
         background: active ? `color-mix(in srgb, ${color} 9%, var(--surface-elevated))` : undefined,
         border: active ? `1.5px solid ${color}` : '1px solid var(--border)',
@@ -388,7 +430,7 @@ function StatCard({ title, value, icon: Icon, type, onClick, active }: {
       <div className="text-2xl font-semibold text-text-primary tracking-tight">{value}</div>
       <div className="mt-3 h-[2px] rounded-full" 
            style={{ background: active ? color : `${color}35` }} />
-    </div>
+    </button>
   );
 }
 

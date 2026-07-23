@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, CheckCircle2, Clock, FileText, FolderKanban, Plus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { api, Mom, MomProject } from '@/lib/api';
@@ -10,18 +11,41 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
 
+const STATUS_FILTERS = ['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'] as const;
+type StatusFilter = typeof STATUS_FILTERS[number];
+
+function isProcessingStatus(status: string) {
+  return status === 'CREATED' || status === 'PROCESSING';
+}
+
 export default function MomDashboard() {
   const [projects, setProjects] = useState<MomProject[]>([]);
   const [moms, setMoms] = useState<Mom[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('ALL');
+  const [loadError, setLoadError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteProject, setConfirmDeleteProject] = useState<{ id: string; title: string; count: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedFilter = searchParams.get('status')?.toUpperCase();
+  const filter: StatusFilter = STATUS_FILTERS.includes(requestedFilter as StatusFilter)
+    ? requestedFilter as StatusFilter
+    : 'ALL';
+
+  const setActiveFilter = useCallback((nextFilter: StatusFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextFilter === 'ALL') params.delete('status');
+    else params.set('status', nextFilter.toLowerCase());
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const loadData = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
+      setLoadError(false);
       const [projectData, momData] = await Promise.all([
         api.getMomProjects(),
         api.getMoms(),
@@ -30,6 +54,7 @@ export default function MomDashboard() {
       setMoms([...momData.items].sort((a, b) => getMomSortDate(b) - getMomSortDate(a)));
     } catch (err) {
       console.error('Failed to load MOM workspace', err);
+      setLoadError(true);
       setToast({ message: 'Failed to load MOM projects', type: 'error' });
     } finally {
       setLoading(false);
@@ -37,7 +62,10 @@ export default function MomDashboard() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   useEffect(() => {
@@ -59,7 +87,11 @@ export default function MomDashboard() {
     return acc;
   }, { total: 0, completed: 0, processing: 0, failed: 0 }), [moms]);
 
-  const filtered = moms.filter((mom) => filter === 'ALL' || mom.status === filter);
+  const filtered = moms.filter((mom) => {
+    if (filter === 'ALL') return true;
+    if (filter === 'PROCESSING') return isProcessingStatus(mom.status);
+    return mom.status === filter;
+  });
 
   const handleDelete = async (id: string) => {
     try {
@@ -106,9 +138,9 @@ export default function MomDashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat title="Projects" value={projects.length} icon={FolderKanban} active={false} />
-        <Stat title="Total MOMs" value={stats.total} icon={FileText} onClick={() => setFilter('ALL')} active={filter === 'ALL'} />
-        <Stat title="Processing" value={stats.processing} icon={Clock} onClick={() => setFilter('PROCESSING')} active={filter === 'PROCESSING'} />
-        <Stat title="Completed" value={stats.completed} icon={CheckCircle2} onClick={() => setFilter('COMPLETED')} active={filter === 'COMPLETED'} />
+        <Stat title="Total MOMs" value={stats.total} icon={FileText} onClick={() => setActiveFilter('ALL')} active={filter === 'ALL'} />
+        <Stat title="Processing" value={stats.processing} icon={Clock} onClick={() => setActiveFilter('PROCESSING')} active={filter === 'PROCESSING'} />
+        <Stat title="Completed" value={stats.completed} icon={CheckCircle2} onClick={() => setActiveFilter('COMPLETED')} active={filter === 'COMPLETED'} />
       </div>
 
       <section className="mt-8 space-y-4">
@@ -212,7 +244,7 @@ export default function MomDashboard() {
                 type="button"
                 className="status-tab"
                 data-active={filter === status}
-                onClick={() => setFilter(status)}
+                onClick={() => setActiveFilter(status as StatusFilter)}
               >
                 {status}
               </button>
@@ -241,6 +273,14 @@ export default function MomDashboard() {
                     </td>
                   </tr>
                 ))
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-16 text-center">
+                    <p className="text-sm font-semibold text-text-primary">Meeting reports could not be loaded</p>
+                    <p className="mt-1 text-xs text-text-muted">Your projects and reports are unchanged. Try loading the workspace again.</p>
+                    <button type="button" onClick={() => loadData()} className="btn-secondary mt-5 px-3 py-2 text-xs font-semibold">Try again</button>
+                  </td>
+                </tr>
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-20 text-center">

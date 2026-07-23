@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api, IntegrationStatus, InterviewIntelligenceRecord } from '@/lib/api';
 import {
   ArrowRight,
@@ -35,15 +36,34 @@ const statusNextSteps: Record<string, string> = {
   approved: 'Complete',
 };
 
+const intelligenceStatuses = Object.keys(statusLabels);
+
 export default function InterviewIntelligenceDashboard() {
   const [items, setItems] = useState<InterviewIntelligenceRecord[]>([]);
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedFilter = searchParams.get('status') || 'all';
+  const activeFilter = requestedFilter === 'all' || intelligenceStatuses.includes(requestedFilter)
+    ? requestedFilter
+    : 'all';
+
+  const setActiveFilter = useCallback((nextFilter: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextFilter === 'all') params.delete('status');
+    else params.set('status', nextFilter);
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       try {
+        setLoadError(false);
         const [records, integrationStatus] = await Promise.all([
           api.getIntelligenceInterviews(),
           api.getIntegrationStatus(),
@@ -51,6 +71,9 @@ export default function InterviewIntelligenceDashboard() {
         if (!mounted) return;
         setItems(records.items || []);
         setStatus(integrationStatus);
+      } catch (error) {
+        console.error('Failed to load interview workspaces', error);
+        if (mounted) setLoadError(true);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -62,6 +85,10 @@ export default function InterviewIntelligenceDashboard() {
   const generated = items.filter((item) => item.questionPlan).length;
   const analyzed = items.filter((item) => item.aiEvaluation).length;
   const approved = items.filter((item) => item.status === 'approved').length;
+  const filteredItems = useMemo(
+    () => items.filter((item) => activeFilter === 'all' || item.status === activeFilter),
+    [activeFilter, items],
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-7 pb-10">
@@ -127,11 +154,30 @@ export default function InterviewIntelligenceDashboard() {
             <p className="page-kicker">Records</p>
             <h2 className="mt-1 text-xl font-semibold text-text-primary">Interview workspaces</h2>
           </div>
-          <p className="text-xs font-semibold text-text-muted">{items.length} total</p>
+          <label className="flex items-center gap-2 text-xs font-semibold text-text-muted">
+            <span className="hidden sm:inline">Show</span>
+            <select
+              value={activeFilter}
+              onChange={(event) => setActiveFilter(event.target.value)}
+              className="rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs font-semibold text-text-primary outline-none focus:border-accent"
+              aria-label="Filter interview workspaces by status"
+            >
+              <option value="all">All workspaces ({items.length})</option>
+              {intelligenceStatuses.map((statusValue) => (
+                <option key={statusValue} value={statusValue}>{statusLabels[statusValue]}</option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {loading ? (
           <IntelligenceDashboardSkeleton />
+        ) : loadError ? (
+          <div className="intelligence-empty">
+            <h3 className="text-base font-semibold text-text-primary">Interview workspaces could not be loaded</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-muted">Your existing workspaces are unchanged. Reload the collection to try again.</p>
+            <button type="button" onClick={() => window.location.reload()} className="btn-secondary mt-5 px-4 py-2.5 text-sm font-semibold">Reload workspaces</button>
+          </div>
         ) : items.length === 0 ? (
           <div className="intelligence-empty">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-surface">
@@ -146,9 +192,15 @@ export default function InterviewIntelligenceDashboard() {
               Create first workspace
             </Link>
           </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="intelligence-empty">
+            <h3 className="text-base font-semibold text-text-primary">No matching workspaces</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-muted">There are no workspaces in this state right now.</p>
+            <button type="button" onClick={() => setActiveFilter('all')} className="btn-secondary mt-5 px-4 py-2.5 text-sm font-semibold">Show all workspaces</button>
+          </div>
         ) : (
           <div className="grid gap-4">
-            {items.map((item) => (
+            {filteredItems.map((item) => (
               <InterviewCard key={item.intelligence_id} item={item} />
             ))}
           </div>
