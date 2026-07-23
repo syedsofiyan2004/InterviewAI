@@ -347,15 +347,20 @@ function toKekaJob(record: KekaRecord): KekaJob {
   };
 }
 
-function toKekaCandidate(record: KekaRecord): KekaCandidate {
-  const id = firstString(record, ['id', 'candidateId']);
-  const name = firstString(record, ['name', 'fullName', 'candidateName']);
-  if (!id || !name) throw new KekaIntegrationError('Keka returned a candidate without an ID or name.');
+function toKekaCandidate(record: KekaRecord): KekaCandidate | undefined {
+  // The Hire list endpoint can return either the candidate directly or an
+  // interview/application row containing a nested candidate object.
+  const candidate = asRecord(record.candidate) ?? asRecord(record.candidateDetails) ?? asRecord(record.candidateData) ?? record;
+  const id = firstString(candidate, ['id', 'candidateId', 'candidate_id']) ?? firstString(record, ['candidateId', 'candidate_id']);
+  const name = firstString(candidate, ['name', 'fullName', 'candidateName'])
+    ?? getRequiredString([firstString(candidate, ['firstName', 'first_name']), firstString(candidate, ['lastName', 'last_name'])].filter(Boolean).join(' '))
+    ?? firstString(record, ['candidateName', 'name']);
+  if (!id || !name) return undefined;
   return {
     id,
     name,
-    email: firstString(record, ['email', 'emailId', 'candidateEmail']),
-    status: firstString(record, ['status', 'candidateStatus']),
+    email: firstString(candidate, ['email', 'emailId', 'candidateEmail', 'officialEmail']) ?? firstString(record, ['candidateEmail', 'email']),
+    status: firstString(candidate, ['status', 'candidateStatus']) ?? firstString(record, ['candidateStatus', 'status']),
   };
 }
 
@@ -702,7 +707,11 @@ export class KekaHireIntegration implements KekaIntegration {
     const safeJobId = encodeURIComponent(getRequiredString(jobId));
     if (!safeJobId) throw new KekaIntegrationError('Choose a Keka job before loading candidates.');
     const rows = await this.listPage(`/api/v1/hire/jobs/${safeJobId}/candidates?pageNumber=1&pageSize=200`, 'Keka could not find candidates for this job.');
-    return rows.map(toKekaCandidate).sort((left, right) => left.name.localeCompare(right.name));
+    const candidates = rows.map(toKekaCandidate).filter((candidate): candidate is KekaCandidate => !!candidate);
+    if (rows.length > 0 && candidates.length === 0) {
+      throw new KekaIntegrationError('Keka returned candidate records without usable candidate details for this role.');
+    }
+    return candidates.sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async listInterviews(jobId: string, candidateId: string): Promise<KekaScheduledInterview[]> {

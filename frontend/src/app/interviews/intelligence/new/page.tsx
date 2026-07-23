@@ -41,6 +41,8 @@ export default function NewInterviewIntelligencePage() {
   const [selectedKekaJobId, setSelectedKekaJobId] = useState('');
   const [selectedKekaCandidateId, setSelectedKekaCandidateId] = useState('');
   const [selectedKekaInterviewId, setSelectedKekaInterviewId] = useState('');
+  const [selectedKekaDepartment, setSelectedKekaDepartment] = useState('');
+  const [kekaRoleSearch, setKekaRoleSearch] = useState('');
   const [kekaLoading, setKekaLoading] = useState(false);
 
   useEffect(() => {
@@ -137,6 +139,19 @@ export default function NewInterviewIntelligencePage() {
   const rolesForSelectedDepartment = useMemo(() => careerJobs
     .filter((job) => (job.department?.trim() || 'Other roles') === selectedCareerDepartment)
     .sort((left, right) => left.title.localeCompare(right.title)), [careerJobs, selectedCareerDepartment]);
+
+  const kekaDepartments = useMemo(() => Array.from(new Set(
+    kekaJobs.map((job) => job.department?.trim() || 'Other roles'),
+  )).sort((left, right) => left.localeCompare(right)), [kekaJobs]);
+
+  const visibleKekaJobs = useMemo(() => {
+    const query = kekaRoleSearch.trim().toLowerCase();
+    return kekaJobs.filter((job) => {
+      const department = job.department?.trim() || 'Other roles';
+      return (!selectedKekaDepartment || department === selectedKekaDepartment)
+        && (!query || `${job.title} ${department}`.toLowerCase().includes(query));
+    });
+  }, [kekaJobs, kekaRoleSearch, selectedKekaDepartment]);
 
   const createWorkspace = async () => {
     setError(null);
@@ -236,9 +251,31 @@ export default function NewInterviewIntelligencePage() {
           <div className="p-5 md:p-7">
             <div className="grid gap-3 md:grid-cols-3">
               <SelectionStep number="1" icon={<BriefcaseBusiness size={17} />} title="Open role" complete={!!selectedKekaJobId}>
-                <select value={selectedKekaJobId} onChange={(event) => void selectKekaJob(event.target.value)} disabled={kekaLoading || !kekaJobs.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
-                  <option value="">{kekaJobs.length ? 'Choose a role' : 'No roles available'}</option>
-                  {kekaJobs.map((job) => <option key={job.id} value={job.id}>{job.title}{job.department ? ` - ${job.department}` : ''}</option>)}
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 md:grid-cols-1 xl:grid-cols-2">
+                  <input
+                    value={kekaRoleSearch}
+                    onChange={(event) => setKekaRoleSearch(event.target.value)}
+                    placeholder="Search roles"
+                    aria-label="Search Keka roles"
+                    className="premium-input w-full px-3 py-2.5 text-sm"
+                  />
+                  <select
+                    value={selectedKekaDepartment}
+                    onChange={(event) => {
+                      setSelectedKekaDepartment(event.target.value);
+                      void selectKekaJob('');
+                    }}
+                    disabled={kekaLoading || !kekaDepartments.length}
+                    aria-label="Filter roles by department"
+                    className="premium-input w-full px-3 py-2.5 text-sm disabled:opacity-50"
+                  >
+                    <option value="">All departments</option>
+                    {kekaDepartments.map((department) => <option key={department} value={department}>{department}</option>)}
+                  </select>
+                </div>
+                <select value={selectedKekaJobId} onChange={(event) => void selectKekaJob(event.target.value)} disabled={kekaLoading || !visibleKekaJobs.length} className="premium-input mt-2 w-full px-3 py-3 text-sm disabled:opacity-50">
+                  <option value="">{visibleKekaJobs.length ? 'Choose a role' : 'No matching roles'}</option>
+                  {visibleKekaJobs.map((job) => <option key={job.id} value={job.id}>{job.title}{job.department ? ` - ${job.department}` : ''}</option>)}
                 </select>
               </SelectionStep>
               <SelectionStep number="2" icon={<UserRound size={17} />} title="Candidate" complete={!!selectedKekaCandidateId} muted={!selectedKekaJobId}>
