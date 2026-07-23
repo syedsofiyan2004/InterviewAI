@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, DetailedInterview, EvaluationResult, InterviewQuestionGuide } from '@/lib/api';
 import { 
@@ -34,6 +34,8 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+type EvaluationView = 'overview' | 'guide' | 'analysis' | 'report';
+
 function InterviewDetailsContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get('id') || '';
@@ -47,6 +49,7 @@ function InterviewDetailsContent() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [guideLoading, setGuideLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const [selectedView, setSelectedView] = useState<EvaluationView | null>(null);
   const { startTour } = useTour();
   const startedToursRef = useRef<Set<string>>(new Set());
 
@@ -320,6 +323,10 @@ function InterviewDetailsContent() {
   }
 
   const isInFlight = interview?.status === 'QUEUED' || interview?.status === 'PROCESSING';
+  const activeView: EvaluationView = selectedView ?? (
+    result || isInFlight || interview?.status === 'FAILED' ? 'analysis' : 'overview'
+  );
+  const hasReport = !!result && !!interview?.report_s3_key;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -343,11 +350,12 @@ function InterviewDetailsContent() {
         </div>
       </div>
 
-      <header id="tour-result-header" className="space-y-4">
-        <div className="flex items-end justify-between">
+      <header id="tour-result-header" className="card overflow-hidden">
+        <div className="flex flex-col gap-5 p-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Interview evaluation</p>
             <h1 className="text-2xl font-semibold text-text-primary">{interview?.metadata.candidate_name}</h1>
-            <p className="text-base text-text-secondary">{interview?.metadata.position}</p>
+            <p className="text-sm text-text-secondary">{interview?.metadata.position}</p>
           </div>
           
           {result && interview?.report_s3_key && (
@@ -373,20 +381,40 @@ function InterviewDetailsContent() {
         </div>
       </header>
 
-      <InterviewWorkflowRail interview={interview} result={result} isInFlight={isInFlight} />
+      <EvaluationViewTabs activeView={activeView} onChange={setSelectedView} />
 
-      {!isInFlight && interview && (
-        <QuestionGuideSection
-          guide={interview.question_guide || null}
-          canGenerate={!!interview.jd_s3_key}
-          canRefresh={!interview.transcript_s3_key && !result}
-          loading={guideLoading}
-          onGenerate={handlePrepareQuestionGuide}
-        />
-      )}
+      {activeView === 'overview' && (
+        <div className="space-y-8" role="tabpanel" id="evaluation-overview-panel" aria-labelledby="evaluation-overview-tab">
+          <InterviewWorkflowRail interview={interview} result={result} isInFlight={isInFlight} />
 
-      {!result && !isInFlight && interview?.status !== 'FAILED' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {!isInFlight && interview && (
+            <section id="tour-question-guide" className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <BookOpenCheck size={20} />
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Interview guide</h2>
+                  <p className="mt-1 text-sm leading-6 text-text-secondary">
+                    {interview.question_guide
+                      ? 'The approved question guide is ready for review before the interview.'
+                      : 'Prepare the guide after adding the job description. It is not needed to upload a resume.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedView('guide')}
+                className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
+              >
+                {interview.question_guide ? 'View guide' : 'Prepare guide'}
+                <ArrowRight size={16} />
+              </button>
+            </section>
+          )}
+
+          {!result && !isInFlight && interview?.status !== 'FAILED' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div id="tour-document-enrollment" className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
@@ -498,9 +526,45 @@ function InterviewDetailsContent() {
                </button>
             </div>
           </div>
+            </div>
+          )}
+
+          {(result || isInFlight || interview?.status === 'FAILED') && (
+            <EvaluationEmptyState
+              icon={<ClipboardList size={20} />}
+              title="Evaluation workspace"
+              detail="Use the analysis view to follow the evaluation and open the report view when the PDF is available."
+              actionLabel="Open analysis"
+              onAction={() => setSelectedView('analysis')}
+            />
+          )}
         </div>
       )}
 
+      {activeView === 'guide' && (
+        <div className="space-y-6" role="tabpanel" id="evaluation-guide-panel" aria-labelledby="evaluation-guide-tab">
+          {!isInFlight && interview ? (
+            <QuestionGuideSection
+              guide={interview.question_guide || null}
+              canGenerate={!!interview.jd_s3_key}
+              canRefresh={!interview.transcript_s3_key && !result}
+              loading={guideLoading}
+              onGenerate={handlePrepareQuestionGuide}
+            />
+          ) : (
+            <EvaluationEmptyState
+              icon={<BookOpenCheck size={20} />}
+              title="Interview guide is locked"
+              detail="The guide remains available once the current analysis finishes."
+              actionLabel="View analysis"
+              onAction={() => setSelectedView('analysis')}
+            />
+          )}
+        </div>
+      )}
+
+      {activeView === 'analysis' && (
+        <div className="space-y-8" role="tabpanel" id="evaluation-analysis-panel" aria-labelledby="evaluation-analysis-tab">
       {isInFlight && (
         <div id="tour-processing" className="card p-12 text-center space-y-6">
           <div className="relative w-20 h-20 mx-auto">
@@ -669,6 +733,66 @@ function InterviewDetailsContent() {
         </div>
       )}
 
+      {!result && !isInFlight && interview?.status !== 'FAILED' && (
+        <EvaluationEmptyState
+          icon={<Target size={20} />}
+          title="Assessment is not ready yet"
+          detail="Complete the document checklist and start the assessment from the overview when the interview transcript is ready."
+          actionLabel="Open overview"
+          onAction={() => setSelectedView('overview')}
+        />
+      )}
+        </div>
+      )}
+
+      {activeView === 'report' && (
+        <div role="tabpanel" id="evaluation-report-panel" aria-labelledby="evaluation-report-tab">
+          {hasReport ? (
+            <section className="card overflow-hidden">
+              <div className="border-b border-border bg-surface px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Shareable outcome</p>
+                <h2 className="mt-1 text-xl font-semibold text-text-primary">Interview evaluation report</h2>
+              </div>
+              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <div>
+                  <p className="text-sm leading-6 text-text-secondary">
+                    The completed PDF includes the scorecard, recommendation, direct transcript evidence, strengths, and areas for review.
+                  </p>
+                  <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-text-muted">Candidate</dt>
+                      <dd className="mt-1 text-sm font-semibold text-text-primary">{interview?.metadata.candidate_name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-text-muted">Overall rating</dt>
+                      <dd className="mt-1 text-sm font-semibold text-text-primary">{formatScore(result?.overall_score)} / 10</dd>
+                    </div>
+                  </dl>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadReport}
+                  className="btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold"
+                >
+                  <Download size={18} />
+                  Download PDF report
+                </button>
+              </div>
+            </section>
+          ) : (
+            <EvaluationEmptyState
+              icon={<Download size={20} />}
+              title="Report will appear here"
+              detail={isInFlight
+                ? 'The PDF becomes available as soon as the current analysis is complete.'
+                : 'Complete the assessment first. The report is generated automatically from the final evaluation.'}
+              actionLabel={isInFlight ? 'View analysis' : 'Open overview'}
+              onAction={() => setSelectedView(isInFlight ? 'analysis' : 'overview')}
+            />
+          )}
+        </div>
+      )}
+
       <ConfirmDialog 
         isOpen={showDeleteConfirm}
         title="Delete Interview"
@@ -709,6 +833,93 @@ function InterviewDetailsSkeleton({ label }: { label: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function EvaluationViewTabs({
+  activeView,
+  onChange,
+}: {
+  activeView: EvaluationView;
+  onChange: (view: EvaluationView) => void;
+}) {
+  const views: Array<{ id: EvaluationView; label: string; detail: string; icon: typeof ClipboardList }> = [
+    { id: 'overview', label: 'Overview', detail: 'Files and readiness', icon: ClipboardList },
+    { id: 'guide', label: 'Interview guide', detail: 'Questions and cues', icon: BookOpenCheck },
+    { id: 'analysis', label: 'Analysis', detail: 'Evidence and decision', icon: Target },
+    { id: 'report', label: 'Report', detail: 'Downloadable PDF', icon: Download },
+  ];
+
+  return (
+    <nav className="card overflow-x-auto p-2" aria-label="Evaluation sections" role="tablist">
+      <div className="flex min-w-max gap-1">
+        {views.map((view) => {
+          const Icon = view.icon;
+          const selected = activeView === view.id;
+          return (
+            <button
+              key={view.id}
+              id={`evaluation-${view.id}-tab`}
+              type="button"
+              role="tab"
+              aria-controls={`evaluation-${view.id}-panel`}
+              aria-selected={selected}
+              onClick={() => onChange(view.id)}
+              className={cn(
+                'flex min-w-[150px] items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors',
+                selected
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+              )}
+            >
+              <Icon size={17} className={selected ? 'text-accent-foreground' : 'text-accent'} />
+              <span>
+                <span className="block text-sm font-semibold">{view.label}</span>
+                <span className={cn('mt-0.5 block text-[11px]', selected ? 'text-accent-foreground/80' : 'text-text-muted')}>
+                  {view.detail}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function EvaluationEmptyState({
+  icon,
+  title,
+  detail,
+  actionLabel,
+  onAction,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <section className="card flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-accent">
+          {icon}
+        </span>
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">{title}</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">{detail}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onAction}
+        className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
+      >
+        {actionLabel}
+        <ArrowRight size={16} />
+      </button>
+    </section>
   );
 }
 
