@@ -1,8 +1,7 @@
 'use client';
 
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { HelpCircle, Menu, ChevronRight } from 'lucide-react';
+import { BookOpen, Menu, Search } from 'lucide-react';
 import { getPageMetadata } from './pageMetadata';
 
 interface TopbarProps {
@@ -14,7 +13,7 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
   const metadata = getPageMetadata(pathname);
 
   return (
-    <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border bg-surface-elevated px-4 lg:px-6">
+    <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border bg-surface-elevated/95 px-4 lg:px-7">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <button
@@ -25,21 +24,7 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
           >
             <Menu size={18} />
           </button>
-          {metadata.breadcrumbs.length > 1 && (
-            <nav aria-label="Breadcrumb" className="hidden items-center gap-1 text-xs text-text-muted sm:flex">
-              <Link href="/" className="transition-colors hover:text-text-primary">Home</Link>
-              {metadata.breadcrumbs.map((item, index) => (
-                <span key={`${item.label}-${index}`} className="flex items-center gap-1">
-                  <ChevronRight size={13} aria-hidden="true" />
-                  {item.href ? (
-                    <Link href={item.href} className="transition-colors hover:text-text-primary">{item.label}</Link>
-                  ) : (
-                    <span aria-current="page">{item.label}</span>
-                  )}
-                </span>
-              ))}
-            </nav>
-          )}
+          <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-text-muted sm:inline">MiMo workspace</span>
         </div>
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold text-text-primary">{metadata.title}</h1>
@@ -52,6 +37,16 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
       <div className="flex items-center gap-2">
         <button
           type="button"
+          onClick={() => window.dispatchEvent(new Event('minfy-command-open'))}
+          className="hidden items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-semibold text-text-muted transition-colors hover:border-accent/40 hover:text-text-primary md:inline-flex"
+          aria-label="Open command palette"
+        >
+          <Search size={15} />
+          <span>Search</span>
+          <kbd className="rounded border border-border bg-surface-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted">Ctrl K</kbd>
+        </button>
+        <button
+          type="button"
           onClick={() => {
             Object.keys(localStorage)
               .filter((key) => key.startsWith('minfy_tour_done'))
@@ -59,11 +54,12 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
             localStorage.setItem('minfy_tour_replay', 'all');
             window.location.reload();
           }}
-          className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-interactive hover:text-accent"
-          title="Replay guide"
+          className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold text-text-muted transition-colors hover:bg-surface-interactive hover:text-text-primary"
+          title="Replay product guide"
           aria-label="Replay guide"
         >
-          <HelpCircle size={16} />
+          <BookOpen size={16} />
+          <span className="hidden sm:inline">Guide</span>
         </button>
       </div>
     </header>

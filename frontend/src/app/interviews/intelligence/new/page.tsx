@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { format } from 'date-fns';
 import { api, IntegrationStatus, KekaCandidateOption, KekaInterviewOption, KekaJobOption, MinfyCareerJob } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   ArrowLeft,
   ArrowRight,
@@ -17,6 +19,35 @@ import {
 } from 'lucide-react';
 
 export default function NewInterviewIntelligencePage() {
+  const { isProfileLoading, hasTier } = useAuth();
+
+  if (isProfileLoading) {
+    return (
+      <div className="card p-5 text-sm text-text-muted">Loading access...</div>
+    );
+  }
+
+  if (!hasTier('REVIEWER')) {
+    return (
+      <div className="card p-5">
+        <div className="flex items-start gap-3">
+          <span className="rounded-xl bg-warning/10 p-2.5 text-warning"><CircleAlert size={20} /></span>
+          <div>
+            <h1 className="text-lg font-semibold text-text-primary">Reviewer access required</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
+              Manual connected workspace creation is available to reviewer-tier administrators. Assigned interviewers should open scheduled rounds from My Interviews.
+            </p>
+            <Link href="/my-interviews" className="btn-primary mt-4 inline-flex px-3 py-2 text-sm">Go to My Interviews</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <NewInterviewIntelligenceContent />;
+}
+
+function NewInterviewIntelligenceContent() {
   const router = useRouter();
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,6 +74,7 @@ export default function NewInterviewIntelligencePage() {
   const [selectedKekaInterviewId, setSelectedKekaInterviewId] = useState('');
   const [selectedKekaDepartment, setSelectedKekaDepartment] = useState('');
   const [kekaRoleSearch, setKekaRoleSearch] = useState('');
+  const [kekaCandidateSearch, setKekaCandidateSearch] = useState('');
   const [kekaLoading, setKekaLoading] = useState(false);
 
   useEffect(() => {
@@ -62,6 +94,11 @@ export default function NewInterviewIntelligencePage() {
   }, []);
 
   const automaticReady = !!status?.keka.configured && !!status?.teams.configured;
+  const connectionTone = loading
+    ? 'border-border bg-surface text-text-muted'
+    : automaticReady
+      ? 'bg-success/10 text-success'
+      : 'bg-warning/10 text-warning';
 
   const loadKekaJobs = async () => {
     setKekaLoading(true);
@@ -79,6 +116,7 @@ export default function NewInterviewIntelligencePage() {
     setSelectedKekaJobId(jobId);
     setSelectedKekaCandidateId('');
     setSelectedKekaInterviewId('');
+    setKekaCandidateSearch('');
     setKekaCandidates([]);
     setKekaInterviews([]);
     if (!jobId) return;
@@ -153,6 +191,69 @@ export default function NewInterviewIntelligencePage() {
     });
   }, [kekaJobs, kekaRoleSearch, selectedKekaDepartment]);
 
+  const visibleKekaCandidates = useMemo(() => {
+    const query = kekaCandidateSearch.trim().toLowerCase();
+    return kekaCandidates.filter((candidate) => {
+      const haystack = `${candidate.name} ${candidate.email || ''} ${candidate.status || ''}`.toLowerCase();
+      return !query || haystack.includes(query);
+    });
+  }, [kekaCandidates, kekaCandidateSearch]);
+
+  const candidateGroups = useMemo(() => {
+    const activeStatuses = ['active', 'scheduled', 'interview', 'in progress', 'shortlisted', 'applied'];
+    const active = visibleKekaCandidates.filter((candidate) => {
+      const statusText = (candidate.status || '').toLowerCase();
+      return !statusText || activeStatuses.some((status) => statusText.includes(status));
+    });
+    const other = visibleKekaCandidates.filter((candidate) => !active.includes(candidate));
+    return { active, other };
+  }, [visibleKekaCandidates]);
+
+  const interviewGroups = useMemo(() => {
+    const now = Date.now();
+    const recentWindowMs = 3 * 24 * 60 * 60 * 1000;
+    const upcoming: KekaInterviewOption[] = [];
+    const recent: KekaInterviewOption[] = [];
+    const older: KekaInterviewOption[] = [];
+    const undated: KekaInterviewOption[] = [];
+
+    kekaInterviews.forEach((interview) => {
+      const scheduledDate = parseScheduleDate(interview.scheduledAt);
+      if (!scheduledDate) {
+        undated.push(interview);
+        return;
+      }
+      const time = scheduledDate.getTime();
+      if (time >= now) {
+        upcoming.push(interview);
+      } else if (now - time <= recentWindowMs) {
+        recent.push(interview);
+      } else {
+        older.push(interview);
+      }
+    });
+
+    return { upcoming, recent, older, undated };
+  }, [kekaInterviews]);
+
+  const selectedCandidate = useMemo(
+    () => kekaCandidates.find((candidate) => candidate.id === selectedKekaCandidateId),
+    [kekaCandidates, selectedKekaCandidateId],
+  );
+
+  const interviewBlocker = useMemo(() => {
+    if (!selectedKekaJobId) return 'Choose a role to load candidates from Keka Hire.';
+    if (!selectedKekaCandidateId) return 'Choose the candidate whose interview workspace you want to prepare.';
+    if (kekaLoading) return '';
+    if (!kekaInterviews.length) {
+      return `No scheduled interview was returned for ${selectedCandidate?.name || 'this candidate'}. Schedule the interview in Keka with the Teams meeting details, then refresh this selection.`;
+    }
+    if (!interviewGroups.upcoming.length && !interviewGroups.recent.length) {
+      return 'Only older interview records were returned. You can open them for testing, but the production flow should use an upcoming or recently completed scheduled interview.';
+    }
+    return '';
+  }, [interviewGroups.recent.length, interviewGroups.upcoming.length, kekaInterviews.length, kekaLoading, selectedCandidate?.name, selectedKekaCandidateId, selectedKekaJobId]);
+
   const createWorkspace = async () => {
     setError(null);
     setCreating(true);
@@ -167,7 +268,11 @@ export default function NewInterviewIntelligencePage() {
         candidateId: selectedKekaCandidateId,
         interviewId: selectedKekaInterviewId,
       });
-      router.push(`/interviews/intelligence/view?id=${created.intelligence_id}`);
+      router.push(
+        created.workspace_id
+          ? `/candidates/view?id=${created.workspace_id}`
+          : `/interviews/intelligence/view?id=${created.intelligence_id}`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The automatic interview sync could not start');
     } finally {
@@ -195,7 +300,11 @@ export default function NewInterviewIntelligencePage() {
         meetingUrl: teamsPilot.meetingUrl.trim(),
         organizerEmail: teamsPilot.organizerEmail.trim(),
       });
-      router.push(`/interviews/intelligence/view?id=${created.intelligence_id}`);
+      router.push(
+        created.workspace_id
+          ? `/candidates/view?id=${created.workspace_id}`
+          : `/interviews/intelligence/view?id=${created.intelligence_id}`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The Teams-connected workspace could not be created');
     } finally {
@@ -240,8 +349,8 @@ export default function NewInterviewIntelligencePage() {
                 Choose the role first, then the candidate and their scheduled interview. The workspace is created with the right context already attached.
               </p>
             </div>
-            <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
-              {automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
+            <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${connectionTone}`}>
+              {loading ? <RefreshCw size={14} className="animate-spin" /> : automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
               {loading ? 'Checking connections' : automaticReady ? 'Connections ready' : 'Connection needs attention'}
             </span>
           </div>
@@ -279,19 +388,66 @@ export default function NewInterviewIntelligencePage() {
                 </select>
               </SelectionStep>
               <SelectionStep number="2" icon={<UserRound size={17} />} title="Candidate" complete={!!selectedKekaCandidateId} muted={!selectedKekaJobId}>
+                <input
+                  value={kekaCandidateSearch}
+                  onChange={(event) => setKekaCandidateSearch(event.target.value)}
+                  placeholder="Search candidate name or email"
+                  aria-label="Search Keka candidates"
+                  disabled={!selectedKekaJobId || !kekaCandidates.length}
+                  className="premium-input mt-3 w-full px-3 py-2.5 text-sm disabled:opacity-50"
+                />
                 <select value={selectedKekaCandidateId} onChange={(event) => void selectKekaCandidate(event.target.value)} disabled={kekaLoading || !selectedKekaJobId || !kekaCandidates.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
-                  <option value="">{!selectedKekaJobId ? 'Choose a role first' : kekaCandidates.length ? 'Choose a candidate' : 'No candidates available'}</option>
-                  {kekaCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.email ? ` - ${candidate.email}` : ''}</option>)}
+                  <option value="">{!selectedKekaJobId ? 'Choose a role first' : visibleKekaCandidates.length ? 'Choose a candidate' : 'No matching candidates'}</option>
+                  {candidateGroups.active.length > 0 && (
+                    <optgroup label="Active candidates">
+                      {candidateGroups.active.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.email ? ` - ${candidate.email}` : ''}{candidate.status ? ` (${candidate.status})` : ''}</option>)}
+                    </optgroup>
+                  )}
+                  {candidateGroups.other.length > 0 && (
+                    <optgroup label="Other candidate records">
+                      {candidateGroups.other.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}{candidate.email ? ` - ${candidate.email}` : ''}{candidate.status ? ` (${candidate.status})` : ''}</option>)}
+                    </optgroup>
+                  )}
                 </select>
               </SelectionStep>
               <SelectionStep number="3" icon={<Video size={17} />} title="Scheduled interview" complete={!!selectedKekaInterviewId} muted={!selectedKekaCandidateId}>
                 <select value={selectedKekaInterviewId} onChange={(event) => setSelectedKekaInterviewId(event.target.value)} disabled={kekaLoading || !selectedKekaCandidateId || !kekaInterviews.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
                   <option value="">{!selectedKekaCandidateId ? 'Choose a candidate first' : kekaInterviews.length ? 'Choose an interview' : 'No scheduled interviews'}</option>
-                  {kekaInterviews.map((interview) => <option key={interview.id} value={interview.id}>{interview.scheduledAt || 'Scheduled interview'}{interview.status ? ` - ${interview.status}` : ''}</option>)}
+                  {interviewGroups.upcoming.length > 0 && (
+                    <optgroup label="Upcoming interviews">
+                      {interviewGroups.upcoming.map((interview) => <option key={interview.id} value={interview.id}>{formatKekaInterviewOption(interview)}</option>)}
+                    </optgroup>
+                  )}
+                  {interviewGroups.recent.length > 0 && (
+                    <optgroup label="Recently completed interviews">
+                      {interviewGroups.recent.map((interview) => <option key={interview.id} value={interview.id}>{formatKekaInterviewOption(interview)}</option>)}
+                    </optgroup>
+                  )}
+                  {interviewGroups.older.length > 0 && (
+                    <optgroup label="Older interview records">
+                      {interviewGroups.older.map((interview) => <option key={interview.id} value={interview.id}>{formatKekaInterviewOption(interview)}</option>)}
+                    </optgroup>
+                  )}
+                  {interviewGroups.undated.length > 0 && (
+                    <optgroup label="Interviews without readable date">
+                      {interviewGroups.undated.map((interview) => <option key={interview.id} value={interview.id}>{formatKekaInterviewOption(interview)}</option>)}
+                    </optgroup>
+                  )}
                 </select>
               </SelectionStep>
             </div>
             {kekaLoading && <div className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-text-muted"><RefreshCw size={14} className="animate-spin" /> Updating interview options</div>}
+            {interviewBlocker && (
+              <div className="mt-4 rounded-2xl border border-warning/30 bg-warning/5 px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <CircleAlert size={18} className="mt-0.5 shrink-0 text-warning" />
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">Interview schedule check</p>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">{interviewBlocker}</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -463,4 +619,49 @@ function SelectionStep({
       {children}
     </div>
   );
+}
+
+function parseScheduleDate(value?: string): Date | null {
+  const text = value?.trim();
+  if (!text) return null;
+  if (/^\d{10}$/.test(text)) return new Date(Number(text) * 1000);
+  if (/^\d{13}$/.test(text)) return new Date(Number(text));
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Maps the stored round status onto the short, human phrase shown in the
+ * picker. The raw values come from the intelligence record's own lifecycle.
+ */
+function importedStatusLabel(status?: string): string {
+  switch (status) {
+    case 'analysis_generated':
+    case 'approved':
+    case 'scores_submitted':
+      return 'Report ready';
+    case 'transcript_uploaded':
+    case 'processing':
+      return 'Analysis running';
+    default:
+      return 'In progress';
+  }
+}
+
+function formatKekaInterviewOption(interview: KekaInterviewOption): string {
+  const scheduledDate = parseScheduleDate(interview.scheduledAt);
+  const dateText = scheduledDate
+    ? format(scheduledDate, 'dd-MM-yyyy, HH:mm')
+    : interview.scheduledAt || 'Scheduled date unknown';
+  const title = interview.title || 'Scheduled interview';
+  // An imported round shows what actually happened to it; only a round that was
+  // never imported falls back to describing the schedule itself.
+  const stateText = interview.isImported
+    ? importedStatusLabel(interview.importedStatus)
+    : scheduledDate
+      ? scheduledDate.getTime() < Date.now()
+        ? 'Not started'
+        : 'Upcoming'
+      : '';
+  return `${title} - ` + [dateText, stateText].filter(Boolean).join(' - ');
 }

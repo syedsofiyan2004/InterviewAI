@@ -1,0 +1,15 @@
+{
+  "name": "calculator-mcp-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AWS Pricing Calculator MCP server, run in HTTP mode as a Lambda sidecar for the Cost Calculator app.",
+  "scripts": {
+    "start": "node node_modules/sample-aws-pricing-calculator-mcp/dist/mcp-server.js",
+    "start:local": "MCP_TRANSPORT=http PORT=8931 HOST=127.0.0.1 npm start"
+  },
+  "dependencies": {
+    "sample-aws-pricing-calculator-mcp": "1.2.9",
+    "@aws-sdk/client-dynamodb": "^3.712.0",
+    "@aws-sdk/lib-dynamodb": "^3.712.0"
+  }
+}

@@ -421,7 +421,7 @@ function MomProjectContent() {
               {bulkFiles.map((selectedFile) => (
                 <div key={`${selectedFile.name}-${selectedFile.lastModified}`} className="flex items-center justify-between gap-3 text-xs">
                   <span className="truncate text-text-secondary">{inferMeetingTitle(selectedFile.name)}</span>
-                <span className="shrink-0 text-text-muted">{format(new Date(selectedFile.lastModified || 0), 'MMM d, yyyy')}</span>
+                <span className="shrink-0 text-text-muted">{format(new Date(selectedFile.lastModified || 0), 'dd-MM-yyyy')}</span>
                 </div>
               ))}
             </div>
@@ -525,8 +525,12 @@ function getMomSortDate(mom: Mom): number {
 }
 
 function formatMomMeetingDate(mom: Mom): string {
-  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'MMM d, yyyy');
-  if (mom.meeting_date && mom.meeting_date !== 'Not specified') return mom.meeting_date;
+  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'dd-MM-yyyy');
+  if (mom.meeting_date && mom.meeting_date !== 'Not specified') {
+    const parsed = new Date(mom.meeting_date);
+    if (!isNaN(parsed.getTime())) return format(parsed, 'dd-MM-yyyy');
+    return mom.meeting_date;
+  }
   return mom.status === 'COMPLETED' ? 'Not specified' : 'Pending analysis';
 }
 

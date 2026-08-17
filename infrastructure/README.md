@@ -6,8 +6,8 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
 ## Useful commands
 
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
+* `npm run build`   type-check only (`tsc --noEmit`); emitting `.js` beside the sources would let esbuild bundle a stale shadow instead of the real Lambda code
+* `npm run watch`   watch for changes and type-check
 * `npm run test`    perform the jest unit tests
 * `npx cdk deploy`  deploy this stack to your default AWS account/region
 * `npx cdk diff`    compare deployed stack with current state

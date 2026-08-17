@@ -255,7 +255,9 @@ function LoginContent() {
         <section className="hidden min-h-0 flex-col justify-between lg:flex">
           <div className="flex items-center justify-between">
             <div className="relative flex items-center gap-3">
-              <img src="/minfy-ai-logo.png" alt="" className="h-11 w-11 rounded-lg object-contain" />
+              <span className="brand-logo-tile h-24 w-24">
+                <img src="/minfy-mimo-hub-logo.png" alt="" className="h-full w-full object-contain" />
+              </span>
               <span className="text-lg font-semibold tracking-tight text-white">Minfy MiMo AI Hub</span>
             </div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">

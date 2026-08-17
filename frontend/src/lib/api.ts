@@ -1,5 +1,84 @@
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
+export type BaseRole = 'MEMBER' | 'ADMIN';
+export type AdminTier = 'VIEWER' | 'REVIEWER' | 'APPROVER' | 'OWNER';
+export type WorkspaceStatus = 'OPEN' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
+export type LinkedRecordType = 'interview' | 'mom' | 'intelligence';
+
+export interface LinkedRecord {
+  record_type: LinkedRecordType;
+  record_id: string;
+  label?: string;
+  linked_at: number;
+  linked_by: string;
+  summary?: any;
+}
+
+export interface Member {
+  org_id: string;
+  user_id: string;
+  email: string;
+  base_role: BaseRole;
+  tier: AdminTier | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type AuditAction = 
+  | 'READ_INTERVIEW' | 'READ_MOM' | 'READ_INTELLIGENCE' | 'READ_REPORT'
+  | 'DOWNLOAD_REPORT' | 'READ_WORKSPACE' | 'READ_AUDIT_LOG' | 'SEARCH'
+  | 'SOFT_DELETE' | 'UPDATE_RECORD' | 'GRANT_TIER' | 'REVOKE_TIER'
+  | 'CHANGE_BASE_ROLE' | 'APPROVE' | 'REJECT' | 'SHARE_ADD'
+  | 'SHARE_REMOVE' | 'LIST_COGNITO_USERS' | 'QBANK_UPDATE' | 'QBANK_DELETE'
+  | 'KEKA_SYNC' | 'COMPOSITE_ANALYSIS';
+
+export interface AuditLogEntry {
+  audit_id: string;
+  ts: number;
+  actor_user_id: string;
+  actor_email?: string;
+  action: AuditAction;
+  target_type?: string;
+  target_id?: string;
+  target_owner_user_id?: string;
+  detail?: string;
+}
+
+export interface SearchResult {
+  type: 'interview' | 'mom' | 'intelligence';
+  id: string;
+  title?: string;
+  owner_user_id: string;
+  owner_email?: string;
+  created_at: number;
+  status?: string;
+}
+
+export interface AdminOverview {
+  total_interviews: number;
+  interviews: Record<string, number>;
+  total_moms: number;
+  moms: Record<string, number>;
+  total_workspaces?: number;
+  workspaces?: Record<string, number>;
+  total_intelligence?: number;
+  intelligence?: Record<string, number>;
+  total_calculations?: number;
+  calculations?: Record<string, number>;
+}
+
+export interface CognitoUser {
+  username: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  enabled: boolean;
+  attributes: Array<{ Name: string; Value: string }>;
+  has_membership?: boolean;
+  user_id: string;
+  email?: string;
+}
+
 export type InterviewStatus = 
   | 'CREATED' 
   | 'FILES_UPLOADED' 
@@ -24,7 +103,35 @@ export interface Interview {
   position: string;
 }
 
-export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'position'> {
+/**
+ * One stage transition, appended by the worker as it happens.
+ *
+ * `progress_stage`/`progress_message` only ever hold the *current* stage, so a
+ * single line is all they can show. This list is the history behind it — what
+ * ran, in order, with the server timestamp of each transition — which is what
+ * makes a scrolling log possible instead of one overwritten sentence.
+ */
+export interface ProgressEvent {
+  at: number;
+  stage: string;
+  message: string;
+}
+
+/**
+ * Server-reported progress for a running analysis.
+ *
+ * `analysis_started_at` is stamped once when the job is queued and never
+ * rewritten, so elapsed time stays correct across page refreshes. Compare it
+ * against `getServerNow()`, never `Date.now()` — it is a server timestamp.
+ */
+export interface AnalysisProgress {
+  analysis_started_at?: number | null;
+  progress_stage?: string | null;
+  progress_message?: string | null;
+  progress_events?: ProgressEvent[] | null;
+}
+
+export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'position'>, AnalysisProgress {
   metadata: InterviewMetadata;
   transcript_uploaded: boolean;
   jd_uploaded: boolean;
@@ -119,7 +226,7 @@ export interface MomProject {
   completed_count: number;
 }
 
-export interface DetailedMom extends Mom {
+export interface DetailedMom extends Mom, AnalysisProgress {
   transcript_uploaded: boolean;
   transcript_s3_key?: string;
   result_s3_key?: string;
@@ -163,6 +270,8 @@ export interface MomResult {
       priority?: 'High' | 'Medium' | 'Low';
     }>;
   }>;
+  key_topics?: any[];
+  action_items?: any[];
   risks: Array<{
     description: string;
     likelihood?: 'H' | 'M' | 'L';
@@ -237,9 +346,10 @@ export interface IntelligencePanelist {
   opinion?: 'proceed' | 'hold' | 'reject' | 'needs_review';
 }
 
-export interface InterviewIntelligenceRecord {
+export interface InterviewIntelligenceRecord extends AnalysisProgress {
   intelligence_id: string;
   owner_user_id: string;
+  owner_email?: string;
   created_at: number;
   updated_at: number;
   source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
@@ -256,7 +366,7 @@ export interface InterviewIntelligenceRecord {
     meetingId?: string;
     organizerUserId?: string;
     organizerEmail?: string;
-    transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
+    transcriptStatus: 'not_available' | 'pending' | 'transcribing' | 'mocked' | 'synced' | 'failed';
     lastSyncAt?: number;
     error?: string;
   };
@@ -278,6 +388,10 @@ export interface InterviewIntelligenceRecord {
   panel: IntelligencePanelist[];
   questionPlan?: {
     generatedAt: number;
+    /** Focus areas the interviewer chose for this round. */
+    selectedTopics?: string[];
+    /** How many role questions the interviewer asked for. */
+    requestedQuestionCount?: number;
     candidateSummary: string;
     jdSummary: string;
     skillAreas: Array<{
@@ -337,6 +451,15 @@ export interface InterviewIntelligenceRecord {
       summary: string;
       humanReviewRequired: boolean;
     };
+    caseEvaluation?: {
+      overallScore: number;
+      summary: string;
+      competencyScores: Array<{
+        competency: string;
+        score: number;
+        evidence: string;
+      }>;
+    };
     finalReport: string;
   };
   analysisError?: string;
@@ -344,6 +467,37 @@ export interface InterviewIntelligenceRecord {
     approvedBy: string;
     approvedAt: number;
     notes?: string;
+  };
+  caseInterview?: {
+    enabled: boolean;
+    /** 'ai' = the model's own scenario; 'template' = built from the JD after a model failure. */
+    source?: 'ai' | 'template';
+    title?: string;
+    difficulty?: string;
+    problem?: string;
+    format?: string;
+    candidatePack?: {
+      scenario: string;
+      context: string[];
+      deliverables: string[];
+      tasks: Array<{
+        title: string;
+        expectedDurationMinutes?: number;
+        instructions: string[];
+      }>;
+    };
+    interviewerGuide?: {
+      competencies: Array<{
+        name: string;
+        whatGoodLooksLike: string;
+        weakSignals: string;
+      }>;
+      strongAnswerMarkers: string[];
+      probingQuestions: Array<{
+        area: string;
+        question: string;
+      }>;
+    };
   };
 }
 
@@ -369,10 +523,78 @@ export interface KekaCandidateOption {
 
 export interface KekaInterviewOption {
   id: string;
+  title?: string;
   scheduledAt?: string;
   status?: string;
   meetingUrl?: string;
   organizerEmail?: string;
+  isImported?: boolean;
+  /** Status of the already-imported round, when one exists. */
+  importedStatus?: string;
+  /** Intelligence record id of the already-imported round, when one exists. */
+  importedIntelligenceId?: string;
+}
+
+export interface ScheduledPanelist {
+  interviewerId?: string;
+  name: string;
+  email?: string;
+}
+
+export interface ScheduledInterview {
+  panelist_email: string;
+  keka_interview_id: string;
+  keka_job_id: string;
+  keka_candidate_id: string;
+  job_title: string;
+  department?: string;
+  candidate_name: string;
+  candidate_email?: string;
+  scheduled_at: number;
+  title?: string;
+  panel: ScheduledPanelist[];
+  meeting_url?: string;
+  meeting_id?: string;
+  organizer_email?: string;
+  organizer_user_id?: string;
+  keka_status?: string;
+  synced_at: number;
+  cancelled_at?: number;
+  intelligence_id?: string;
+  workspace_id?: string;
+  provisioned_at?: number;
+}
+
+export interface QuestionBankRoleSummary {
+  role_key: string;
+  role_title: string;
+  department?: string;
+  experience?: string;
+  keka_job_id?: string;
+  competencies: string[];
+  updated_at: number;
+  updated_by?: string;
+}
+
+export interface QuestionBankRole extends QuestionBankRoleSummary {
+  created_at: number;
+}
+
+export interface QuestionBankItem {
+  role_key: string;
+  question_id: string;
+  category: string;
+  topic_tag?: string;
+  competency?: string;
+  question: string;
+  follow_ups: string[];
+  strong_signals: string[];
+  red_flags: string[];
+  active: boolean;
+  source: 'SEED' | 'ADMIN';
+  created_at: number;
+  updated_at: number;
+  updated_by?: string;
 }
 
 export interface MinfyCareerJob {
@@ -392,6 +614,33 @@ export interface MinfyCareerJobDetail extends MinfyCareerJob {
 // Auth-aware fetch — attaches the Cognito ID token to every API call.
 // CognitoUserPoolsAuthorizer validates the ID token (not the access token).
 // ---------------------------------------------------------------------------
+/**
+ * Offset between this browser's clock and the API's, in ms (browser − server).
+ *
+ * Every progress timestamp the UI renders (analysis_started_at,
+ * composite_started_at, progress events) is stamped by Lambda. Subtracting one
+ * of those from `Date.now()` compares two clocks that are free to disagree: a
+ * workstation a minute behind produced negative elapsed times and pinned the
+ * progress timers to 0:00. The API publishes its clock on every response
+ * (`X-Server-Time`), so we learn the offset once and read server time from then
+ * on. Starts at 0, which is exactly right until the first response lands.
+ */
+let serverClockSkewMs = 0;
+
+/** Server time, as best this client can tell. Use for anything compared against a server timestamp. */
+export function getServerNow(): number {
+  return Date.now() - serverClockSkewMs;
+}
+
+function recordServerClock(response: Response): void {
+  const stamp = Number(response.headers.get('X-Server-Time'));
+  if (!Number.isFinite(stamp) || stamp <= 0) return;
+  // Half the round trip is a closer estimate than none, but the request start is
+  // not tracked here and a sub-second error is irrelevant to a seconds-resolution
+  // timer — so take the header at face value.
+  serverClockSkewMs = Date.now() - stamp;
+}
+
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const { getCurrentSession } = await import('./auth');
   const session = await getCurrentSession();
@@ -410,7 +659,9 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
     Authorization: token,
   };
 
-  return fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers });
+  recordServerClock(response);
+  return response;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -421,7 +672,121 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+export interface MeResponse {
+  userId: string;
+  email: string;
+  baseRole: BaseRole;
+  tier: AdminTier | null;
+  isAdmin: boolean;
+  org_id?: string;
+}
+
+export interface CompositeAnalysis {
+  compositeScore?: number;
+  overallSummary?: string;
+  keyStrengths?: string[];
+  majorConcerns?: string[];
+  finalRecommendation?: string;
+}
+
+export interface CandidateWorkspace {
+  workspace_id: string;
+  org_id: string;
+  title: string;
+  candidate_name?: string;
+  position?: string;
+  status: WorkspaceStatus;
+  owner_user_id: string;
+  owner_email?: string;
+  linked_records?: LinkedRecord[];
+  created_at: number;
+  updated_at: number;
+  deleted_at?: number;
+  /**
+   * Multi-round synthesis (APPROVER+). Written by the async composite-analysis
+   * worker, so the UI polls composite_status rather than awaiting the request.
+   */
+  composite_analysis?: CompositeAnalysis;
+  composite_status?: 'processing' | 'done' | 'failed';
+  composite_progress_stage?: string;
+  composite_progress_message?: string;
+  composite_progress_events?: ProgressEvent[] | null;
+  composite_started_at?: number;
+  composite_error?: string | null;
+  /**
+   * How many linked rounds actually carried a completed AI review into the
+   * synthesis, out of how many are linked. A composite built from 1 of 3 rounds
+   * is a different artifact from one built from all 3, so the UI states it.
+   */
+  composite_rounds_used?: number;
+  composite_rounds_total?: number;
+  composite_rounds_skipped?: string[];
+}
+
+export interface Comment {
+  comment_id: string;
+  workspace_id: string;
+  author_user_id: string;
+  author_email: string;
+  body: string;
+  resolved: boolean;
+  created_at: number;
+}
+
+export interface SharePermission {
+  workspace_id: string;
+  user_id: string;
+  user_email?: string;
+  shared_user_id?: string;
+  shared_email?: string;
+  permission: 'VIEWER' | 'COMMENTER';
+  created_at: number;
+  created_by: string;
+}
+
+export interface WorkspaceFull {
+  workspace: CandidateWorkspace;
+  comments?: Comment[];
+  comments_has_more?: boolean;
+  shares?: SharePermission[];
+  decisions?: any[];
+  linked_records?: LinkedRecord[];
+  my_access: {
+    can_comment: boolean;
+    is_owner: boolean;
+    can_decide: boolean;
+    via_admin_tier?: string;
+  };
+}
+
+export interface Member {
+  org_id: string;
+  user_id: string;
+  email: string;
+  base_role: BaseRole;
+  tier: AdminTier | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CognitoUser {
+  username: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  enabled: boolean;
+  attributes: Array<{ Name: string; Value: string }>;
+  has_membership?: boolean;
+  user_id: string;
+  email?: string;
+}
+
 export const api = {
+  async getMe(): Promise<MeResponse> {
+    const res = await authFetch(`${API_URL}/me`);
+    return handleResponse(res);
+  },
+
   async getInterviews(): Promise<{ items: Interview[]; count: number }> {
     const res = await authFetch(`${API_URL}/interviews`);
     return handleResponse(res);
@@ -628,6 +993,28 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getMyInterviews(): Promise<{ items: ScheduledInterview[] }> {
+    const res = await authFetch(`${API_URL}/my-interviews`);
+    return handleResponse(res);
+  },
+
+  async refreshMyInterviews(): Promise<{ items: ScheduledInterview[] }> {
+    const res = await authFetch(`${API_URL}/my-interviews/refresh`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  async openMyInterview(kekaInterviewId: string): Promise<{
+    intelligence_id: string;
+    item?: InterviewIntelligenceRecord;
+    workspace_id?: string;
+    already_provisioned?: boolean;
+  }> {
+    const res = await authFetch(`${API_URL}/my-interviews/${encodeURIComponent(kekaInterviewId)}/open`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
   async createIntelligenceInterview(data: {
     source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
     job?: {
@@ -657,7 +1044,7 @@ export const api = {
     jobId?: string;
     candidateId?: string;
     interviewId?: string;
-  }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord }> {
+  }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord; workspace_id?: string }> {
     const res = await authFetch(`${API_URL}/intelligence-interviews`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -703,10 +1090,26 @@ export const api = {
     return handleResponse(res);
   },
 
-  async generateIntelligenceQuestions(id: string): Promise<InterviewIntelligenceRecord> {
-    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/generate-questions`, {
+  async getQuestionTopics(intelligenceId: string): Promise<{
+    topics: Array<{ topic: string; priority: 'high' | 'medium' | 'low' }>;
+    level: string;
+    suggested_question_count: number;
+    previously_covered: Array<{ topic: string; round: string }>;
+  }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${encodeURIComponent(intelligenceId)}/question-topics`);
+    return handleResponse(res);
+  },
+
+  async generateIntelligenceQuestions(id: string, body?: { focus_areas?: string[]; question_count?: number }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${encodeURIComponent(id)}/generate-questions`, {
       method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
     });
+    return handleResponse(res);
+  },
+
+  async generateIntelligenceCaseInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/case-interview`, { method: 'POST' });
     return handleResponse(res);
   },
 
@@ -781,5 +1184,200 @@ export const api = {
     } catch {
       // silent fail — localStorage fallback handles it
     }
+  },
+
+  async adminListMembers(): Promise<{ items: Member[] }> {
+    const res = await authFetch(`${API_URL}/admin/members`);
+    return handleResponse(res);
+  },
+
+  async adminListCognitoUsers(): Promise<{ items: CognitoUser[] }> {
+    const res = await authFetch(`${API_URL}/admin/cognito-users`);
+    return handleResponse(res);
+  },
+
+  async adminGrantTier(userId: string, tier: AdminTier, note?: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/tier`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier, note }),
+    });
+    return handleResponse(res);
+  },
+
+  async adminRevokeTier(userId: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/revoke`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async adminChangeBaseRole(userId: string, baseRole: BaseRole, email?: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/base-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_role: baseRole, email }),
+    });
+    return handleResponse(res);
+  },
+
+  async adminListApprovals(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/admin/approvals`);
+    return handleResponse(res);
+  },
+
+  async adminTriggerKekaSync(): Promise<{ status: string }> {
+    const res = await authFetch(`${API_URL}/admin/keka-sync`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  async adminListQuestionBank(): Promise<{ items: QuestionBankRoleSummary[]; count: number }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank`);
+    return handleResponse(res);
+  },
+
+  async adminGetQuestionBankRole(roleKey: string): Promise<{ role: QuestionBankRole | null; items: QuestionBankItem[]; count: number }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}`);
+    return handleResponse(res);
+  },
+
+  async adminUpdateQuestionBankRole(
+    roleKey: string,
+    data: Partial<Pick<QuestionBankRole, 'role_title' | 'department' | 'experience' | 'competencies'>>,
+  ): Promise<{ role: QuestionBankRole }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminCreateQuestionBankItem(
+    roleKey: string,
+    data: Pick<QuestionBankItem, 'category' | 'question'> & Partial<Pick<QuestionBankItem, 'topic_tag' | 'competency' | 'follow_ups' | 'strong_signals' | 'red_flags'>>,
+  ): Promise<{ item: QuestionBankItem }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminUpdateQuestionBankItem(
+    roleKey: string,
+    questionId: string,
+    data: Partial<Pick<QuestionBankItem, 'category' | 'topic_tag' | 'competency' | 'question' | 'follow_ups' | 'strong_signals' | 'red_flags' | 'active'>>,
+  ): Promise<{ item: QuestionBankItem }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminDeleteQuestionBankItem(roleKey: string, questionId: string): Promise<{ success: boolean; question_id: string }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async adminListCandidates(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/admin/candidates`);
+    return handleResponse(res);
+  },
+
+  async adminListInterviews(): Promise<{ items: any[] }> {
+    const res = await authFetch(`${API_URL}/admin/interviews`);
+    return handleResponse(res);
+  },
+
+  async adminListMoms(): Promise<{ items: any[] }> {
+    const res = await authFetch(`${API_URL}/admin/moms`);
+    return handleResponse(res);
+  },
+
+  async adminSearch(query: string): Promise<{ items: SearchResult[] }> {
+    const res = await authFetch(`${API_URL}/admin/search?q=${encodeURIComponent(query)}`);
+    return handleResponse(res);
+  },
+
+  async getAuditLog(cursor?: string): Promise<{ items: AuditLogEntry[]; last_evaluated_key?: string }> {
+    const url = cursor ? `${API_URL}/admin/audit-log?cursor=${encodeURIComponent(cursor)}` : `${API_URL}/admin/audit-log`;
+    const res = await authFetch(url);
+    return handleResponse(res);
+  },
+
+  async getAdminOverview(): Promise<AdminOverview> {
+    const res = await authFetch(`${API_URL}/admin/overview`);
+    return handleResponse(res);
+  },
+
+  async getWorkspaceFull(id: string): Promise<WorkspaceFull> {
+    const res = await authFetch(`${API_URL}/workspaces/${id}/full`);
+    return handleResponse(res);
+  },
+
+  async listWorkspaces(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/workspaces`);
+    return handleResponse(res);
+  },
+
+  async listSharedWithMe(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/workspaces/shared-with-me`);
+    return handleResponse(res);
+  },
+
+  async createComment(workspace_id: string, body: string): Promise<Comment> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+    return handleResponse(res);
+  },
+
+  async resolveComment(workspace_id: string, comment_id: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/comments/${comment_id}/resolve`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async addWorkspaceShare(workspace_id: string, data: { shared_user_id: string, shared_email?: string, permission: 'VIEWER' | 'COMMENTER' }): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/shares`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async removeWorkspaceShare(workspace_id: string, user_id: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/shares/${user_id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async postDecision(workspace_id: string, decision: 'APPROVED' | 'REJECTED', note?: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note }),
+    });
+    return handleResponse(res);
+  },
+
+  /**
+   * Queues the multi-round synthesis (APPROVER+). Returns as soon as the worker
+   * is queued — the result lands on the workspace row, so callers poll
+   * getWorkspaceFull for composite_status instead of awaiting the analysis.
+   */
+  async generateCompositeAnalysis(workspace_id: string): Promise<{ status?: string }> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/composite-analysis`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
   },
 };

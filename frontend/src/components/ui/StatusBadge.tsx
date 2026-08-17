@@ -14,7 +14,12 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeProps) {
-  const normalizedStatus = typeof status === 'string' && status.trim() ? status : 'CREATED';
+  const rawStatus = typeof status === 'string' && status.trim() ? status.trim() : 'CREATED';
+  // Manual evaluations use UPPER_CASE statuses; Interview Intelligence records
+  // use lower_case ones. Normalising here keeps one source of truth for colour
+  // so intelligence rows stop falling through to the muted "CREATED" style.
+  const normalizedStatus = rawStatus.toUpperCase();
+
   const pillStyles: Record<string, string> = {
     CREATED: "text-text-muted border-border bg-surface/50",
     FILES_UPLOADED: "text-accent bg-accent/10 border-accent/25",
@@ -22,6 +27,19 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     PROCESSING: "text-warning bg-warning/10 border-warning/25 animate-pulse",
     COMPLETED: "text-success bg-success/10 border-success/25",
     FAILED: "text-danger bg-danger/10 border-danger/25",
+
+    // --- Interview Intelligence lifecycle ---
+    DRAFT: "text-text-muted border-border bg-surface/50",
+    DATA_READY: "text-info bg-info/10 border-info/25",
+    QUESTIONS_GENERATED: "text-info bg-info/10 border-info/25",
+    TRANSCRIPT_READY: "text-accent bg-accent/10 border-accent/25",
+    SCORES_SUBMITTED: "text-accent bg-accent/10 border-accent/25",
+    ANALYSIS_PROCESSING: "text-warning bg-warning/10 border-warning/25 animate-pulse",
+    ANALYSIS_FAILED: "text-danger bg-danger/10 border-danger/25",
+    // Report is ready but still needs a human sign-off.
+    ANALYSIS_GENERATED: "text-accent bg-accent/10 border-accent/25",
+    // Terminal success: signed off by a reviewer.
+    APPROVED: "text-success bg-success/10 border-success/25",
   };
 
   const dotStyles: Record<string, string> = {
@@ -31,9 +49,30 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     PROCESSING: "text-warning",
     COMPLETED: "text-success",
     FAILED: "text-danger",
+
+    DRAFT: "text-text-muted",
+    DATA_READY: "text-info",
+    QUESTIONS_GENERATED: "text-info",
+    TRANSCRIPT_READY: "text-accent",
+    SCORES_SUBMITTED: "text-accent",
+    ANALYSIS_PROCESSING: "text-warning",
+    ANALYSIS_FAILED: "text-danger",
+    ANALYSIS_GENERATED: "text-accent",
+    APPROVED: "text-success",
   };
 
-  const label = normalizedStatus.replace(/_/g, ' ');
+  // Friendlier wording than the raw enum for the statuses users see most.
+  const LABEL_OVERRIDES: Record<string, string> = {
+    DATA_READY: 'Ready to prepare',
+    QUESTIONS_GENERATED: 'Guide ready',
+    TRANSCRIPT_READY: 'Transcript ready',
+    SCORES_SUBMITTED: 'Scores submitted',
+    ANALYSIS_PROCESSING: 'Analyzing',
+    ANALYSIS_GENERATED: 'Report ready',
+    ANALYSIS_FAILED: 'Analysis failed',
+  };
+
+  const label = LABEL_OVERRIDES[normalizedStatus] || normalizedStatus.replace(/_/g, ' ');
 
   if (variant === 'pill') {
     const currentStyle = pillStyles[normalizedStatus] || pillStyles.CREATED;

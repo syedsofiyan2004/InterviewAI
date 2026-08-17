@@ -7,6 +7,7 @@ import { api, IntegrationStatus, InterviewIntelligenceRecord } from '@/lib/api';
 import {
   ArrowRight,
   BrainCircuit,
+  CalendarClock,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -15,6 +16,10 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useAuth } from '@/contexts/AuthContext';
+
+import { getIntelligenceCandidateName } from '@/lib/getIntelligenceCandidateName';
 
 const statusLabels: Record<string, string> = {
   data_ready: 'Data ready',
@@ -30,7 +35,7 @@ const statusNextSteps: Record<string, string> = {
   draft: 'Add the interview data',
   data_ready: 'Prepare the panel guide',
   questions_generated: 'Run the interview',
-  transcript_ready: 'Add panel scores',
+  transcript_ready: 'Review the analysis',
   scores_submitted: 'Review the analysis',
   analysis_generated: 'Approve the report',
   approved: 'Complete',
@@ -39,6 +44,8 @@ const statusNextSteps: Record<string, string> = {
 const intelligenceStatuses = Object.keys(statusLabels);
 
 export default function InterviewIntelligenceDashboard() {
+  const { hasTier } = useAuth();
+  const canCreateManually = hasTier('REVIEWER');
   const [items, setItems] = useState<InterviewIntelligenceRecord[]>([]);
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -91,25 +98,33 @@ export default function InterviewIntelligenceDashboard() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-7 pb-10">
-      <section className="intelligence-hero">
+    <div className="mx-auto max-w-6xl space-y-8 pb-10">
+      <section className="intelligence-hero intelligence-dashboard-hero">
         <div className="min-w-0">
-          <p className="page-kicker">Interview Intelligence</p>
-          <h1 className="mt-4 max-w-2xl text-4xl font-semibold leading-[1.03] tracking-tight text-text-primary md:text-5xl">
-            Prepare the panel. Review the evidence.
+          <p className="page-kicker">Interview Evaluator / Connected mode</p>
+          <h1 className="mt-3 max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-text-primary md:text-4xl">
+            Interview work, kept in context.
           </h1>
           <p className="mt-4 max-w-2xl text-sm leading-6 text-text-secondary">
-            Bring the role, candidate, interview panel, and Teams transcript into one reviewable workspace.
-            Use the guide before the call, then compare evidence and panel feedback afterwards.
+            Each workspace carries the role, candidate, panel guide, transcript, and decision record from preparation through approval.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Link href="/interviews/intelligence/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
-              <PlusCircle size={16} />
-              Set up an interview
-            </Link>
+            {/* REVIEWER+ only (Part E). Members get the interviewer-centric entry
+                point instead; the server rejects manual creation either way. */}
+            {canCreateManually ? (
+              <Link href="/interviews/intelligence/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                <PlusCircle size={16} />
+              New connected workspace
+              </Link>
+            ) : (
+              <Link href="/my-interviews" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                <CalendarClock size={16} />
+                My scheduled interviews
+              </Link>
+            )}
             <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 py-2.5 text-xs font-semibold text-text-muted">
               <Clock3 size={14} />
-              One workspace from preparation to approval
+              One record from brief to decision
             </span>
           </div>
         </div>
@@ -119,10 +134,10 @@ export default function InterviewIntelligenceDashboard() {
             <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">How it works</p>
             <BrainCircuit size={18} className="text-accent" />
           </div>
-          <div className="mt-5 space-y-3">
-            <WorkflowLine num="01" title="Before the interview" detail="Build a focused panel guide" />
-            <WorkflowLine num="02" title="After the interview" detail="Add transcript and panel scores" />
-            <WorkflowLine num="03" title="Human review" detail="Check evidence before approval" />
+          <div className="mt-5 space-y-2">
+            <WorkflowLine num="01" title="Prepare" detail="Role, candidate, and panel guide" />
+            <WorkflowLine num="02" title="Review" detail="Transcript, evidence, and coverage" />
+            <WorkflowLine num="03" title="Decide" detail="Human approval and PDF report" />
           </div>
         </div>
       </section>
@@ -136,9 +151,9 @@ export default function InterviewIntelligenceDashboard() {
       <section className="intelligence-card p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-text-primary">Workspace availability</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Connected sources</h2>
             <p className="mt-1 text-xs leading-5 text-text-muted">
-              Your workspace brings together the interview details and completed meeting transcript when each source is available.
+              Interview details and Teams transcripts are attached as each connected source becomes available.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -187,10 +202,17 @@ export default function InterviewIntelligenceDashboard() {
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-muted">
               Create a workspace to collect the interview inputs, prepare the panel, and complete the review in one place.
             </p>
-            <Link href="/interviews/intelligence/new" className="btn-primary mt-5 inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
-              <PlusCircle size={16} />
-              Create first workspace
-            </Link>
+            {canCreateManually ? (
+              <Link href="/interviews/intelligence/new" className="btn-primary mt-5 inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                <PlusCircle size={16} />
+                Create first workspace
+              </Link>
+            ) : (
+              <Link href="/my-interviews" className="btn-primary mt-5 inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                <CalendarClock size={16} />
+                Open a scheduled interview
+              </Link>
+            )}
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="intelligence-empty">
@@ -214,19 +236,19 @@ function IntelligenceDashboardSkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-live="polite">
       {[1, 2, 3].map((item) => (
-        <div key={item} className="intelligence-record-card h-36 animate-pulse">
+        <div key={item} className="intelligence-record-card h-36">
           <div className="flex items-center gap-4">
-            <div className="h-12 w-12 shrink-0 rounded-2xl bg-surface" />
+            <Skeleton className="h-12 w-12 shrink-0 rounded-2xl" />
             <div className="min-w-0 flex-1 space-y-3">
-              <div className="h-4 w-48 rounded bg-surface" />
-              <div className="h-3 w-32 rounded bg-surface" />
-              <div className="h-3 w-64 rounded bg-surface" />
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-3 w-64" />
             </div>
           </div>
           <div className="w-full space-y-3 md:w-64">
-            <div className="h-3 w-full rounded bg-surface" />
-            <div className="h-2 w-full rounded bg-surface" />
-            <div className="h-3 w-36 rounded bg-surface" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-2 w-full" />
+            <Skeleton className="h-3 w-36" />
           </div>
         </div>
       ))}
@@ -278,13 +300,13 @@ function InterviewCard({ item }: { item: InterviewIntelligenceRecord }) {
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-text-primary">{item.candidate.name}</h3>
+            <h3 className="text-base font-semibold text-text-primary">{getIntelligenceCandidateName(item)}</h3>
             <StatusPill status={item.status} />
           </div>
           <p className="mt-1 text-sm text-text-secondary">{item.job.title || 'Role not provided'}</p>
           <div className="mt-4 flex flex-wrap gap-2 text-xs text-text-muted">
             <span className="rounded-full bg-surface px-3 py-1">{item.panel.length} interviewer{item.panel.length === 1 ? '' : 's'}</span>
-            <span className="rounded-full bg-surface px-3 py-1">{format(new Date(item.created_at), 'MMM d, yyyy')}</span>
+            <span className="rounded-full bg-surface px-3 py-1">{format(new Date(item.created_at), 'dd-MM-yyyy')}</span>
             <span className="rounded-full bg-surface px-3 py-1">{item.keka.mode === 'live' ? 'Keka connected' : 'Manual data'}</span>
           </div>
         </div>

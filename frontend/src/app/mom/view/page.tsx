@@ -1,11 +1,14 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, ArrowLeft, CheckCircle2, Clock, Download, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Download, Loader2 } from 'lucide-react';
+import { format } from 'date-fns';
 import { api, DetailedMom, MomResult } from '@/lib/api';
+import { BackButton } from '@/components/ui/BackButton';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 
 type MomDetailView = 'summary' | 'discussion' | 'actions' | 'report';
 
@@ -63,6 +66,46 @@ function MomViewContent() {
     return () => clearTimeout(timer);
   }, [fetchMom]);
 
+  const discussionTopics = useMemo(() => {
+    if (!result) return [];
+    if (result.discussion_points && result.discussion_points.length > 0) {
+      return result.discussion_points;
+    }
+    return result.key_topics || [];
+  }, [result]);
+
+  const allActionItems = useMemo(() => {
+    if (!result) return [];
+    const directActions = (result.action_items || []).map((a: any) => ({
+      task: a.task,
+      owner: a.assignee || a.owner || 'Unassigned',
+      due_date: a.deadline || a.due_date || null,
+      priority: a.priority || null,
+      topic: null,
+    }));
+    const nestedActions = (result.discussion_points || []).flatMap((dp: any) =>
+      (dp.action_items || []).map((a: any) => ({
+        task: a.task,
+        owner: a.owner || a.assignee || 'Unassigned',
+        due_date: a.due_date || a.deadline || null,
+        priority: a.priority || null,
+        topic: dp.topic || null,
+      }))
+    );
+    return [...directActions, ...nestedActions];
+  }, [result]);
+
+  const meetingDateDisplay = useMemo(() => {
+    if (mom?.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'dd-MM-yyyy');
+    const raw = result?.date || mom?.meeting_date;
+    if (raw && raw !== 'Not specified') {
+      const parsed = new Date(raw);
+      if (!isNaN(parsed.getTime())) return format(parsed, 'dd-MM-yyyy');
+      return raw;
+    }
+    return null;
+  }, [mom?.meeting_date_sort, mom?.meeting_date, result?.date]);
+
   if (loading && !mom) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
@@ -103,10 +146,7 @@ function MomViewContent() {
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-8">
       <div className="flex items-center justify-between">
-        <Link href="/mom" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
-          <ArrowLeft size={16} />
-          Back to MOMs
-        </Link>
+        <BackButton defaultHref="/mom" defaultLabel="Meetings" />
         <StatusBadge status={mom?.status || 'CREATED'} variant="pill" />
       </div>
 
@@ -129,17 +169,19 @@ function MomViewContent() {
             </button>
           )}
         </div>
-        {result?.date && <p className="text-sm text-text-muted">{result.date}</p>}
+        {meetingDateDisplay && <p className="text-sm text-text-muted">{meetingDateDisplay}</p>}
       </header>
 
       {inProgress && (
-        <div className="card p-8 text-center space-y-4">
-          <Clock size={36} className="mx-auto text-accent" />
-          <div>
-            <h2 className="text-lg font-semibold text-text-primary">Analysis in progress</h2>
-            <p className="text-sm text-text-secondary mt-1">This page refreshes automatically every few seconds.</p>
-          </div>
-        </div>
+        <LiveProgressBanner
+          taskType="mom"
+          title="Generating MOM Meeting Report"
+          subtitle="Extracting discussion topics, decisions, and action items from meeting transcript..."
+          startTime={mom?.analysis_started_at}
+          progressMessage={mom?.progress_message}
+          progressStage={mom?.progress_stage}
+          progressEvents={mom?.progress_events}
+        />
       )}
 
       {mom?.status === 'FAILED' && (
@@ -158,103 +200,117 @@ function MomViewContent() {
         <>
           <MomDetailTabs activeView={activeView} onChange={setActiveView} />
           <div className="space-y-6">
-          <div className={activeView === 'summary' ? 'space-y-6' : 'hidden'} role="tabpanel">
-          <section className="card p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={18} className="text-success" />
-              <h2 className="text-lg font-semibold text-text-primary">Overall Summary</h2>
-            </div>
-            <p className="text-sm leading-7 text-text-secondary whitespace-pre-line">{result.overall_summary}</p>
-          </section>
+            <div className={activeView === 'summary' ? 'space-y-6' : 'hidden'} role="tabpanel">
+              <section className="card p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={18} className="text-success" />
+                  <h2 className="text-lg font-semibold text-text-primary">Overall Summary</h2>
+                </div>
+                <p className="text-sm leading-7 text-text-secondary whitespace-pre-line">{result.overall_summary}</p>
+              </section>
 
-          <section className="card p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-text-primary">Attendees</h2>
-            <div className="flex flex-wrap gap-2">
-              {safeAttendees(result.attendees).map((attendee) => (
-                <span key={`${attendee.name}-${attendee.role || ''}`} className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-xs font-semibold">
-                  {attendee.role ? `${attendee.name} · ${attendee.role}` : attendee.name}
-                </span>
-              ))}
+              {result.attendees && result.attendees.length > 0 && (
+                <section className="card p-6 space-y-4">
+                  <h2 className="text-lg font-semibold text-text-primary">Attendees</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {result.attendees.map((attendee) => (
+                      <span key={`${attendee.name}-${attendee.role || ''}`} className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-xs font-semibold">
+                        {attendee.role ? `${attendee.name} · ${attendee.role}` : attendee.name}
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
-          </section>
-          </div>
 
-          <div className={activeView === 'discussion' ? 'space-y-6' : 'hidden'} role="tabpanel">
-          <section className="card p-6 space-y-5">
-            <h2 className="text-lg font-semibold text-text-primary">Discussion Points</h2>
-            {result.discussion_points.map((point, index) => (
-              <div key={`${point.topic}-${index}`} className="rounded-lg border border-border p-4 bg-surface">
-                <h3 className="text-sm font-semibold text-text-primary">{point.topic || 'Discussion point'}</h3>
-                <p className="text-sm text-text-secondary leading-6 mt-2">{point.summary}</p>
-                {point.decisions.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold text-text-muted mb-2">Decisions</p>
-                    <ul className="space-y-1 text-sm text-text-secondary">
-                      {point.decisions.map((decision: any, decisionIndex) => (
-                        <li key={`${decision.decision || decision}-${decisionIndex}`}>- {typeof decision === 'string' ? decision : decision.decision}</li>
-                      ))}
-                    </ul>
+            <div className={activeView === 'discussion' ? 'space-y-6' : 'hidden'} role="tabpanel">
+              <section className="card p-6 space-y-4">
+                <h2 className="text-lg font-semibold text-text-primary">Key Discussion Topics</h2>
+                {discussionTopics.length === 0 ? (
+                  <p className="text-xs text-text-muted">No key discussion topics recorded for this meeting.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {discussionTopics.map((topic: any, index: number) => (
+                      <div key={index} className="p-4 rounded-lg bg-surface space-y-2 border border-border/40">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-text-primary">{topic.topic}</h3>
+                          {topic.raised_by && (
+                            <span className="text-[11px] font-medium text-accent bg-accent/10 px-2 py-0.5 rounded">
+                              Raised by: {topic.raised_by}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs leading-6 text-text-secondary whitespace-pre-line">{topic.summary}</p>
+                        {topic.key_takeaway && (
+                          <p className="text-xs font-medium text-accent mt-1">Key Takeaway: {topic.key_takeaway}</p>
+                        )}
+                        {topic.decisions && topic.decisions.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+                            <p className="text-[11px] font-semibold text-text-primary uppercase tracking-wide">Decisions Made:</p>
+                            {topic.decisions.map((d: any, di: number) => (
+                              <p key={di} className="text-xs text-text-secondary">• {d.decision || d}</p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
-                {point.action_items.length > 0 && (
-                  <div className="mt-4 overflow-x-auto">
-                    <p className="text-xs font-semibold text-text-muted mb-2">Action Items</p>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-text-muted">
-                          <th className="text-left py-2">Owner</th>
-                          <th className="text-left py-2">Task</th>
-                          <th className="text-left py-2">Due</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {point.action_items.map((action, actionIndex) => (
-                          <tr key={`${action.task}-${actionIndex}`} className="border-t border-border">
-                            <td className="py-2 text-text-primary">{action.owner}</td>
-                            <td className="py-2 text-text-secondary">{action.task}</td>
-                            <td className="py-2 text-text-secondary">{action.due_date}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              </section>
+            </div>
+
+            <div className={activeView === 'actions' ? 'space-y-6' : 'hidden'} role="tabpanel">
+              <section className="card p-6 space-y-4">
+                <h2 className="text-lg font-semibold text-text-primary">Action Items</h2>
+                {allActionItems.length === 0 ? (
+                  <p className="text-xs text-text-muted">No action items recorded for this meeting.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {allActionItems.map((action, index) => (
+                      <div key={index} className="flex items-start justify-between p-4 rounded-lg bg-surface border border-border/40 gap-4">
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <p className="text-sm font-medium text-text-primary">{action.task}</p>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                            {action.owner && <span>Owner: <strong className="text-text-secondary">{action.owner}</strong></span>}
+                            {action.topic && <span className="truncate max-w-xs">• {action.topic}</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          {action.due_date && (
+                            <span className="px-2 py-1 rounded bg-surface-elevated text-[11px] font-semibold text-text-secondary border border-border">
+                              Due: {action.due_date}
+                            </span>
+                          )}
+                          {action.priority && (
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                              action.priority === 'High' ? 'bg-danger/10 text-danger' : 'bg-accent/10 text-accent'
+                            }`}>
+                              {action.priority} Priority
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
-              </div>
-            ))}
-          </section>
-          </div>
+              </section>
+            </div>
 
-          <div className={activeView === 'actions' ? 'space-y-6' : 'hidden'} role="tabpanel">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ListSection title="Agenda Items" items={result.agenda_items} />
-            <ListSection title="Risks" items={result.risks.map((risk: any) => typeof risk === 'string' ? risk : risk.description)} />
-          </div>
-          <ListSection title="Next Steps" items={result.next_steps} numbered />
-          </div>
-
-          <div className={activeView === 'report' ? 'space-y-6' : 'hidden'} role="tabpanel">
-            <section className="card overflow-hidden">
-              <div className="border-b border-border bg-surface px-6 py-5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Shareable outcome</p>
-                <h2 className="mt-1 text-xl font-semibold text-text-primary">Minutes of Meeting report</h2>
-              </div>
-              <div className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
-                <p className="max-w-2xl text-sm leading-6 text-text-secondary">
-                  Download the structured PDF with the meeting summary, decisions, action items, risks, and next steps.
-                </p>
+            <div className={activeView === 'report' ? 'space-y-6' : 'hidden'} role="tabpanel">
+              <section className="card p-6 space-y-4 text-center">
+                <h2 className="text-lg font-semibold text-text-primary">Export Report</h2>
+                <p className="text-sm text-text-secondary max-w-md mx-auto">Download a PDF version of this Minutes of Meeting report.</p>
                 <button
-                  type="button"
                   onClick={handleDownloadReport}
                   disabled={downloading}
-                  className="btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-accent text-white font-semibold text-sm hover:opacity-90 transition-opacity"
                 >
                   {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                  {downloading ? 'Preparing PDF' : 'Download PDF report'}
+                  {downloading ? 'Preparing PDF...' : 'Download PDF Report'}
                 </button>
-              </div>
-            </section>
+              </section>
+            </div>
           </div>
-        </div>
         </>
       )}
     </div>
@@ -262,74 +318,37 @@ function MomViewContent() {
 }
 
 function MomDetailTabs({ activeView, onChange }: { activeView: MomDetailView; onChange: (view: MomDetailView) => void }) {
-  const views: Array<{ id: MomDetailView; label: string }> = [
+  const tabs: { id: MomDetailView; label: string }[] = [
     { id: 'summary', label: 'Summary' },
-    { id: 'discussion', label: 'Discussion' },
-    { id: 'actions', label: 'Actions & risks' },
-    { id: 'report', label: 'Report' },
+    { id: 'discussion', label: 'Discussion Topics' },
+    { id: 'actions', label: 'Action Items' },
+    { id: 'report', label: 'PDF Export' },
   ];
 
   return (
-    <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="MOM report sections" role="tablist">
-      {views.map((view) => (
+    <div className="flex border-b border-border space-x-1" role="tablist">
+      {tabs.map((tab) => (
         <button
-          key={view.id}
-          type="button"
+          key={tab.id}
           role="tab"
-          aria-selected={activeView === view.id}
-          onClick={() => onChange(view.id)}
-          className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeView === view.id ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
+          aria-selected={activeView === tab.id}
+          onClick={() => onChange(tab.id)}
+          className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+            activeView === tab.id
+              ? 'border-accent text-accent'
+              : 'border-transparent text-text-muted hover:text-text-primary'
+          }`}
         >
-          {view.label}
+          {tab.label}
         </button>
       ))}
-    </nav>
-  );
-}
-
-function safeList(items: string[]) {
-  const cleaned = items
-    .filter(Boolean)
-    .map((item) => item.replace(/\s*[-–—]\s*(role\s+)?not specified\s*$/i, '').trim())
-    .filter(Boolean);
-  return cleaned.length ? cleaned : ['Not specified'];
-}
-
-function safeAttendees(items: any[]) {
-  const cleaned = (items || []).map((item) => {
-    if (typeof item === 'string') {
-      return { name: item.replace(/\s*[-–—]\s*(role\s+)?not specified\s*$/i, '').trim() };
-    }
-    return {
-      name: item?.name || 'Not specified',
-      role: item?.role && !/not specified/i.test(item.role) ? item.role : '',
-      organisation: item?.organisation,
-    };
-  }).filter((item) => item.name);
-  return cleaned.length ? cleaned : [{ name: 'Not specified' }];
-}
-
-function ListSection({ title, items, numbered = false }: { title: string; items: string[]; numbered?: boolean }) {
-  const safeItems = safeList(items);
-  return (
-    <section className="card p-6 space-y-3">
-      <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
-      {numbered ? (
-        <ol className="space-y-2 text-sm text-text-secondary list-decimal list-inside">
-          {safeItems.map((item) => <li key={item}>{item}</li>)}
-        </ol>
-      ) : (
-        <ul className="space-y-2 text-sm text-text-secondary">
-          {safeItems.map((item) => <li key={item}>- {item}</li>)}
-        </ul>
-      )}
-    </section>
+    </div>
   );
 }
 
 export default function MomViewPage() {
   return (
-    <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center"><Loader2 className="animate-spin text-accent" /></div>}>
+    <Suspense fallback={<div className="p-8 text-center text-text-muted">Loading MOM...</div>}>
       <MomViewContent />
     </Suspense>
   );

@@ -113,7 +113,7 @@ export default function NewInterview() {
     candidate_name: '',
     position: '',
     interview_date: new Date().toISOString().split('T')[0],
-    model_id: 'claude-3-sonnet',
+    model_id: 'claude-sonnet-5',
   });
 
   // Upload State
@@ -351,7 +351,8 @@ export default function NewInterview() {
                 value={formData.model_id}
                 onChange={e => setFormData({ ...formData, model_id: e.target.value })}
               >
-                <option value="claude-3-sonnet">Claude 3.7 Sonnet (Professional Intelligence)</option>
+                <option value="claude-sonnet-5">Claude Sonnet 5 (Best quality)</option>
+                <option value="claude-3-sonnet">Claude 3.7 Sonnet</option>
                 <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
                 <option value="nova-pro">Amazon Nova Pro</option>
               </select>

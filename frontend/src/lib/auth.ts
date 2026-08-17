@@ -18,6 +18,20 @@ let _pendingNewPasswordUser: CognitoUser | null = null;
 
 function getPool(): CognitoUserPool {
   if (!_pool) {
+    if (typeof window !== 'undefined') {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('CognitoIdentityServiceProvider.') && !key.includes(CLIENT_ID)) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+      } catch (e) {
+        // ignore
+      }
+    }
     _pool = new CognitoUserPool({
       UserPoolId: USER_POOL_ID,
       ClientId: CLIENT_ID,

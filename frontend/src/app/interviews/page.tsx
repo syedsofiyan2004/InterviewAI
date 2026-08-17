@@ -342,7 +342,7 @@ export default function Dashboard() {
 
                       {/* Date */}
                       <td className="px-6 py-4 text-xs text-text-muted text-center">
-                        {format(new Date(createdAt), 'MMM d, yyyy')}
+                        {format(new Date(createdAt), 'dd-MM-yyyy')}
                       </td>
 
                       {/* Status */}

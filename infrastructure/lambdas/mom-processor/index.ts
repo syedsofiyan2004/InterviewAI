@@ -49,7 +49,18 @@ export const handler = async (event: SQSEvent) => {
 };
 
 async function runMomPipeline(id: string) {
-  await updateMom(id, 'PROCESSING');
+  // analysis_started_at is stamped once here and never rewritten, so the UI can
+  // show a true elapsed time that survives a refresh (updated_at moves on every
+  // progress write and would keep resetting the timer).
+  const startedAt = Date.now();
+  await updateMom(id, 'PROCESSING', {
+    analysis_started_at: startedAt,
+    progress_stage: 'reading_transcript',
+    progress_message: 'Reading the meeting transcript...',
+    // Start of a run: the log begins here rather than inheriting a previous
+    // attempt's stages.
+    progress_events: [{ at: startedAt, stage: 'reading_transcript', message: 'Reading the meeting transcript...' }],
+  });
 
   const record = await ddbDocClient.send(new GetCommand({
     TableName: MOM_TABLE_NAME,
@@ -70,10 +81,13 @@ async function runMomPipeline(id: string) {
     throw new Error(err.message || 'TRANSCRIPT_EXTRACTION_FAILED');
   }
 
+  await setMomProgress(id, 'extracting', 'AI is extracting decisions, action items, and owners. This is the longest step.');
   const result = await analyzeTranscript(item.title || 'Untitled meeting', transcript);
   const userFolder = getUserFolder(item);
   const resultS3Key = `users/${userFolder}/moms/${id}/processed/result.json`;
   const reportS3Key = `users/${userFolder}/moms/${id}/processed/report.pdf`;
+
+  await setMomProgress(id, 'generating_report', 'Generating the meeting report PDF...');
   const pdfReport = await generateMomPdfReport(result, {
     projectTitle: item.project_title || 'General',
   });
@@ -86,8 +100,38 @@ async function runMomPipeline(id: string) {
     title: result.title || item.title,
     meeting_date: result.date || 'Not specified',
     meeting_date_sort: parseMeetingDateToEpoch(result.date),
+    progress_stage: 'done',
+    progress_message: 'Meeting report ready.',
     error_message: null,
   });
+}
+
+/**
+ * Records the current phase for the UI progress banner. Best-effort: a failed
+ * progress write must never fail the pipeline.
+ */
+async function setMomProgress(id: string, stage: string, message: string): Promise<void> {
+  const now = Date.now();
+  try {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: id },
+      // progress_events is the history the UI renders as an activity log; the
+      // stage pair above only ever holds the phase in flight. runMomPipeline
+      // resets the list when it starts, so it stays bounded to one run.
+      UpdateExpression: 'SET progress_stage = :s, progress_message = :m, updated_at = :now, '
+        + 'progress_events = list_append(if_not_exists(progress_events, :empty), :event)',
+      ExpressionAttributeValues: {
+        ':s': stage,
+        ':m': message,
+        ':now': now,
+        ':empty': [],
+        ':event': [{ at: now, stage, message }],
+      },
+    }));
+  } catch (err) {
+    console.warn(`Could not record MOM progress (${stage}) for ${id}:`, err);
+  }
 }
 
 async function analyzeTranscript(title: string, transcript: string) {
@@ -213,18 +257,22 @@ Transcript:
 ${transcript.slice(0, 180000)}
 `;
 
+  const body: Record<string, unknown> = {
+    anthropic_version: 'bedrock-2023-05-31',
+    // Rich MOMs can contain several structured sections. Sonnet needs
+    // enough output budget to close the JSON document cleanly.
+    max_tokens: 24000,
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+  };
+  if (!MOM_MODEL_ID.includes('claude-sonnet-5')) {
+    body.temperature = 0;
+  }
+
   const response = await bedrockClient.send(new InvokeModelCommand({
     modelId: MOM_MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      // Rich MOMs can contain several structured sections. Sonnet 4.6 must
-      // have enough output budget to close the JSON document cleanly.
-      max_tokens: 16000,
-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-      temperature: 0,
-    }),
+    body: JSON.stringify(body),
   }));
 
   const payload = JSON.parse(new TextDecoder().decode(response.body));

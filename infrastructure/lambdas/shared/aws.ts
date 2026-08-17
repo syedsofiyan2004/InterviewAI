@@ -12,6 +12,8 @@ import {
   GetObjectCommand 
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Upload } from '@aws-sdk/lib-storage';
+import { Readable } from 'node:stream';
 import { 
   BedrockRuntimeClient, 
   InvokeModelCommand 
@@ -57,12 +59,33 @@ export async function getFileBuffer(bucket: string, key: string): Promise<Buffer
 }
 
 
-export async function saveFileContent(bucket: string, key: string, content: string | Buffer, contentType: string = 'application/json'): Promise<void> {
+export async function saveFileContent(
+  bucket: string,
+  key: string,
+  content: string | Buffer | Readable,
+  contentType: string = 'application/json',
+  contentLength?: number,
+): Promise<void> {
+  if (content instanceof Readable) {
+    await new Upload({
+      client: s3Client,
+      params: {
+        Bucket: bucket,
+        Key: key,
+        Body: content,
+        ContentType: contentType,
+        ...(contentLength === undefined ? {} : { ContentLength: contentLength }),
+      },
+    }).done();
+    return;
+  }
+
   await s3Client.send(new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     Body: content,
     ContentType: contentType,
+    ContentLength: contentLength,
   }));
 }
 

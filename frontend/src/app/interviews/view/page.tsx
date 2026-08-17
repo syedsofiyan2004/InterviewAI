@@ -25,9 +25,13 @@ import {
 import Link from 'next/link';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { BackButton } from '@/components/ui/BackButton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast, type ToastType } from '@/components/ui/Toast';
+import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EvidenceCard } from '@/components/ui/EvidenceCard';
+import { HeroNumber } from '@/components/ui/HeroNumber';
 import { useTour, checkTourStatus } from '@/contexts/TourContext';
 
 function cn(...inputs: ClassValue[]) {
@@ -322,19 +326,31 @@ function InterviewDetailsContent() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="max-w-xl mx-auto mt-20 card p-8 text-center space-y-6">
+        <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center mx-auto">
+          <AlertCircle size={32} />
+        </div>
+        <h3 className="text-xl font-semibold text-text-primary">Failed to load</h3>
+        <p className="text-text-secondary">{error}</p>
+        <Link href="/interviews" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-semibold rounded-md">
+          Back to Dashboard
+        </Link>
+      </div>
+    );
+  }
+
   const isInFlight = interview?.status === 'QUEUED' || interview?.status === 'PROCESSING';
   const activeView: EvaluationView = selectedView ?? (
     result || isInFlight || interview?.status === 'FAILED' ? 'analysis' : 'overview'
   );
   const hasReport = !!result && !!interview?.report_s3_key;
-
+  
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
-        <Link href="/interviews" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
-          <ArrowLeft size={16} />
-          Back to Dashboard
-        </Link>
+        <BackButton defaultHref="/interviews" defaultLabel="Evaluations" />
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-text-muted">Status</span>
@@ -359,23 +375,16 @@ function InterviewDetailsContent() {
           </div>
           
           {result && interview?.report_s3_key && (
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
                 id="tour-download-report"
                 onClick={handleDownloadReport}
-                className="flex items-center gap-2 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition-all shadow-lg shadow-accent/20"
+                className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
               >
                 <Download size={18} />
                 Download PDF Report
               </button>
-              <div className="h-8 w-px bg-border mx-2" />
-              <div className="text-right">
-                <p className="text-xs font-semibold text-text-muted mb-1">Overall Rating</p>
-                <div className="text-4xl font-semibold text-accent leading-none">
-                  {formatScore(result.overall_score)}
-                  <span className="text-xl text-text-muted ml-1">/10</span>
-                </div>
-              </div>
+              <HeroNumber value={formatScore(result.overall_score)} suffix="/10" label="Overall rating" />
             </div>
           )}
         </div>
@@ -566,19 +575,16 @@ function InterviewDetailsContent() {
       {activeView === 'analysis' && (
         <div className="space-y-8" role="tabpanel" id="evaluation-analysis-panel" aria-labelledby="evaluation-analysis-tab">
       {isInFlight && (
-        <div id="tour-processing" className="card p-12 text-center space-y-6">
-          <div className="relative w-20 h-20 mx-auto">
-             <div className="absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent animate-spin" />
-             <div className="absolute inset-0 flex items-center justify-center text-accent">
-                <Target size={32} />
-             </div>
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-2xl font-semibold text-text-primary tracking-tight">AI Analysis in Progress</h3>
-            <p className="text-text-secondary max-w-sm mx-auto">
-              Amazon Bedrock is currently evaluating the transcript against the JD rubric. This usually takes 30-45 seconds.
-            </p>
-          </div>
+        <div id="tour-processing">
+          <LiveProgressBanner
+            taskType="analysis"
+            title="AI Interview Analysis in Progress"
+            subtitle="Amazon Bedrock is evaluating the candidate transcript against the job description and scoring rubric..."
+            startTime={interview?.analysis_started_at}
+            progressMessage={interview?.progress_message}
+            progressStage={interview?.progress_stage}
+            progressEvents={interview?.progress_events}
+          />
         </div>
       )}
 
@@ -612,7 +618,7 @@ function InterviewDetailsContent() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {result.dimension_breakdown.map((dim, i) => (
-                  <div key={i} className="card p-5 space-y-3 hover:border-accent/20 transition-colors">
+                  <div key={i} className="metric-card p-5 space-y-3 hover:border-accent/40 transition-colors">
                     <div className="flex justify-between items-start">
                       <h4 className="font-semibold text-text-primary text-sm tracking-tight">{dim.dimension}</h4>
                       <span className={cn(
@@ -621,7 +627,7 @@ function InterviewDetailsContent() {
                       )}>{formatScore(dim.score)}/10</span>
                     </div>
                     <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{dim.reason}</p>
-                    <div className="h-1 w-full bg-border/30 rounded-full overflow-hidden">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/40">
                       <div 
                         className={cn(
                            "h-full transition-all duration-1000",
@@ -643,17 +649,12 @@ function InterviewDetailsContent() {
               </h3>
               <div className="space-y-4">
                 {(result as any).evidence_items?.map((item: any, i: number) => (
-                  <div key={i} className="card p-6 bg-surface/50 border-l-4 border-l-accent">
-                    <p className="italic text-text-primary leading-relaxed relative z-10">&ldquo;{item.quote}&rdquo;</p>
-                    <div className="mt-4 flex items-center gap-3">
-                      <span className="text-xs font-medium normal-case text-accent bg-accent/5 px-2 py-0.5 rounded border border-accent/10">
-                        {item.dimension}
-                      </span>
-                      <span className="text-xs font-normal text-text-secondary">
-                        Context: {item.context}
-                      </span>
-                    </div>
-                  </div>
+                  <EvidenceCard
+                    key={i}
+                    title={item.dimension}
+                    excerpt={item.quote}
+                    source={item.context ? `Context: ${item.context}` : undefined}
+                  />
                 ))}
               </div>
             </section>
@@ -1037,6 +1038,27 @@ function QuestionGuideSection({
               <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                 Approved question bank
               </span>
+              {/* Provenance, not decoration. `bank_only` means the model call that
+                  calibrates the wording to this JD did not complete, so what is
+                  shown is the bank's own text. The backend already reports which
+                  one happened; without showing it, a fallback guide is
+                  indistinguishable from a tailored one. */}
+              {guide && (
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                    guide.optimization_status === 'optimized'
+                      ? 'border-success/30 bg-success/10 text-success'
+                      : 'border-warning/30 bg-warning/10 text-warning'
+                  }`}
+                  title={
+                    guide.optimization_status === 'optimized'
+                      ? 'Question wording was calibrated to this job description by the AI.'
+                      : 'The AI calibration step did not complete, so these are the approved bank questions as written. Regenerate to try again.'
+                  }
+                >
+                  {guide.optimization_status === 'optimized' ? 'JD-calibrated' : 'Bank wording only'}
+                </span>
+              )}
             </div>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">
               A structured guide built from the approved question bank, tailored to the role, level, job description, and optional resume. Each prompt is written to sound natural in a live interview.

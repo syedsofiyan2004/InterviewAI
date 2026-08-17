@@ -4,18 +4,25 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
-  BrainCircuit,
+  CheckSquare,
+  CalendarDays,
+  Calculator,
   FolderPlus,
   Home,
   LayoutDashboard,
+  LibraryBig,
   ListChecks,
   LogOut,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
   PlusCircle,
+  Settings,
+  Shield,
   Sun,
+  Users,
   X,
+  Share2,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -26,23 +33,107 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const navSections = [
+import type { AdminTier, BaseRole } from '@/lib/api';
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: typeof Home;
+}
+
+interface NavSection {
+  name: string;
+  items: NavItem[];
+}
+
+/**
+ * Everyone sees these: they are the caller's own records.
+ */
+const BASE_SECTIONS: NavSection[] = [
   {
-    name: 'Interview Evaluator',
+    name: 'Interviews',
     items: [
+      { name: 'My Interviews', href: '/my-interviews', icon: CalendarDays },
       { name: 'Evaluations', href: '/interviews', icon: LayoutDashboard },
       { name: 'New Evaluation', href: '/interviews/new', icon: PlusCircle },
-      { name: 'Intelligence Mode', href: '/interviews/intelligence', icon: BrainCircuit },
     ],
   },
   {
-    name: 'MOM Analyzer',
+    name: 'Workspaces',
+    items: [
+      { name: 'My Candidates', href: '/candidates', icon: Users },
+      { name: 'Shared with Me', href: '/shared', icon: Share2 },
+    ],
+  },
+  {
+    name: 'Meetings',
     items: [
       { name: 'Projects', href: '/mom', icon: ListChecks },
       { name: 'New Project', href: '/mom/new', icon: FolderPlus },
     ],
   },
+  {
+    name: 'Cost Calculator',
+    items: [
+      { name: 'Estimates', href: '/calculator', icon: Calculator },
+      { name: 'New Estimate', href: '/calculator/new', icon: PlusCircle },
+    ],
+  },
 ];
+
+const TIER_RANK: Record<AdminTier, number> = { VIEWER: 1, REVIEWER: 2, APPROVER: 3, OWNER: 4 };
+
+/**
+ * Builds the nav from the server-issued profile. Hiding a link is cosmetic:
+ * the matching API route re-checks base_role and tier on every request, so a
+ * user who types the URL directly still gets a 403.
+ */
+function buildNavSections(isAdmin: boolean, tier: AdminTier | null): NavSection[] {
+  if (!isAdmin || !tier) return BASE_SECTIONS;
+
+  const rank = TIER_RANK[tier];
+  const adminItems: NavItem[] = [
+    { name: 'Overview', href: '/admin', icon: Shield },
+    { name: 'All Candidates', href: '/admin/candidates', icon: Users },
+    { name: 'Interviews', href: '/admin/interviews', icon: LayoutDashboard },
+    { name: 'Meetings', href: '/admin/moms', icon: ListChecks },
+    { name: 'Cost Estimates', href: '/admin/calculator', icon: Calculator },
+  ];
+
+  // APPROVER is the first tier that can act on a decision, not just read.
+  if (rank >= TIER_RANK.APPROVER) {
+    adminItems.push({ name: 'Approval Queue', href: '/admin/approvals', icon: CheckSquare });
+  }
+
+  // OWNER alone manages membership. Search and audit remain available from the
+  // admin overview so the main rail stays focused.
+  if (rank >= TIER_RANK.OWNER) {
+    adminItems.push({ name: 'Access', href: '/admin/access', icon: Settings });
+    adminItems.push({ name: 'Question Bank', href: '/admin/question-bank', icon: LibraryBig });
+  }
+
+  return [...BASE_SECTIONS, { name: 'Admin', items: adminItems }];
+}
+
+/** Footer subtitle: "Admin - Owner", or plain "Member" when there is no grant. */
+function roleLabel(
+  baseRole: BaseRole | null,
+  tier: AdminTier | null,
+  isAdmin: boolean,
+  isProfileLoading: boolean,
+): string {
+  if (isProfileLoading) return 'Loading...';
+  // A failed /me call also leaves baseRole null. That is not "still loading",
+  // and showing a spinner forever hides a real problem. Fail closed to Member.
+  if (!baseRole) return 'Member';
+  if (isAdmin && tier) {
+    const pretty = tier.charAt(0) + tier.slice(1).toLowerCase();
+    return `Admin - ${pretty}`;
+  }
+  // base_role ADMIN with no active grant is a real state: fail closed and say so.
+  if (baseRole === 'ADMIN') return 'Admin - no tier';
+  return 'Member';
+}
 
 interface SidebarProps {
   collapsed: boolean;
@@ -108,8 +199,10 @@ export function Sidebar({ collapsed, onToggleCollapsed, mobileOpen, onCloseMobil
 
 function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleCollapsed }: SidebarContentProps) {
   const pathname = usePathname();
-  const { user, signOut } = useAuth();
+  const { user, signOut, baseRole, tier, isAdmin, isProfileLoading } = useAuth();
   const [isDark, setIsDark] = useState(true);
+
+  const navSections = buildNavSections(isAdmin, tier);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -142,11 +235,11 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
           title={collapsed ? 'Minfy MiMo AI Hub' : undefined}
         >
           <Image
-            src="/minfy-ai-logo.png"
+            src="/minfy-mimo-icon.png"
             alt=""
-            width={36}
-            height={36}
-            className="h-9 w-9 flex-shrink-0 rounded-lg object-contain"
+            width={44}
+            height={44}
+            className="h-10 w-10 flex-shrink-0 rounded-xl bg-white object-contain p-0.5 shadow-sm"
           />
           {showLabels && (
             <span className="min-w-0 leading-tight">
@@ -177,7 +270,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
         )}
       </div>
 
-      <nav className={cn('flex-1 space-y-6 overflow-y-auto py-5', showLabels ? 'px-3' : 'px-2')} aria-label="Primary navigation">
+      <nav className={cn('min-h-0 flex-1 space-y-6 overflow-y-auto py-5', showLabels ? 'px-3' : 'px-2')} aria-label="Primary navigation">
         <Link
           id={mobile ? undefined : 'tour-nav-home'}
           href="/"
@@ -231,7 +324,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
         ))}
       </nav>
 
-      <div id={mobile ? undefined : 'tour-sidebar-footer'} className={cn('border-t border-border', showLabels ? 'p-3' : 'p-2')}>
+      <div id={mobile ? undefined : 'tour-sidebar-footer'} className={cn('shrink-0 border-t border-border', showLabels ? 'p-3' : 'p-2')}>
         <div className={cn('rounded-xl border border-border bg-surface-elevated', showLabels ? 'p-3' : 'p-2')}>
           <div className={cn('flex items-center', showLabels ? 'mb-3 gap-2' : 'justify-center')}>
             <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
@@ -240,7 +333,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
             {showLabels && (
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium text-text-primary">{displayEmail}</p>
-                <p className="text-xs text-text-muted">Enterprise</p>
+                <p className="text-xs text-text-muted">{roleLabel(baseRole, tier, isAdmin, isProfileLoading)}</p>
               </div>
             )}
           </div>

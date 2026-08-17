@@ -10,6 +10,7 @@ import { api, Mom, MomProject } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 const STATUS_FILTERS = ['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
@@ -188,7 +189,7 @@ export default function MomDashboard() {
                         <div className="min-w-0">
                           <h3 className="truncate text-base font-semibold text-text-primary">{project.project_title}</h3>
                           <p className="text-xs text-text-muted mt-0.5">
-                            Updated {project.updated_at ? format(new Date(project.updated_at), 'MMM d, yyyy') : 'recently'}
+                            Updated {project.updated_at ? format(new Date(project.updated_at), 'dd-MM-yyyy') : 'recently'}
                           </p>
                         </div>
                       </div>
@@ -269,7 +270,7 @@ export default function MomDashboard() {
                 Array.from({ length: 3 }).map((_, index) => (
                   <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td colSpan={6} className="px-6 py-5">
-                      <div className="h-4 rounded animate-pulse" style={{ background: 'var(--surface)' }} />
+                      <Skeleton className="h-4 w-full" />
                     </td>
                   </tr>
                 ))
@@ -289,42 +290,55 @@ export default function MomDashboard() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((mom) => (
-                  <tr key={mom.mom_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td className="px-6 py-4">
-                      <Link href={`/mom/view?id=${mom.mom_id}`} className="text-sm font-semibold text-text-primary hover:text-accent">
-                        {mom.title || 'Untitled meeting'}
-                      </Link>
+                Array.from(
+                  filtered.reduce((map, mom) => {
+                    const key = mom.project_title?.trim() || 'General Workspace';
+                    if (!map.has(key)) map.set(key, []);
+                    map.get(key)!.push(mom);
+                    return map;
+                  }, new Map<string, typeof filtered>()).entries()
+                ).flatMap(([projectGroup, groupMoms]) => [
+                  <tr key={`group-${projectGroup}`} className="bg-surface-elevated/80 border-b border-border">
+                    <td colSpan={6} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-accent">
+                      📁 {projectGroup} ({groupMoms.length} report{groupMoms.length === 1 ? '' : 's'})
                     </td>
-                    <td className="px-6 py-4 text-sm text-text-secondary">{mom.project_title || 'General'}</td>
-                    <td className="px-6 py-4 text-sm text-text-secondary capitalize">{mom.source_type || 'file'}</td>
-                    <td className="px-6 py-4 text-sm text-text-secondary text-center">
-                      {formatMomMeetingDate(mom)}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex justify-center">
-                        <StatusBadge status={mom.status || 'CREATED'} />
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex justify-end">
-                        <button
-                          onClick={() => setConfirmDelete({ id: mom.mom_id, title: mom.title || 'Untitled meeting' })}
-                          className="p-1.5 rounded-md text-text-muted hover:text-red-500 transition-colors"
-                          title="Delete MOM"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                  </tr>,
+                  ...groupMoms.map((mom) => (
+                    <tr key={mom.mom_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td className="px-6 py-4 pl-9">
+                        <Link href={`/mom/view?id=${mom.mom_id}&from=/mom`} className="text-sm font-semibold text-text-primary hover:text-accent">
+                          {mom.title || 'Untitled meeting'}
+                        </Link>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-text-secondary">{mom.project_title || 'General Workspace'}</td>
+                      <td className="px-6 py-4 text-sm text-text-secondary capitalize">{mom.source_type || 'file'}</td>
+                      <td className="px-6 py-4 text-sm text-text-secondary text-center">
+                        {formatMomMeetingDate(mom)}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex justify-center">
+                          <StatusBadge status={mom.status || 'CREATED'} />
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => setConfirmDelete({ id: mom.mom_id, title: mom.title || 'Untitled meeting' })}
+                            className="p-1.5 rounded-md text-text-muted hover:text-red-500 transition-colors"
+                            title="Delete MOM"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )),
+                ])
               )}
             </tbody>
           </table>
         </div>
       </div>
-
       {confirmDelete && (
         <ConfirmDialog
           isOpen={!!confirmDelete}
@@ -402,7 +416,11 @@ function getMomSortDate(mom: Mom): number {
 }
 
 function formatMomMeetingDate(mom: Mom): string {
-  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'MMM d, yyyy');
-  if (mom.meeting_date && mom.meeting_date !== 'Not specified') return mom.meeting_date;
+  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'dd-MM-yyyy');
+  if (mom.meeting_date && mom.meeting_date !== 'Not specified') {
+    const parsed = new Date(mom.meeting_date);
+    if (!isNaN(parsed.getTime())) return format(parsed, 'dd-MM-yyyy');
+    return mom.meeting_date;
+  }
   return mom.status === 'COMPLETED' ? 'Not specified' : 'Pending analysis';
 }

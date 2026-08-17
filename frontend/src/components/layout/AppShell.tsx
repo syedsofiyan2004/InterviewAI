@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { TourProvider } from '@/contexts/TourContext';
 import { useTour, checkTourStatus } from '@/contexts/TourContext';
 import { TourOverlay } from '@/components/ui/TourOverlay';
+import { CommandPalette } from '@/components/ui/CommandPalette';
 
 const PUBLIC_PATHS = ['/login'];
 
@@ -22,6 +23,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const workspaceRef = useRef<HTMLElement>(null);
   const pointerFrameRef = useRef<number | null>(null);
   const pointerPositionRef = useRef({ x: 50, y: 42 });
+  const lastRenderedPointerRef = useRef({ x: 50, y: 42 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
@@ -82,17 +84,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="app-workspace flex-1 overflow-y-auto p-7 lg:p-8"
             onMouseMove={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
-              pointerPositionRef.current = {
+              const nextPosition = {
                 x: ((event.clientX - rect.left) / rect.width) * 100,
                 y: ((event.clientY - rect.top) / rect.height) * 100,
               };
+              const previous = pointerPositionRef.current;
+              if (Math.abs(nextPosition.x - previous.x) < 1 && Math.abs(nextPosition.y - previous.y) < 1) return;
+              pointerPositionRef.current = nextPosition;
 
               if (pointerFrameRef.current) return;
               pointerFrameRef.current = window.requestAnimationFrame(() => {
                 const workspace = workspaceRef.current;
-                if (workspace) {
-                  workspace.style.setProperty('--mx', `${pointerPositionRef.current.x}%`);
-                  workspace.style.setProperty('--my', `${pointerPositionRef.current.y}%`);
+                const rendered = lastRenderedPointerRef.current;
+                const position = pointerPositionRef.current;
+                if (workspace && (Math.abs(position.x - rendered.x) >= 1 || Math.abs(position.y - rendered.y) >= 1)) {
+                  workspace.style.setProperty('--mx', `${position.x}%`);
+                  workspace.style.setProperty('--my', `${position.y}%`);
+                  lastRenderedPointerRef.current = position;
                 }
                 pointerFrameRef.current = null;
               });
@@ -106,6 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <AppOnboardingTour />
       <TourOverlay />
+      <CommandPalette />
     </TourProvider>
   );
 }

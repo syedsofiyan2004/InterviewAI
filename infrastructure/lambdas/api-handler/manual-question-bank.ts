@@ -2,6 +2,20 @@ import { ROLE_QUESTION_BANK, RoleQuestionBankEntry } from './minfy-role-question
 
 export type InterviewLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'architect';
 
+/**
+ * A role-bank question as the selector consumes it.
+ *
+ * Extends the shipped static shape with the richer fields an admin can author in
+ * the curated bank. All of them are optional: when absent the selector uses its
+ * generic phrasing, so the static entries behave exactly as they always have.
+ */
+export interface RoleBankEntry extends RoleQuestionBankEntry {
+  followUps?: string[];
+  strongSignals?: string[];
+  redFlags?: string[];
+  competency?: string;
+}
+
 export interface QuestionBankEntry {
   id: string;
   category: string;
@@ -21,6 +35,10 @@ export interface SelectedBankQuestion {
   question: string;
   followUps: string[];
   whatToListenFor: string[];
+  /** Present only when the curated bank authored them for this question. */
+  redFlags?: string[];
+  /** Competency this question evidences, when the curator named one. */
+  competency?: string;
 }
 
 const ALL_LEVELS: InterviewLevel[] = ['junior', 'mid', 'senior', 'lead', 'architect'];
@@ -270,21 +288,25 @@ function scoreRoleQuestion(entry: RoleQuestionBankEntry, roleTitle: string, jdTe
   return overlappingRoleWords * 18 + Math.min(topicHits, 4) * 5;
 }
 
-function roleQuestionToSelected(entry: RoleQuestionBankEntry): Omit<SelectedBankQuestion, 'id'> {
+function roleQuestionToSelected(entry: RoleBankEntry): Omit<SelectedBankQuestion, 'id'> {
   return {
     bankQuestionId: `minfy-${entry.id}`,
     category: entry.category,
     focusArea: entry.topicTag,
     question: entry.question,
-    followUps: [
+    // A curator's own follow-ups and signals beat the generic pair. The generic
+    // fallback is what made every question show identical "what to listen for".
+    followUps: entry.followUps?.length ? entry.followUps : [
       'Could you walk me through the part you personally owned?',
       'What result did you achieve, and how did you measure it?',
     ],
-    whatToListenFor: [
+    whatToListenFor: entry.strongSignals?.length ? entry.strongSignals : [
       `Practical experience relevant to ${entry.topicTag}`,
       'Clear decisions, trade-offs, and personal ownership',
       'Specific outcomes, evidence, or lessons learned',
     ],
+    redFlags: entry.redFlags?.length ? entry.redFlags : undefined,
+    competency: entry.competency || undefined,
   };
 }
 
@@ -293,11 +315,13 @@ function selectRoleSpecificQuestions(input: {
   roleTitle: string;
   jdText: string;
   count: number;
+  /** Curated pool. Defaults to the shipped bank when none is supplied. */
+  rolePool?: RoleBankEntry[];
 }): Array<Omit<SelectedBankQuestion, 'id'>> {
   const seenQuestions = new Set<string>();
   const categoryCounts = new Map<string, number>();
 
-  return ROLE_QUESTION_BANK
+  return (input.rolePool?.length ? input.rolePool : ROLE_QUESTION_BANK)
     .map((entry) => ({
       entry,
       score: scoreRoleQuestion(entry, input.roleTitle, input.jdText),
@@ -333,35 +357,61 @@ export function selectQuestionsFromBank(input: {
   roleTitle: string;
   jdText: string;
   count?: number;
+  /**
+   * Focus areas the interviewer chose to cover. When supplied, the bank is
+   * filtered to those areas first so the guide stays on the ground the panel
+   * actually intends to cover. Falls back to the full bank if the filter would
+   * leave too little to build a guide from.
+   */
+  focusAreas?: string[];
+  /**
+   * The admin-curated role pool. Omitted (the default) means use the shipped
+   * static bank, so behaviour before seeding is identical to today.
+   */
+  rolePool?: RoleBankEntry[];
 }): { level: InterviewLevel; focusAreas: string[]; questions: SelectedBankQuestion[] } {
   const level = detectInterviewLevel(input.roleTitle, input.jdText);
   const normalizedContext = `${input.roleTitle} ${input.jdText}`.toLowerCase();
-  const desiredCount = Math.max(6, Math.min(input.count || 8, 10));
+  // The interviewer owns this number — they know the slot length. Bounded only
+  // to keep the prompt and the session sane.
+  const desiredCount = Math.max(3, Math.min(input.count || 8, 20));
+  const wantedAreas = (input.focusAreas || [])
+    .map((area) => area.trim().toLowerCase())
+    .filter(Boolean);
+  const matchesWantedArea = (area: string) => !wantedAreas.length
+    || wantedAreas.includes(String(area || '').trim().toLowerCase());
+
   const roleSpecificQuestions = selectRoleSpecificQuestions({
     interviewId: input.interviewId,
     roleTitle: input.roleTitle,
     jdText: input.jdText,
     count: Math.min(6, desiredCount),
-  });
+    rolePool: input.rolePool,
+  }).filter((question) => matchesWantedArea(question.focusArea));
   const genericQuestionCount = Math.max(0, desiredCount - roleSpecificQuestions.length);
 
-  const scored = QUESTION_BANK.map((entry) => {
-    const keywordMatches = entry.keywords.filter((keyword) => normalizedContext.includes(keyword.toLowerCase()));
-    const levelScore = entry.levels.includes(level) ? 4 : -3;
-    const generalScore = entry.keywords.length === 0 ? 3 : 0;
-    return {
-      entry,
-      score: keywordMatches.length * 8 + levelScore + generalScore,
-      tieBreaker: stableHash(`${input.interviewId}:${entry.id}`),
-    };
-  }).sort((left, right) => right.score - left.score || left.tieBreaker - right.tieBreaker);
+  const scored = QUESTION_BANK
+    .filter((entry) => matchesWantedArea(entry.focusArea))
+    .map((entry) => {
+      const keywordMatches = entry.keywords.filter((keyword) => normalizedContext.includes(keyword.toLowerCase()));
+      const levelScore = entry.levels.includes(level) ? 4 : -3;
+      const generalScore = entry.keywords.length === 0 ? 3 : 0;
+      return {
+        entry,
+        score: keywordMatches.length * 8 + levelScore + generalScore,
+        tieBreaker: stableHash(`${input.interviewId}:${entry.id}`),
+      };
+    }).sort((left, right) => right.score - left.score || left.tieBreaker - right.tieBreaker);
 
   const selected: QuestionBankEntry[] = [];
   const categoryCounts = new Map<string, number>();
+  // Allow more per category when a narrow topic set was requested, otherwise a
+  // focused interview cannot reach the requested count.
+  const perCategoryCap = wantedAreas.length && wantedAreas.length <= 3 ? 5 : 2;
   for (const candidate of scored) {
     if (selected.length >= genericQuestionCount) break;
     const categoryCount = categoryCounts.get(candidate.entry.category) || 0;
-    if (categoryCount >= 2) continue;
+    if (categoryCount >= perCategoryCap) continue;
     if (candidate.score < 0 && selected.length >= 6) continue;
     selected.push(candidate.entry);
     categoryCounts.set(candidate.entry.category, categoryCount + 1);

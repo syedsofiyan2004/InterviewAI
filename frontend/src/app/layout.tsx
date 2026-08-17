@@ -7,9 +7,9 @@ export const metadata: Metadata = {
   title: "Minfy MiMo AI Hub",
   description: "Minfy's interview and meeting intelligence hub",
   icons: {
-    icon: "/minfy-ai-logo.png",
-    shortcut: "/minfy-ai-logo.png",
-    apple: "/minfy-ai-logo.png",
+    icon: "/minfy-mimo-icon.png",
+    shortcut: "/minfy-mimo-icon.png",
+    apple: "/minfy-mimo-icon.png",
   },
 };
 

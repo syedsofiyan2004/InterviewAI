@@ -17,9 +17,9 @@ Minfy AI is a secure workspace for interview evaluation and meeting-minutes anal
 ### Interview Intelligence Mode
 
 - Create a separate interview preparation and review workspace beside Classic Interview Evaluation.
-- Use manual or mock Keka data for JD, resume, candidate, interview panel, and Teams meeting link.
+- Use live Keka Hire data for JD, resume, candidate, interview panel, schedule, and Teams meeting reference when the integrations are configured.
 - Generate interviewer-wise question plans before the interview.
-- Add Teams transcript text and human interviewer scores after the interview.
+- Sync the Teams transcript after the interview or add transcript text manually when live sync is unavailable.
 - Produce AI-assisted candidate evaluation, interviewer coverage review, panel calibration, and final human-reviewed report.
 - See `docs/interview-intelligence-v2.md` for integration notes and future live Keka/Teams setup.
 
