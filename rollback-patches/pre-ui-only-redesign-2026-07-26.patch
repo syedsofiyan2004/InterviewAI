@@ -1,0 +1,2092 @@
+diff --git a/README.md b/README.md
+index ab38382..2d48b17 100644
+--- a/README.md
++++ b/README.md
+@@ -17,9 +17,9 @@ Minfy AI is a secure workspace for interview evaluation and meeting-minutes anal
+ ### Interview Intelligence Mode
+ 
+ - Create a separate interview preparation and review workspace beside Classic Interview Evaluation.
+-- Use manual or mock Keka data for JD, resume, candidate, interview panel, and Teams meeting link.
++- Use live Keka Hire data for JD, resume, candidate, interview panel, schedule, and Teams meeting reference when the integrations are configured.
+ - Generate interviewer-wise question plans before the interview.
+-- Add Teams transcript text and human interviewer scores after the interview.
++- Sync the Teams transcript after the interview or add transcript text manually when live sync is unavailable.
+ - Produce AI-assisted candidate evaluation, interviewer coverage review, panel calibration, and final human-reviewed report.
+ - See `docs/interview-intelligence-v2.md` for integration notes and future live Keka/Teams setup.
+ 
+diff --git a/frontend/src/app/globals.css b/frontend/src/app/globals.css
+index bcf710d..bebc715 100644
+--- a/frontend/src/app/globals.css
++++ b/frontend/src/app/globals.css
+@@ -319,6 +319,30 @@ textarea {
+     font-weight: 600;
+   }
+ 
++  .intelligence-workspace-header {
++    position: relative;
++    overflow: hidden;
++  }
++
++  .intelligence-workspace-header::before {
++    content: "";
++    position: absolute;
++    inset: 0 auto 0 0;
++    width: 4px;
++    background: var(--accent);
++  }
++
++  .intelligence-next-action {
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++    gap: 1.25rem;
++    border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
++    border-radius: 1rem;
++    background: color-mix(in srgb, var(--accent) 6%, var(--surface-elevated));
++    padding: 1rem 1.25rem;
++  }
++
+   .intelligence-metric {
+     border-radius: 1.25rem;
+     padding: 1.25rem;
+@@ -354,9 +378,9 @@ textarea {
+ 
+   .intelligence-hero-panel {
+     border: 1px solid var(--border);
+-    border-radius: 1.4rem;
+-    background: var(--surface);
+-    padding: 1rem;
++    border-radius: 1rem;
++    background: color-mix(in srgb, var(--surface) 88%, var(--surface-elevated));
++    padding: 1.1rem;
+   }
+ 
+   .intelligence-record-card {
+@@ -409,6 +433,13 @@ textarea {
+     }
+   }
+ 
++  @media (max-width: 639px) {
++    .intelligence-next-action {
++      align-items: flex-start;
++      flex-direction: column;
++    }
++  }
++
+   @media (min-width: 1024px) {
+     .intelligence-hero {
+       grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+@@ -451,7 +482,8 @@ textarea {
+         rgba(255,255,255,0.36) 13rem,
+         transparent 28rem
+       );
+-    opacity: 0.85;
++    opacity: 0.56;
++    will-change: background;
+   }
+ 
+   .dark .app-workspace {
+@@ -466,7 +498,7 @@ textarea {
+         rgba(148,163,184,0.045) 14rem,
+         transparent 30rem
+       );
+-    opacity: 0.9;
++    opacity: 0.58;
+   }
+ 
+   .login-stage {
+@@ -522,7 +554,7 @@ textarea {
+     overflow: hidden;
+     border: 1px solid var(--border);
+     background: var(--background);
+-    box-shadow: 0 4px 16px rgb(15 23 42 / 0.06);
++    box-shadow: 0 10px 30px rgb(15 23 42 / 0.05);
+   }
+ 
+   .hub-stage::after {
+@@ -534,9 +566,9 @@ textarea {
+     background:
+       radial-gradient(
+         circle at var(--mx, 50%) var(--my, 42%),
+-        color-mix(in srgb, var(--accent) 7%, transparent),
+-        rgba(255,255,255,0.34) 12rem,
+-        transparent 29rem
++        color-mix(in srgb, var(--accent) 5%, transparent),
++        rgba(255,255,255,0.24) 10rem,
++        transparent 26rem
+       );
+   }
+ 
+@@ -555,18 +587,41 @@ textarea {
+     display: block;
+     min-height: 200px;
+     overflow: hidden;
+-    border-radius: 1.25rem;
++    border-radius: 1rem;
+     border: 1px solid var(--border);
+     background: var(--surface-elevated);
+     padding: 1.5rem;
+-    box-shadow: 0 4px 20px rgb(15 23 42 / 0.06);
++    box-shadow: 0 5px 18px rgb(15 23 42 / 0.05);
+     transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+   }
+ 
+   .hub-workspace-card:hover {
+     transform: translateY(-2px);
+     border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+-    box-shadow: 0 8px 24px rgb(15 23 42 / 0.08);
++    box-shadow: 0 12px 28px rgb(15 23 42 / 0.08);
++  }
++
++  .hub-overview-card {
++    align-self: stretch;
++    border: 1px solid var(--border);
++    border-radius: 1rem;
++    background: color-mix(in srgb, var(--surface-elevated) 94%, var(--surface));
++    padding: 1.25rem;
++    box-shadow: 0 5px 18px rgb(15 23 42 / 0.04);
++  }
++
++  .intelligence-dashboard-hero {
++    position: relative;
++    overflow: hidden;
++  }
++
++  .intelligence-dashboard-hero::before {
++    content: "";
++    position: absolute;
++    inset: 0 auto 0 0;
++    width: 4px;
++    background: var(--accent);
++    opacity: 0.76;
+   }
+ 
+   .hub-status-pill {
+diff --git a/frontend/src/app/interviews/intelligence/new/page.tsx b/frontend/src/app/interviews/intelligence/new/page.tsx
+index cda93e6..eb4b072 100644
+--- a/frontend/src/app/interviews/intelligence/new/page.tsx
++++ b/frontend/src/app/interviews/intelligence/new/page.tsx
+@@ -62,6 +62,11 @@ export default function NewInterviewIntelligencePage() {
+   }, []);
+ 
+   const automaticReady = !!status?.keka.configured && !!status?.teams.configured;
++  const connectionTone = loading
++    ? 'border-border bg-surface text-text-muted'
++    : automaticReady
++      ? 'bg-success/10 text-success'
++      : 'bg-warning/10 text-warning';
+ 
+   const loadKekaJobs = async () => {
+     setKekaLoading(true);
+@@ -240,8 +245,8 @@ export default function NewInterviewIntelligencePage() {
+                 Choose the role first, then the candidate and their scheduled interview. The workspace is created with the right context already attached.
+               </p>
+             </div>
+-            <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${automaticReady ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+-              {automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
++            <span role="status" aria-live="polite" className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${connectionTone}`}>
++              {loading ? <RefreshCw size={14} className="animate-spin" /> : automaticReady ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
+               {loading ? 'Checking connections' : automaticReady ? 'Connections ready' : 'Connection needs attention'}
+             </span>
+           </div>
+@@ -287,7 +292,7 @@ export default function NewInterviewIntelligencePage() {
+               <SelectionStep number="3" icon={<Video size={17} />} title="Scheduled interview" complete={!!selectedKekaInterviewId} muted={!selectedKekaCandidateId}>
+                 <select value={selectedKekaInterviewId} onChange={(event) => setSelectedKekaInterviewId(event.target.value)} disabled={kekaLoading || !selectedKekaCandidateId || !kekaInterviews.length} className="premium-input mt-3 w-full px-3 py-3 text-sm disabled:opacity-50">
+                   <option value="">{!selectedKekaCandidateId ? 'Choose a candidate first' : kekaInterviews.length ? 'Choose an interview' : 'No scheduled interviews'}</option>
+-                  {kekaInterviews.map((interview) => <option key={interview.id} value={interview.id}>{interview.scheduledAt || 'Scheduled interview'}{interview.status ? ` - ${interview.status}` : ''}</option>)}
++                  {kekaInterviews.map((interview) => <option key={interview.id} value={interview.id}>{formatKekaInterviewOption(interview)}</option>)}
+                 </select>
+               </SelectionStep>
+             </div>
+@@ -464,3 +469,28 @@ function SelectionStep({
+     </div>
+   );
+ }
++
++function parseScheduleDate(value?: string): Date | null {
++  const text = value?.trim();
++  if (!text) return null;
++  if (/^\d{10}$/.test(text)) return new Date(Number(text) * 1000);
++  if (/^\d{13}$/.test(text)) return new Date(Number(text));
++  const parsed = new Date(text);
++  return Number.isNaN(parsed.getTime()) ? null : parsed;
++}
++
++function formatKekaInterviewOption(interview: KekaInterviewOption): string {
++  const scheduledDate = parseScheduleDate(interview.scheduledAt);
++  const dateText = scheduledDate
++    ? new Intl.DateTimeFormat(undefined, {
++      dateStyle: 'medium',
++      timeStyle: 'short',
++    }).format(scheduledDate)
++    : interview.scheduledAt || 'Scheduled interview';
++  const ageLabel = scheduledDate
++    ? scheduledDate.getTime() < Date.now()
++      ? 'Past interview'
++      : 'Upcoming interview'
++    : '';
++  return [dateText, ageLabel, interview.status].filter(Boolean).join(' - ');
++}
+diff --git a/frontend/src/app/interviews/intelligence/page.tsx b/frontend/src/app/interviews/intelligence/page.tsx
+index 191265d..306c8e5 100644
+--- a/frontend/src/app/interviews/intelligence/page.tsx
++++ b/frontend/src/app/interviews/intelligence/page.tsx
+@@ -91,25 +91,24 @@ export default function InterviewIntelligenceDashboard() {
+   );
+ 
+   return (
+-    <div className="mx-auto max-w-6xl space-y-7 pb-10">
+-      <section className="intelligence-hero">
++    <div className="mx-auto max-w-6xl space-y-8 pb-10">
++      <section className="intelligence-hero intelligence-dashboard-hero">
+         <div className="min-w-0">
+           <p className="page-kicker">Interview Intelligence</p>
+-          <h1 className="mt-4 max-w-2xl text-4xl font-semibold leading-[1.03] tracking-tight text-text-primary md:text-5xl">
+-            Prepare the panel. Review the evidence.
++          <h1 className="mt-3 max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-text-primary md:text-4xl">
++            Interview work, kept in context.
+           </h1>
+           <p className="mt-4 max-w-2xl text-sm leading-6 text-text-secondary">
+-            Bring the role, candidate, interview panel, and Teams transcript into one reviewable workspace.
+-            Use the guide before the call, then compare evidence and panel feedback afterwards.
++            Each workspace carries the role, candidate, panel guide, transcript, and decision record from preparation through approval.
+           </p>
+           <div className="mt-6 flex flex-wrap gap-3">
+             <Link href="/interviews/intelligence/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+               <PlusCircle size={16} />
+-              Set up an interview
++              New interview workspace
+             </Link>
+             <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 py-2.5 text-xs font-semibold text-text-muted">
+               <Clock3 size={14} />
+-              One workspace from preparation to approval
++              One record from brief to decision
+             </span>
+           </div>
+         </div>
+@@ -119,10 +118,10 @@ export default function InterviewIntelligenceDashboard() {
+             <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">How it works</p>
+             <BrainCircuit size={18} className="text-accent" />
+           </div>
+-          <div className="mt-5 space-y-3">
+-            <WorkflowLine num="01" title="Before the interview" detail="Build a focused panel guide" />
+-            <WorkflowLine num="02" title="After the interview" detail="Add transcript and panel scores" />
+-            <WorkflowLine num="03" title="Human review" detail="Check evidence before approval" />
++          <div className="mt-5 space-y-2">
++            <WorkflowLine num="01" title="Prepare" detail="Role, candidate, and panel guide" />
++            <WorkflowLine num="02" title="Review" detail="Transcript, evidence, and coverage" />
++            <WorkflowLine num="03" title="Decide" detail="Human approval and PDF report" />
+           </div>
+         </div>
+       </section>
+@@ -136,9 +135,9 @@ export default function InterviewIntelligenceDashboard() {
+       <section className="intelligence-card p-5">
+         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+           <div>
+-            <h2 className="text-sm font-semibold text-text-primary">Workspace availability</h2>
++            <h2 className="text-sm font-semibold text-text-primary">Connected sources</h2>
+             <p className="mt-1 text-xs leading-5 text-text-muted">
+-              Your workspace brings together the interview details and completed meeting transcript when each source is available.
++              Interview details and Teams transcripts are attached as each connected source becomes available.
+             </p>
+           </div>
+           <div className="flex flex-wrap gap-2">
+diff --git a/frontend/src/app/interviews/intelligence/view/page.tsx b/frontend/src/app/interviews/intelligence/view/page.tsx
+index da4c35e..b31e41c 100644
+--- a/frontend/src/app/interviews/intelligence/view/page.tsx
++++ b/frontend/src/app/interviews/intelligence/view/page.tsx
+@@ -7,7 +7,7 @@ import { api, InterviewIntelligenceRecord } from '@/lib/api';
+ import { ArrowLeft, BrainCircuit, CheckCircle2, ClipboardCheck, Download, FileText, MessageSquareText, RefreshCw, ShieldCheck, Trash2, Upload, Users, type LucideIcon } from 'lucide-react';
+ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+ 
+-const workspaceTabs = ['Overview', 'Interview guide', 'Transcript', 'Review & report'];
++const workspaceTabs = ['Brief', 'Panel guide', 'Transcript', 'Review'];
+ const steps = workspaceTabs.map((label, index) => ({ label, anchor: `workspace-${index}` }));
+ 
+ export default function InterviewIntelligenceViewPage() {
+@@ -66,7 +66,6 @@ export default function InterviewIntelligenceViewPage() {
+     try {
+       const updated = await action();
+       setRecord(updated);
+-      if (label === 'mock transcript') setTranscriptText(updated.transcript?.rawText || '');
+     } catch (err) {
+       // Question generation persists before the response returns. A dropped
+       // browser/API response must not leave the workspace showing an error
+@@ -135,6 +134,15 @@ export default function InterviewIntelligenceViewPage() {
+   }
+ 
+   const reviewInProgress = busy === 'analysis' || record.status === 'analysis_processing';
++  const nextAction = !record.questionPlan
++    ? { tab: 1, label: 'Prepare panel guide', detail: 'Generate the focused interview guide before the conversation.' }
++    : !record.transcript
++      ? { tab: 2, label: 'Bring in the transcript', detail: 'Continue after Teams has completed transcription for the meeting.' }
++      : !record.aiEvaluation
++        ? { tab: 3, label: 'Review interview evidence', detail: 'MiMo compares the transcript with the role, guide, and candidate context.' }
++        : record.status !== 'approved'
++          ? { tab: 3, label: 'Approve the report', detail: 'Complete the human review before sharing the final report.' }
++          : { tab: 3, label: 'Download approved report', detail: 'The evidence-backed PDF is ready to circulate.' };
+ 
+   const downloadReport = async () => {
+     setBusy('report');
+@@ -192,14 +200,14 @@ export default function InterviewIntelligenceViewPage() {
+         Back to intelligence interviews
+       </Link>
+ 
+-      <section className="intelligence-card flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between md:p-6">
++      <section className="intelligence-card intelligence-workspace-header flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between md:p-7">
+         <div className="min-w-0">
+-          <p className="page-kicker">Interview Intelligence Mode</p>
++          <p className="page-kicker">Interview workspace</p>
+           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text-primary md:text-3xl">{record.candidate.name}</h1>
+           <p className="mt-2 text-sm text-text-secondary">{record.job.title}</p>
+           <div className="mt-4 flex flex-wrap gap-2">
+-            <Pill>Interview workspace</Pill>
+-            <Pill muted>{record.teams.mode === 'live' ? 'Microsoft Teams connected' : 'Transcript ready for upload'}</Pill>
++            <Pill>{record.teams.mode === 'live' ? 'Teams transcript connected' : 'Transcript upload available'}</Pill>
++            {record.questionPlan && <Pill muted>Panel guide ready</Pill>}
+           </div>
+         </div>
+ 
+@@ -214,7 +222,6 @@ export default function InterviewIntelligenceViewPage() {
+           <span>
+             {busy === 'questions' && 'Preparing your interview guide...'}
+             {busy === 'transcript' && 'Saving the Teams transcript...'}
+-            {busy === 'mock transcript' && 'Loading the demo transcript...'}
+             {busy === 'teams transcript' && 'Syncing the completed Teams transcript...'}
+             {busy === 'analysis' && 'Reviewing the interview evidence...'}
+             {busy === 'approve' && 'Approving the final report...'}
+@@ -228,16 +235,35 @@ export default function InterviewIntelligenceViewPage() {
+ 
+       {error && <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+ 
++      <section className="intelligence-next-action" aria-label="Recommended next action">
++        <div>
++          <p className="page-kicker">Recommended next action</p>
++          <h2 className="mt-1 text-base font-semibold text-text-primary">{nextAction.label}</h2>
++          <p className="mt-1 text-sm leading-6 text-text-secondary">{nextAction.detail}</p>
++        </div>
++        <button type="button" onClick={() => setVisibleStep(nextAction.tab)} className="btn-primary shrink-0 px-4 py-2.5 text-sm font-semibold">
++          Open section
++        </button>
++      </section>
++
+       <WorkspaceTabs activeTab={visibleStep} onSelect={setVisibleStep} />
+ 
+       <div className="min-w-0">
+-      <Section visible={visibleStep === 0} icon={Users} title="Interview setup" detail="Confirm the meeting organiser and add the candidate resume before preparing the guide.">
++      <Section visible={visibleStep === 0} icon={Users} title="Interview brief" detail="Review the role and candidate context before preparing the panel guide.">
+         <div className="grid gap-4 md:grid-cols-2">
+           <Info label="Candidate" value={record.candidate.name} />
+           <Info label="Role" value={record.job.title} />
++          <div className="rounded-2xl border border-border bg-surface p-4">
++            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Candidate email</p>
++            <p className="mt-1 text-xs leading-5 text-text-muted">Used to keep the candidate record connected to the interview workspace.</p>
++            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
++              <input type="email" value={candidateEmail} onChange={(event) => setCandidateEmail(event.target.value)} placeholder="candidate@email.com" className="min-w-0 flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-text-primary outline-none focus:border-accent" />
++              <button type="button" onClick={saveDetails} disabled={busy === 'workspace details'} className="btn-secondary shrink-0 px-3 py-2 text-xs font-semibold disabled:opacity-50">Save</button>
++            </div>
++          </div>
+           <div className="rounded-2xl border border-border bg-surface p-4 md:col-span-2">
+             <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Meeting organiser email</p>
+-            <p className="mt-1 text-xs leading-5 text-text-muted">Use the Microsoft 365 organiser whose account is included in the Teams Application Access Policy. This is the identity Minfy AI uses to locate the meeting and transcript.</p>
++            <p className="mt-1 text-xs leading-5 text-text-muted">Use the Microsoft 365 account that scheduled the meeting. MiMo uses it to find the matching Teams transcript after the call.</p>
+             <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+               <input type="email" value={organizerEmail} onChange={(event) => setOrganizerEmail(event.target.value)} placeholder="organiser@minfytech.com" className="min-w-0 flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-text-primary outline-none focus:border-accent" />
+               <button type="button" onClick={saveDetails} disabled={busy === 'workspace details'} className="btn-secondary shrink-0 px-3 py-2 text-xs font-semibold disabled:opacity-50">Save</button>
+@@ -248,18 +274,21 @@ export default function InterviewIntelligenceViewPage() {
+           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+             <div>
+               <p className="text-sm font-semibold text-text-primary">Candidate resume</p>
+-              <p className="mt-1 text-sm leading-6 text-text-secondary">The guide includes an opening question and two or three questions grounded in the candidate’s past experience. These context questions are excluded from panel coverage scoring.</p>
+-              {record.candidate.resumeFileName && <p className="mt-2 text-xs font-semibold text-success">Ready: {record.candidate.resumeFileName}</p>}
++              <p className="mt-1 text-sm leading-6 text-text-secondary">The guide includes an opening question and two or three questions grounded in the candidate&apos;s past experience. These context questions are excluded from panel coverage scoring.</p>
++              {record.candidate.resumeS3Key && record.candidate.resumeFileName && <p className="mt-2 text-xs font-semibold text-success">Ready: {record.candidate.resumeFileName}</p>}
++              {!record.candidate.resumeS3Key && record.candidate.resumeText && <p className="mt-2 text-xs font-semibold text-success">Imported from the candidate record</p>}
+             </div>
+-            <label className="btn-primary inline-flex cursor-pointer items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold">
+-              <Upload size={16} />
+-              {record.candidate.resumeS3Key ? 'Replace resume' : 'Upload resume'}
+-              <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(event) => {
+-                const file = event.target.files?.[0];
+-                if (file) void uploadResume(file);
+-                event.currentTarget.value = '';
+-              }} />
+-            </label>
++            {record.source_mode !== 'keka_live' || !record.candidate.resumeText ? (
++              <label className="btn-primary inline-flex cursor-pointer items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold">
++                <Upload size={16} />
++                {record.candidate.resumeS3Key ? 'Replace resume' : 'Upload resume'}
++                <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(event) => {
++                  const file = event.target.files?.[0];
++                  if (file) void uploadResume(file);
++                  event.currentTarget.value = '';
++                }} />
++              </label>
++            ) : null}
+           </div>
+         </div>
+         {record.candidate.resumeS3Key && organizerEmail.trim() && (
+@@ -277,8 +306,8 @@ export default function InterviewIntelligenceViewPage() {
+             <span className="text-xs font-medium text-text-muted">View full description</span>
+           </summary>
+           <div className="border-t border-border px-4 pb-4 pt-3">
+-            <p className="text-xs leading-5 text-text-muted">Sourced directly from the current Minfy Careers role page when this workspace was created.</p>
+-            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{record.job.description}</p>
++            <p className="text-xs leading-5 text-text-muted">{record.keka.mode === 'live' ? 'Attached from the selected Keka Hire role when this workspace was created.' : 'Attached to this workspace when it was created.'}</p>
++            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{formatJobDescription(record.job.description)}</p>
+           </div>
+         </details>
+       </Section>
+@@ -294,6 +323,17 @@ export default function InterviewIntelligenceViewPage() {
+           />
+         ) : (
+           <div className="space-y-5">
++            <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
++              <div>
++                <p className="text-sm font-semibold text-text-primary">Panel guide</p>
++                <p className="mt-1 text-xs leading-5 text-text-muted">Questions are selected from the approved bank for this role and grouped by interview purpose.</p>
++              </div>
++              {!record.transcript && (
++                <button type="button" onClick={() => runAction('questions', () => api.generateIntelligenceQuestions(record.intelligence_id))} disabled={busy === 'questions'} className="btn-secondary shrink-0 px-3 py-2 text-xs font-semibold disabled:opacity-50">
++                  {busy === 'questions' ? 'Refreshing...' : 'Refresh guide'}
++                </button>
++              )}
++            </div>
+             <TwoColumn leftTitle="Candidate summary" left={record.questionPlan.candidateSummary} rightTitle="JD summary" right={record.questionPlan.jdSummary} />
+             <div className="grid gap-3 md:grid-cols-3">
+               {record.questionPlan.skillAreas.map((area) => (
+@@ -375,14 +415,6 @@ export default function InterviewIntelligenceViewPage() {
+               >
+                 Save transcript
+               </button>
+-              <button
+-                type="button"
+-                disabled={busy === 'mock transcript'}
+-                onClick={() => runAction('mock transcript', () => api.updateIntelligenceTranscript(record.intelligence_id, { useMockTeams: true, source: 'mock_teams' }))}
+-                className="rounded-lg border border-border bg-surface-elevated px-4 py-2.5 text-sm font-semibold text-text-primary disabled:opacity-50"
+-              >
+-                Load demo transcript
+-              </button>
+             </div>
+           </>
+         ) : (
+@@ -626,6 +658,17 @@ function WorkspaceTabs({ activeTab, onSelect }: { activeTab: number; onSelect: (
+   );
+ }
+ 
++function formatJobDescription(description: string) {
++  return description
++    .replace(/<[^>]+>/g, ' ')
++    .replace(/&nbsp;/gi, ' ')
++    .replace(/&amp;/gi, '&')
++    .replace(/&quot;/gi, '"')
++    .replace(/&#39;/gi, "'")
++    .replace(/\s{2,}/g, ' ')
++    .trim();
++}
++
+ function IntelligenceViewSkeleton() {
+   return (
+     <div className="mx-auto max-w-6xl space-y-6 pb-10" aria-busy="true" aria-live="polite">
+diff --git a/frontend/src/app/interviews/new/page.tsx b/frontend/src/app/interviews/new/page.tsx
+index 610bd09..01a22f7 100644
+--- a/frontend/src/app/interviews/new/page.tsx
++++ b/frontend/src/app/interviews/new/page.tsx
+@@ -113,7 +113,7 @@ export default function NewInterview() {
+     candidate_name: '',
+     position: '',
+     interview_date: new Date().toISOString().split('T')[0],
+-    model_id: 'claude-3-sonnet',
++    model_id: 'claude-sonnet-5',
+   });
+ 
+   // Upload State
+@@ -351,7 +351,8 @@ export default function NewInterview() {
+                 value={formData.model_id}
+                 onChange={e => setFormData({ ...formData, model_id: e.target.value })}
+               >
+-                <option value="claude-3-sonnet">Claude 3.7 Sonnet (Professional Intelligence)</option>
++                <option value="claude-sonnet-5">Claude Sonnet 5 (Best quality)</option>
++                <option value="claude-3-sonnet">Claude 3.7 Sonnet</option>
+                 <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                 <option value="nova-pro">Amazon Nova Pro</option>
+               </select>
+diff --git a/frontend/src/app/page.tsx b/frontend/src/app/page.tsx
+index 8e0a27b..dea54c9 100644
+--- a/frontend/src/app/page.tsx
++++ b/frontend/src/app/page.tsx
+@@ -2,7 +2,7 @@
+ 
+ import { useEffect, useMemo, useState } from 'react';
+ import Link from 'next/link';
+-import { ArrowRight, ClipboardList, FileText, Loader2 } from 'lucide-react';
++import { ArrowRight, ClipboardList, FileText, Loader2, Sparkles } from 'lucide-react';
+ import { api } from '@/lib/api';
+ 
+ type HubStats = {
+@@ -63,37 +63,48 @@ export default function HubPage() {
+   ], [stats.interviews, stats.moms]);
+ 
+   return (
+-    <div className="hub-stage min-h-[calc(100vh-7rem)] rounded-2xl p-[clamp(22px,3.2vw,42px)]">
+-      <div className="relative z-10 flex w-full max-w-7xl flex-col gap-10">
+-        <header className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
++    <div className="hub-stage min-h-[calc(100vh-7rem)] rounded-[1.5rem] p-[clamp(22px,3.2vw,42px)]">
++      <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-8">
++        <header className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-end">
+           <div className="max-w-3xl">
+-            <div className="mb-8 flex items-center gap-3">
++            <div className="mb-7 flex items-center gap-3">
+               <img src="/minfy-ai-logo.png" alt="" className="h-12 w-12 rounded-xl object-contain shadow-sm" />
+               <div>
+                 <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy MiMo AI Hub</p>
+                 <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Internal tools</p>
+               </div>
+             </div>
+-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-accent">
+-              Two tools. One place.
++            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
++              Internal workspace
+             </p>
+             <h1 className="mt-3 max-w-3xl text-[clamp(38px,6vw,76px)] font-semibold leading-[0.96] tracking-tight text-text-primary">
+               Your meetings and interviews,
+               <span className="block text-accent">actually documented.</span>
+             </h1>
+             <p className="mt-4 max-w-2xl text-base leading-7 text-text-secondary">
+-              Upload a transcript. Get a proper report. No copying, no formatting, no chasing people for notes.
++              Bring the source material once. MiMo keeps the evidence, report, and next action together so delivery work can move without chasing notes.
+             </p>
+           </div>
+-          {stats.loading && (
+-            <div className="hub-status-pill flex items-center gap-2 text-xs text-text-secondary">
+-              <Loader2 size={14} className="animate-spin" />
+-              Loading workspace stats
++          <div className="hub-overview-card">
++            <div className="flex items-center justify-between">
++              <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Your workspace</p>
++              {stats.loading ? <Loader2 size={15} className="animate-spin text-accent" /> : <Sparkles size={15} className="text-accent" />}
+             </div>
+-          )}
++            <div className="mt-6 grid grid-cols-2 divide-x divide-border">
++              <div className="pr-4">
++                <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.interviews}</p>
++                <p className="mt-1 text-xs text-text-muted">Evaluations</p>
++              </div>
++              <div className="pl-4">
++                <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.moms}</p>
++                <p className="mt-1 text-xs text-text-muted">Meeting reports</p>
++              </div>
++            </div>
++            <p className="mt-5 border-t border-border pt-4 text-xs leading-5 text-text-secondary">Choose a workspace to continue from where the last review stopped.</p>
++          </div>
+         </header>
+ 
+-        <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
++        <section className="grid grid-cols-1 gap-5 lg:grid-cols-2" aria-label="Applications">
+           {apps.map((app, index) => {
+             const Icon = app.icon;
+             return (
+@@ -113,7 +124,7 @@ export default function HubPage() {
+                     </div>
+                   </div>
+ 
+-                    <div className="mt-6 space-y-3">
++                    <div className="mt-5 space-y-3">
+                       <h2 className="text-xl font-semibold text-text-primary">{app.title}</h2>
+                       <p className="max-w-xl text-sm leading-6 text-text-secondary">{app.description}</p>
+                       <code className="inline-flex max-w-full rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-semibold leading-5 text-text-secondary">
+diff --git a/frontend/src/components/layout/AppShell.tsx b/frontend/src/components/layout/AppShell.tsx
+index 4a3c362..bed1894 100644
+--- a/frontend/src/components/layout/AppShell.tsx
++++ b/frontend/src/components/layout/AppShell.tsx
+@@ -22,6 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
+   const workspaceRef = useRef<HTMLElement>(null);
+   const pointerFrameRef = useRef<number | null>(null);
+   const pointerPositionRef = useRef({ x: 50, y: 42 });
++  const lastRenderedPointerRef = useRef({ x: 50, y: 42 });
+ 
+   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+ 
+@@ -82,17 +83,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
+             className="app-workspace flex-1 overflow-y-auto p-7 lg:p-8"
+             onMouseMove={(event) => {
+               const rect = event.currentTarget.getBoundingClientRect();
+-              pointerPositionRef.current = {
++              const nextPosition = {
+                 x: ((event.clientX - rect.left) / rect.width) * 100,
+                 y: ((event.clientY - rect.top) / rect.height) * 100,
+               };
++              const previous = pointerPositionRef.current;
++              if (Math.abs(nextPosition.x - previous.x) < 1 && Math.abs(nextPosition.y - previous.y) < 1) return;
++              pointerPositionRef.current = nextPosition;
+ 
+               if (pointerFrameRef.current) return;
+               pointerFrameRef.current = window.requestAnimationFrame(() => {
+                 const workspace = workspaceRef.current;
+-                if (workspace) {
+-                  workspace.style.setProperty('--mx', `${pointerPositionRef.current.x}%`);
+-                  workspace.style.setProperty('--my', `${pointerPositionRef.current.y}%`);
++                const rendered = lastRenderedPointerRef.current;
++                const position = pointerPositionRef.current;
++                if (workspace && (Math.abs(position.x - rendered.x) >= 1 || Math.abs(position.y - rendered.y) >= 1)) {
++                  workspace.style.setProperty('--mx', `${position.x}%`);
++                  workspace.style.setProperty('--my', `${position.y}%`);
++                  lastRenderedPointerRef.current = position;
+                 }
+                 pointerFrameRef.current = null;
+               });
+diff --git a/frontend/src/components/layout/Sidebar.tsx b/frontend/src/components/layout/Sidebar.tsx
+index e517a09..e6254d5 100644
+--- a/frontend/src/components/layout/Sidebar.tsx
++++ b/frontend/src/components/layout/Sidebar.tsx
+@@ -177,7 +177,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
+         )}
+       </div>
+ 
+-      <nav className={cn('flex-1 space-y-6 overflow-y-auto py-5', showLabels ? 'px-3' : 'px-2')} aria-label="Primary navigation">
++      <nav className={cn('min-h-0 flex-1 space-y-6 overflow-y-auto py-5', showLabels ? 'px-3' : 'px-2')} aria-label="Primary navigation">
+         <Link
+           id={mobile ? undefined : 'tour-nav-home'}
+           href="/"
+@@ -231,7 +231,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
+         ))}
+       </nav>
+ 
+-      <div id={mobile ? undefined : 'tour-sidebar-footer'} className={cn('border-t border-border', showLabels ? 'p-3' : 'p-2')}>
++      <div id={mobile ? undefined : 'tour-sidebar-footer'} className={cn('shrink-0 border-t border-border', showLabels ? 'p-3' : 'p-2')}>
+         <div className={cn('rounded-xl border border-border bg-surface-elevated', showLabels ? 'p-3' : 'p-2')}>
+           <div className={cn('flex items-center', showLabels ? 'mb-3 gap-2' : 'justify-center')}>
+             <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
+diff --git a/frontend/src/components/layout/Topbar.tsx b/frontend/src/components/layout/Topbar.tsx
+index b57c591..ac64c38 100644
+--- a/frontend/src/components/layout/Topbar.tsx
++++ b/frontend/src/components/layout/Topbar.tsx
+@@ -1,8 +1,7 @@
+ 'use client';
+ 
+-import Link from 'next/link';
+ import { usePathname } from 'next/navigation';
+-import { HelpCircle, Menu, ChevronRight } from 'lucide-react';
++import { BookOpen, Menu } from 'lucide-react';
+ import { getPageMetadata } from './pageMetadata';
+ 
+ interface TopbarProps {
+@@ -14,7 +13,7 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
+   const metadata = getPageMetadata(pathname);
+ 
+   return (
+-    <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border bg-surface-elevated px-4 lg:px-6">
++    <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border bg-surface-elevated/95 px-4 lg:px-7">
+       <div className="min-w-0">
+         <div className="flex items-center gap-2">
+           <button
+@@ -25,21 +24,7 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
+           >
+             <Menu size={18} />
+           </button>
+-          {metadata.breadcrumbs.length > 1 && (
+-            <nav aria-label="Breadcrumb" className="hidden items-center gap-1 text-xs text-text-muted sm:flex">
+-              <Link href="/" className="transition-colors hover:text-text-primary">Home</Link>
+-              {metadata.breadcrumbs.map((item, index) => (
+-                <span key={`${item.label}-${index}`} className="flex items-center gap-1">
+-                  <ChevronRight size={13} aria-hidden="true" />
+-                  {item.href ? (
+-                    <Link href={item.href} className="transition-colors hover:text-text-primary">{item.label}</Link>
+-                  ) : (
+-                    <span aria-current="page">{item.label}</span>
+-                  )}
+-                </span>
+-              ))}
+-            </nav>
+-          )}
++          <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-text-muted sm:inline">MiMo workspace</span>
+         </div>
+         <div className="min-w-0">
+           <h1 className="truncate text-sm font-semibold text-text-primary">{metadata.title}</h1>
+@@ -59,11 +44,12 @@ export function Topbar({ onOpenNavigation }: TopbarProps) {
+             localStorage.setItem('minfy_tour_replay', 'all');
+             window.location.reload();
+           }}
+-          className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-interactive hover:text-accent"
+-          title="Replay guide"
++          className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold text-text-muted transition-colors hover:bg-surface-interactive hover:text-text-primary"
++          title="Replay product guide"
+           aria-label="Replay guide"
+         >
+-          <HelpCircle size={16} />
++          <BookOpen size={16} />
++          <span className="hidden sm:inline">Guide</span>
+         </button>
+       </div>
+     </header>
+diff --git a/frontend/src/lib/api.ts b/frontend/src/lib/api.ts
+index f1fe8f9..eae4693 100644
+--- a/frontend/src/lib/api.ts
++++ b/frontend/src/lib/api.ts
+@@ -242,21 +242,22 @@ export interface InterviewIntelligenceRecord {
+   owner_user_id: string;
+   created_at: number;
+   updated_at: number;
+-  source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
++  source_mode: 'manual' | 'keka_live' | 'teams_live';
+   status: IntelligenceStatus;
+   keka: {
+-    mode: 'mock' | 'disabled' | 'live';
+-    syncStatus: 'not_connected' | 'mocked' | 'synced' | 'failed';
++    mode: 'disabled' | 'live';
++    syncStatus: 'not_connected' | 'synced' | 'failed';
+     lastSyncAt?: number;
+     error?: string;
+   };
+   teams: {
+-    mode: 'mock' | 'disabled' | 'live';
++    mode: 'disabled' | 'live';
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+-    transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
++    transcriptStatus: 'not_available' | 'pending' | 'synced' | 'failed';
+     lastSyncAt?: number;
+     error?: string;
+   };
+@@ -301,7 +302,7 @@ export interface InterviewIntelligenceRecord {
+   };
+   transcript?: {
+     rawText: string;
+-    source: 'manual' | 'mock_teams' | 'teams_live';
++    source: 'manual' | 'teams_live';
+     uploadedAt: number;
+   };
+   aiEvaluation?: {
+@@ -348,8 +349,8 @@ export interface InterviewIntelligenceRecord {
+ }
+ 
+ export interface IntegrationStatus {
+-  keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean; credentialSource?: string };
+-  teams: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
++  keka: { mode: 'disabled' | 'live'; label: string; configured: boolean; credentialSource?: string };
++  teams: { mode: 'disabled' | 'live'; label: string; configured: boolean };
+   message: string;
+ }
+ 
+@@ -629,7 +630,7 @@ export const api = {
+   },
+ 
+   async createIntelligenceInterview(data: {
+-    source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
++    source_mode: 'manual' | 'keka_live' | 'teams_live';
+     job?: {
+       title: string;
+       description: string;
+@@ -710,7 +711,7 @@ export const api = {
+     return handleResponse(res);
+   },
+ 
+-  async updateIntelligenceTranscript(id: string, data: { rawText?: string; source?: 'manual' | 'mock_teams'; useMockTeams?: boolean }): Promise<InterviewIntelligenceRecord> {
++  async updateIntelligenceTranscript(id: string, data: { rawText?: string; source?: 'manual' }): Promise<InterviewIntelligenceRecord> {
+     const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/transcript`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+diff --git a/infrastructure/.env.example b/infrastructure/.env.example
+index f9c99e9..f8293dc 100644
+--- a/infrastructure/.env.example
++++ b/infrastructure/.env.example
+@@ -4,6 +4,8 @@
+ BEDROCK_SONNET_PROFILE_ARN=arn:aws:bedrock:ap-south-1:XXXXXX:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0
+ # Optional: Claude Sonnet 4.6 profile for interview evaluation
+ BEDROCK_SONNET_46_PROFILE_ARN=arn:aws:bedrock:ap-south-1:XXXXXX:inference-profile/global.anthropic.claude-sonnet-4-6
++# Optional: Claude Sonnet 5 inference profile. Use the profile ID or ARN; direct base-model invocation is not supported in some regions.
++BEDROCK_SONNET_5_PROFILE_ARN=global.anthropic.claude-sonnet-5
+ # BEDROCK_HAIKU_PROFILE_ARN is no longer used
+ BEDROCK_NOVA_PROFILE_ARN=arn:aws:bedrock:ap-south-1:XXXXXX:inference-profile/apac.amazon.nova-pro-v1:0
+ 
+@@ -16,8 +18,8 @@ AWS_REGION=ap-south-1
+ 
+ # Interview Intelligence V2 integration modes.
+ # Use live only after the Keka API application and Microsoft Graph permissions are approved.
+-KEKA_INTEGRATION_MODE=mock
+-TEAMS_INTEGRATION_MODE=mock
++KEKA_INTEGRATION_MODE=disabled
++TEAMS_INTEGRATION_MODE=disabled
+ 
+ KEKA_BASE_URL=
+ KEKA_CLIENT_ID=
+@@ -34,3 +36,6 @@ KEKA_SECRET_ARN=
+ # The secret JSON must contain tenantId, clientId, and clientSecret.
+ # Never place the actual secret value in .env, frontend code, or Git.
+ MS_TEAMS_SECRET_ARN=
++
++# MOM Analyzer model. Defaults to Claude Sonnet 5 in CDK when omitted.
++MOM_MODEL_ID=global.anthropic.claude-sonnet-5
+diff --git a/infrastructure/lambdas/api-handler/index.ts b/infrastructure/lambdas/api-handler/index.ts
+index b0cbb0e..b7d8886 100644
+--- a/infrastructure/lambdas/api-handler/index.ts
++++ b/infrastructure/lambdas/api-handler/index.ts
+@@ -65,10 +65,22 @@ const QUEUE_URL = process.env.QUEUE_URL!;
+ const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
+ const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
+ const INTELLIGENCE_TABLE_NAME = process.env.INTELLIGENCE_TABLE_NAME!;
++const SONNET_5_MODEL_ID = 'global.anthropic.claude-sonnet-5';
+ 
+ const sqsClient = new SQSClient({});
+ const lambdaClient = new LambdaClient({});
+ 
++function anthropicRequestBody(modelId: string, prompt: string, maxTokens: number, temperature = 0) {
++  const body: Record<string, unknown> = {
++    anthropic_version: 'bedrock-2023-05-31',
++    max_tokens: maxTokens,
++    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
++  };
++  if (!modelId.includes('claude-sonnet-5')) {
++    body.temperature = temperature;
++  }
++  return body;
++}
+ 
+ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+   if ((event as any).__internalTask === 'intelligence-analysis') {
+@@ -465,7 +477,7 @@ async function createInterview(event: APIGatewayProxyEvent) {
+     created_at: now,
+     updated_at: now,
+     metadata: result.data,
+-    model_id: result.data.model_id || 'claude-3-sonnet',
++    model_id: result.data.model_id || 'claude-sonnet-5',
+   };
+ 
+   await ddbDocClient.send(new PutCommand({
+@@ -583,7 +595,7 @@ function normalizeOptimizedQuestion(
+       return `Could you walk me through a situation relevant to this ${roleTitle} role where ${bankQuestion.focusArea} was important? Please explain the context, the decision you made, and the outcome.`;
+     }
+     if (/\b(could you|can you|would you|tell me about|walk me through|imagine)\b/i.test(question)) return question;
+-    return `Let’s use a practical ${bankQuestion.focusArea} situation relevant to this ${roleTitle} role. ${question} Please talk me through the context, your decision-making, and the outcome.`;
++    return `Let's use a practical ${bankQuestion.focusArea} situation relevant to this ${roleTitle} role. ${question} Please talk me through the context, your decision-making, and the outcome.`;
+   };
+ 
+   return {
+@@ -611,25 +623,37 @@ async function optimizeQuestionBankSelection(input: {
+     const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+     const { extractJson } = await import('../shared/utils.js');
+     const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+-    const modelId = process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6';
++    const modelId = process.env.BEDROCK_SONNET_5_PROFILE_ARN || SONNET_5_MODEL_ID;
+     const prompt = `
+-You are editing an interview guide selected from an approved question bank.
+-You are NOT allowed to generate, add, remove, merge, split, or reorder questions.
++You are a senior technical interviewer rewriting an approved interview guide.
++The approved question bank is the source of truth for coverage: preserve every
++question ID, category, focus area, order, and intent. Do not add, remove, merge,
++split, or reorder questions.
+ 
+-Your only task is to convert each approved question into a fair, current,
+-scenario-based question grounded in the supplied role, seniority, job
+-description, and resume context. Preserve each question's competency, intent,
+-ID, category, and focus area. Do not assume facts about the candidate, reveal
+-private resume details in the question, or include an answer.
++You MAY fully rewrite the wording, scenario framing, and narration of each
++question. Treat the bank wording as reference material, not final copy. The
++final question should sound like a thoughtful interviewer speaking to a real
++candidate in a high-stakes hiring conversation.
+ 
+ Write as an experienced interviewer speaking naturally to a candidate: clear,
+ specific, and conversational rather than academic, scripted, or AI-generated.
+-Each question must sound natural when read aloud in a real interview. Use direct
+-interviewer language such as "Could you walk me through...", "Tell me about a
+-time when...", or "Imagine you were responsible for...". Frame a realistic
+-work situation from the JD and invite the candidate to explain their decisions,
+-trade-offs, and outcome. Do not use meta-language such as "assess", "evaluate",
+-"as an AI", "based on the prompt", or explain why the question was selected.
++Each question must sound natural when read aloud. Use direct interviewer
++language such as "Could you walk me through...", "Tell me about a time when...",
++"Suppose you joined a project where...", or "Imagine a client asks...".
++Frame a realistic work situation from the JD and invite the candidate to
++explain decisions, trade-offs, validation, failure handling, stakeholder
++communication, and measurable outcome.
++
++Avoid robotic wording:
++- Do not write "as a 5 to 8 years candidate", "as a Migration Architect", or
++  any sentence that awkwardly restates seniority.
++- Do not ask generic textbook questions such as "What is Terraform?" unless
++  the approved question is explicitly foundational.
++- Do not include meta-language such as "assess", "evaluate", "as an AI",
++  "based on the prompt", or explain why the question was selected.
++- Do not assume facts about the candidate, reveal private resume details, or
++  include an answer.
++
+ For every role-specific question, include a concrete situation or operational
+ constraint and end with a natural invitation to explain the candidate's own
+ approach. Avoid textbook wording such as "What is", "Define", or "Explain the
+@@ -637,8 +661,9 @@ concept of" unless the approved bank explicitly requires foundational knowledge.
+ Write follow-ups as short interviewer prompts that deepen the same scenario,
+ for example by testing ownership, trade-offs, failure handling, validation, or
+ stakeholder communication.
+-Current practices may shape the scenario only where they are relevant to the JD;
+-never add fashionable tools, trends, or requirements that are not supported by it.
++Current practices may shape the scenario only where they are relevant to the JD.
++Never add fashionable tools, trends, or requirements that are not supported by
++the JD, resume, or approved bank focus.
+ 
+ Return only valid JSON inside <question_guide> tags using this shape:
+ {
+@@ -677,12 +702,7 @@ ${JSON.stringify(input.questions)}
+         modelId,
+         contentType: 'application/json',
+         accept: 'application/json',
+-        body: JSON.stringify({
+-          anthropic_version: 'bedrock-2023-05-31',
+-          max_tokens: 2600,
+-          temperature: 0,
+-          messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+-        }),
++        body: JSON.stringify(anthropicRequestBody(modelId, prompt, 2600, 0)),
+       }), { abortSignal: abortController.signal });
+     } finally {
+       clearTimeout(timeout);
+@@ -895,15 +915,18 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
+       const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+       const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+       
+-      const selectedModel = item.model_id || 'claude-3-sonnet';
++      const selectedModel = item.model_id || 'claude-sonnet-5';
+       const mapping: Record<string, string | undefined> = {
++        'claude-sonnet-5': process.env.BEDROCK_SONNET_5_PROFILE_ARN || SONNET_5_MODEL_ID,
+         'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+         'claude-sonnet-4-6': process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
+         'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
+       };
+ 
+       const finalModelId = mapping[selectedModel] || 
+-        (selectedModel === 'nova-pro'
++        (selectedModel === 'claude-sonnet-5'
++          ? SONNET_5_MODEL_ID
++          : selectedModel === 'nova-pro'
+           ? 'amazon.nova-pro-v1:0'
+           : selectedModel === 'claude-sonnet-4-6'
+             ? 'global.anthropic.claude-sonnet-4-6'
+@@ -913,15 +936,12 @@ async function confirmUpload(id: string | undefined, event: APIGatewayProxyEvent
+         modelId: finalModelId,
+         contentType: 'application/json',
+         accept: 'application/json',
+-        body: JSON.stringify({
+-          anthropic_version: 'bedrock-2023-05-31',
+-          max_tokens: 600,
+-          messages: [{ 
+-            role: 'user', 
+-            content: [{ type: 'text', text: inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.' }] 
+-          }],
+-          temperature: 0
+-        })
++        body: JSON.stringify(anthropicRequestBody(
++          finalModelId,
++          inferPrompt + '\n\nIMPORTANT: Wrap your final JSON result inside <jd_check> tags.',
++          600,
++          0,
++        )),
+       }));
+ 
+       const resData = JSON.parse(new TextDecoder().decode(bedrockResp.body));
+@@ -1652,10 +1672,9 @@ async function getOwnedIntelligenceRecord(id: string | undefined, event: APIGate
+   return { item, userId };
+ }
+ 
+-function getIntegrationMode(value: string | undefined): 'mock' | 'disabled' | 'live' {
++function getIntegrationMode(value: string | undefined): 'disabled' | 'live' {
+   if (value === 'live') return 'live';
+-  if (value === 'disabled') return 'disabled';
+-  return 'mock';
++  return 'disabled';
+ }
+ 
+ async function getIntegrationStatus() {
+@@ -1665,7 +1684,7 @@ async function getIntegrationStatus() {
+   return successResponse({
+     keka: {
+       mode: kekaMode,
+-      label: kekaMode === 'live' ? 'Keka live mode' : kekaMode === 'disabled' ? 'Keka disabled' : 'Keka mock mode',
++      label: kekaMode === 'live' ? 'Keka live mode' : 'Keka disabled',
+       configured: kekaMode === 'live' && !!(
+         process.env.KEKA_SECRET_ARN ||
+         (process.env.KEKA_BASE_URL && process.env.KEKA_CLIENT_ID && process.env.KEKA_CLIENT_SECRET && process.env.KEKA_API_KEY)
+@@ -1674,13 +1693,11 @@ async function getIntegrationStatus() {
+     },
+     teams: {
+       mode: teamsMode,
+-      label: teamsMode === 'live' ? 'Teams live mode' : teamsMode === 'disabled' ? 'Teams disabled' : 'Teams mock mode',
++      label: teamsMode === 'live' ? 'Teams live mode' : 'Teams disabled',
+       configured: teamsMode === 'live' && !!process.env.MS_TEAMS_SECRET_ARN,
+       credentialSource: teamsMode === 'live' && process.env.MS_TEAMS_SECRET_ARN ? 'AWS Secrets Manager' : undefined,
+     },
+-    message: kekaMode === 'mock' || teamsMode === 'mock'
+-      ? 'Real credentials not configured yet. Manual and mock workflows are available.'
+-      : 'Integration modes are configured from backend environment variables.',
++    message: 'Integration modes are configured from backend environment variables.',
+   });
+ }
+ 
+@@ -1813,36 +1830,6 @@ function inferSkills(job: InterviewIntelligenceRecord['job']): string[] {
+   return inferred.length ? inferred : ['Problem solving', 'Communication', 'Role fit'];
+ }
+ 
+-function buildQuestion(skill: string, roleTitle: string, seniority?: string): IntelligenceQuestion & {
+-  expectedStrongAnswerSignals: string[];
+-  redFlags: string[];
+-} {
+-  return {
+-    question: `Imagine you are working as ${seniority ? `a ${seniority} ` : 'a '}${roleTitle} and a delivery or production decision depends on ${skill}. Could you walk me through a comparable situation you have handled, the options you considered, the decision you made, and how you measured the outcome?`,
+-    followUps: [
+-      `What information did you gather before deciding how to approach the ${skill} problem?`,
+-      `What trade-off did you make, and how did you validate that the ${skill} approach worked?`,
+-    ],
+-    whatToEvaluate: [
+-      'Depth of hands-on experience',
+-      'Decision-making quality',
+-      'Ability to explain trade-offs clearly',
+-    ],
+-    questionType: 'role',
+-    countsTowardPanelEvaluation: true,
+-    expectedStrongAnswerSignals: [
+-      'Specific project context and measurable outcome',
+-      'Clear explanation of constraints, alternatives, and validation',
+-      'Ownership of mistakes or operational lessons',
+-    ],
+-    redFlags: [
+-      'Only theoretical explanation with no real example',
+-      'Cannot explain why the chosen approach was appropriate',
+-      'Avoids follow-up detail on failure handling or validation',
+-    ],
+-  };
+-}
+-
+ function buildIntroductionQuestion(): IntelligenceQuestion & { expectedStrongAnswerSignals: string[]; redFlags: string[] } {
+   return {
+     question: 'To begin, could you briefly walk us through the experience that has prepared you for this role and one project you are most proud of?',
+@@ -1878,29 +1865,60 @@ function resumeTopics(record: InterviewIntelligenceRecord, skills: string[]): st
+   return unique.length ? unique.slice(0, 3) : ['the project experience highlighted in your resume'];
+ }
+ 
+-function buildQuestionPlan(record: InterviewIntelligenceRecord): IntelligenceQuestionPlan {
++async function buildQuestionPlan(record: InterviewIntelligenceRecord): Promise<IntelligenceQuestionPlan> {
+   const skills = inferSkills(record.job);
+   const panel = record.panel.length ? record.panel : [{ interviewerId: 'interviewer-1', name: 'Interviewer' }];
+-  const skillAreas = skills.map((skill, index) => ({
++  const selection = selectQuestionsFromBank({
++    interviewId: record.intelligence_id,
++    roleTitle: record.job.title || 'Target role',
++    jdText: record.job.description,
++    count: 8,
++  });
++  const optimized = await optimizeQuestionBankSelection({
++    roleTitle: record.job.title || 'Target role',
++    level: selection.level,
++    jdText: record.job.description,
++    resumeText: record.candidate.resumeText || '',
++    questions: selection.questions,
++  });
++  const optimizedById = new Map(optimized.questions.map((question) => [question.id, question]));
++  const roleQuestions = selection.questions.map((question) => {
++    const optimizedQuestion = optimizedById.get(question.id);
++    return {
++      question: optimizedQuestion?.question || question.question,
++      followUps: optimizedQuestion?.follow_ups || question.followUps,
++      whatToEvaluate: optimizedQuestion?.what_to_listen_for || question.whatToListenFor,
++      questionType: 'role' as const,
++      countsTowardPanelEvaluation: true,
++      expectedStrongAnswerSignals: optimizedQuestion?.what_to_listen_for || question.whatToListenFor,
++      redFlags: [
++        'Cannot connect the answer to a real delivery or production example',
++        'Does not explain their individual contribution or decision-making',
++        'Avoids discussing trade-offs, validation, or the outcome',
++      ],
++    };
++  });
++  const skillAreas = selection.focusAreas.map((skill, index) => ({
+     skill,
+     priority: index < 3 ? 'high' as const : index < 6 ? 'medium' as const : 'low' as const,
+-    reason: `${skill} is relevant to ${record.job.title || 'the role'} based on the JD${record.candidate.resumeText ? ' and candidate resume' : ''}.`,
++    reason: `${skill} is a selected interview focus for ${record.job.title || 'the role'} based on the approved question bank and job description.`,
+   }));
+ 
+   const panelPlan = panel.map((interviewer, index) => {
+-    const assigned = panel.length === 1
+-      ? skills
+-      : skills.filter((_, skillIndex) => skillIndex % panel.length === index);
+-    const focusSkills = assigned.length ? assigned : [skills[index % skills.length] || 'Role fit'];
+-    const focusArea = interviewer.focusArea || focusSkills.slice(0, 2).join(' / ');
+-    const roleQuestions = focusSkills.slice(0, panel.length === 1 ? 6 : 4).map((skill) => buildQuestion(skill, record.job.title || 'target role', record.job.seniority));
++    const assignedQuestions = panel.length === 1
++      ? roleQuestions
++      : roleQuestions.filter((_, questionIndex) => questionIndex % panel.length === index);
++    const assignedFocus = selection.questions
++      .filter((_, questionIndex) => panel.length === 1 || questionIndex % panel.length === index)
++      .map((question) => question.focusArea);
++    const focusArea = interviewer.focusArea || Array.from(new Set(assignedFocus)).slice(0, 2).join(' / ') || 'Role assessment';
+     const contextQuestions = index === 0
+       ? [buildIntroductionQuestion(), ...resumeTopics(record, skills).map((topic) => buildResumeQuestion(topic))]
+       : [];
+     return {
+       interviewerId: interviewer.interviewerId,
+       focusArea: contextQuestions.length ? `${focusArea} / candidate experience` : focusArea,
+-      questions: [...contextQuestions, ...roleQuestions],
++      questions: [...contextQuestions, ...assignedQuestions],
+     };
+   });
+ 
+@@ -1941,9 +1959,7 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
+   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+ 
+   const body = parseBody(event);
+-  const sourceMode = body.source_mode === 'mock_keka'
+-    ? 'mock_keka'
+-    : body.source_mode === 'keka_live'
++  const sourceMode = body.source_mode === 'keka_live'
+       ? 'keka_live'
+       : body.source_mode === 'teams_live'
+         ? 'teams_live'
+@@ -1972,9 +1988,9 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
+   }
+ 
+   let integrationData: Awaited<ReturnType<ReturnType<typeof createKekaIntegration>['getInterviewData']>>;
+-  if (sourceMode === 'mock_keka' || sourceMode === 'keka_live') {
++  if (sourceMode === 'keka_live') {
+     try {
+-      integrationData = await createKekaIntegration(sourceMode === 'mock_keka' ? 'mock' : 'live').getInterviewData({
++      integrationData = await createKekaIntegration('live').getInterviewData({
+         jobId: body.jobId,
+         candidateId: body.candidateId,
+         interviewId: body.interviewId,
+@@ -2008,6 +2024,7 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
+       })),
+       meetingUrl: String(body.meetingUrl || '').trim() || undefined,
+       meetingId: String(body.meetingId || '').trim() || undefined,
++      scheduledAt: String(body.scheduledAt || '').trim() || undefined,
+       organizerUserId: String(body.organizerUserId || '').trim() || undefined,
+       organizerEmail: String(body.organizerEmail || '').trim() || undefined,
+     };
+@@ -2025,20 +2042,23 @@ async function createIntelligenceInterview(event: APIGatewayProxyEvent) {
+     source_mode: sourceMode,
+     status: 'data_ready',
+     keka: {
+-      mode: sourceMode === 'mock_keka' ? 'mock' : sourceMode === 'keka_live' ? 'live' : kekaMode,
++      mode: sourceMode === 'keka_live' ? 'live' : kekaMode,
+       jobId: body.jobId,
+       candidateId: body.candidateId,
+       interviewId: body.interviewId,
+-      syncStatus: sourceMode === 'mock_keka' ? 'mocked' : sourceMode === 'keka_live' ? 'synced' : 'not_connected',
+-      lastSyncAt: sourceMode === 'mock_keka' || sourceMode === 'keka_live' ? now : undefined,
++      syncStatus: sourceMode === 'keka_live' ? 'synced' : 'not_connected',
++      lastSyncAt: sourceMode === 'keka_live' ? now : undefined,
+     },
+     teams: {
+-      mode: sourceMode === 'mock_keka' ? 'mock' : teamsMode,
++      mode: teamsMode,
+       meetingUrl: integrationData.meetingUrl,
+       meetingId: integrationData.meetingId,
++      scheduledAt: integrationData.scheduledAt,
+       organizerUserId: integrationData.organizerUserId,
+       organizerEmail: integrationData.organizerEmail,
+-      transcriptStatus: integrationData.meetingUrl || integrationData.meetingId ? 'pending' : 'not_available',
++      transcriptStatus: integrationData.meetingUrl || integrationData.meetingId || (integrationData.scheduledAt && (integrationData.organizerEmail || integrationData.organizerUserId))
++        ? 'pending'
++        : 'not_available',
+     },
+     job: {
+       ...integrationData.job,
+@@ -2173,7 +2193,7 @@ async function generateIntelligenceQuestions(id: string | undefined, event: APIG
+   const { item, response } = await getOwnedIntelligenceRecord(id, event);
+   if (response) return response;
+ 
+-  const questionPlan = buildQuestionPlan(item);
++  const questionPlan = await buildQuestionPlan(item);
+   const panel = item.panel.map((member) => {
+     const plan = questionPlan.panelPlan.find((entry) => entry.interviewerId === member.interviewerId);
+     return {
+@@ -2207,19 +2227,9 @@ async function updateIntelligenceTranscript(id: string | undefined, event: APIGa
+ 
+   const body = parseBody(event);
+   let rawText = String(body.rawText || '').trim();
+-  let source: 'manual' | 'mock_teams' | 'teams_live' = body.source === 'mock_teams' ? 'mock_teams' : 'manual';
++  const source: 'manual' | 'teams_live' = 'manual';
+   let meetingId = item.teams.meetingId;
+ 
+-  if (body.useMockTeams === true || source === 'mock_teams') {
+-    const transcript = await createTeamsIntegration('mock').getTranscript({
+-      meetingUrl: item.teams.meetingUrl,
+-      meetingId: item.teams.meetingId,
+-    });
+-    rawText = transcript.rawText;
+-    meetingId = transcript.meetingId;
+-    source = 'mock_teams';
+-  }
+-
+   if (!rawText) {
+     return errorResponse(400, 'VALIDATION_ERROR', 'Transcript text is required.');
+   }
+@@ -2232,7 +2242,7 @@ async function updateIntelligenceTranscript(id: string | undefined, event: APIGa
+     teams: {
+       ...item.teams,
+       meetingId,
+-      transcriptStatus: source === 'mock_teams' ? 'mocked' : 'synced',
++      transcriptStatus: 'synced',
+       lastSyncAt: now,
+     },
+     transcript: { rawText, source, uploadedAt: now },
+@@ -2250,27 +2260,69 @@ async function syncIntelligenceTeamsTranscript(id: string | undefined, event: AP
+     return errorResponse(409, 'INTEGRATION_NOT_READY', 'Microsoft Teams live sync is not enabled for this interview workspace.');
+   }
+ 
+-  if (!item.teams.meetingUrl && !item.teams.meetingId) {
++  let itemForSync: InterviewIntelligenceRecord = item;
++  const needsKekaRefresh = !!(
++    item.keka.mode === 'live' &&
++    item.keka.jobId &&
++    item.keka.candidateId &&
++    item.keka.interviewId &&
++    (!item.teams.meetingUrl || !item.teams.meetingId || !item.teams.scheduledAt || (!item.teams.organizerEmail && !item.teams.organizerUserId))
++  );
++
++  if (needsKekaRefresh) {
++    try {
++      const refreshed = await createKekaIntegration('live').getInterviewData({
++        jobId: item.keka.jobId,
++        candidateId: item.keka.candidateId,
++        interviewId: item.keka.interviewId,
++      });
++      itemForSync = {
++        ...item,
++        panel: item.panel.length ? item.panel : refreshed.panel,
++        teams: {
++          ...item.teams,
++          meetingUrl: item.teams.meetingUrl || refreshed.meetingUrl,
++          meetingId: item.teams.meetingId || refreshed.meetingId,
++          scheduledAt: item.teams.scheduledAt || refreshed.scheduledAt,
++          organizerUserId: item.teams.organizerUserId || refreshed.organizerUserId,
++          organizerEmail: item.teams.organizerEmail || refreshed.organizerEmail,
++        },
++      };
++    } catch (error) {
++      console.warn('[Keka Hire] Could not refresh interview metadata before Teams sync:', error instanceof Error ? error.message : 'Unknown error');
++    }
++  }
++
++  const canSearchCalendar = !!(
++    itemForSync.teams.scheduledAt &&
++    (itemForSync.teams.organizerEmail || itemForSync.teams.organizerUserId)
++  );
++
++  if (!itemForSync.teams.meetingUrl && !itemForSync.teams.meetingId && !canSearchCalendar) {
+     return errorResponse(400, 'VALIDATION_ERROR', 'This workspace does not have a Teams meeting reference to sync.');
+   }
+ 
+   const now = Date.now();
+   try {
+     const transcript = await createTeamsIntegration('live').getTranscript({
+-      meetingUrl: item.teams.meetingUrl,
+-      meetingId: item.teams.meetingId,
+-      organizerUserId: item.teams.organizerUserId,
+-      organizerEmail: item.teams.organizerEmail,
++      meetingUrl: itemForSync.teams.meetingUrl,
++      meetingId: itemForSync.teams.meetingId,
++      scheduledAt: itemForSync.teams.scheduledAt,
++      candidateName: itemForSync.candidate.name,
++      candidateEmail: itemForSync.candidate.email,
++      jobTitle: itemForSync.job.title,
++      organizerUserId: itemForSync.teams.organizerUserId,
++      organizerEmail: itemForSync.teams.organizerEmail,
+     });
+ 
+     const updated: InterviewIntelligenceRecord = {
+-      ...item,
++      ...itemForSync,
+       updated_at: now,
+       status: 'transcript_ready',
+       teams: {
+-        ...item.teams,
+-        meetingId: transcript.meetingId || item.teams.meetingId,
+-        organizerUserId: transcript.organizerUserId || item.teams.organizerUserId,
++        ...itemForSync.teams,
++        meetingId: transcript.meetingId || itemForSync.teams.meetingId,
++        organizerUserId: transcript.organizerUserId || itemForSync.teams.organizerUserId,
+         transcriptStatus: 'synced',
+         lastSyncAt: now,
+         error: undefined,
+@@ -2285,10 +2337,10 @@ async function syncIntelligenceTeamsTranscript(id: string | undefined, event: AP
+       ? error.message
+       : 'Microsoft Teams transcript sync failed. Please try again or contact your administrator.';
+     const failed: InterviewIntelligenceRecord = {
+-      ...item,
++      ...itemForSync,
+       updated_at: now,
+       teams: {
+-        ...item.teams,
++        ...itemForSync.teams,
+         transcriptStatus: 'failed',
+         lastSyncAt: now,
+         error: message,
+@@ -2579,7 +2631,7 @@ async function runIntelligenceAnalysisWorker(intelligenceId: string): Promise<AP
+ async function generateIntelligenceEvaluation(item: InterviewIntelligenceRecord, timeoutMs = 105_000): Promise<IntelligenceEvaluation> {
+   const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+   const { extractJson } = await import('../shared/utils.js');
+-  const modelId = process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6';
++  const modelId = process.env.BEDROCK_SONNET_5_PROFILE_ARN || SONNET_5_MODEL_ID;
+   const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+   // Keep the synchronous browser request inside API Gateway's response window.
+   // The selected excerpts still cover the interview evidence, role context,
+@@ -2676,16 +2728,11 @@ ${transcript}
+   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+   try {
+     const response = await client.send(new InvokeModelCommand({
+-      modelId,
+-      contentType: 'application/json',
+-      accept: 'application/json',
+-      body: JSON.stringify({
+-        anthropic_version: 'bedrock-2023-05-31',
+-        max_tokens: 4096,
+-        temperature: 0,
+-        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+-      }),
+-    }), { abortSignal: abortController.signal });
++        modelId,
++        contentType: 'application/json',
++        accept: 'application/json',
++        body: JSON.stringify(anthropicRequestBody(modelId, prompt, 4096, 0)),
++      }), { abortSignal: abortController.signal });
+     const payload = JSON.parse(new TextDecoder().decode(response.body));
+     const rawText = payload.content?.[0]?.text || '';
+     const tagged = rawText.match(/<intelligence_json>([\s\S]*?)<\/intelligence_json>/i)?.[1];
+diff --git a/infrastructure/lambdas/api-handler/intelligence-integrations.ts b/infrastructure/lambdas/api-handler/intelligence-integrations.ts
+index 71c3550..d93307d 100644
+--- a/infrastructure/lambdas/api-handler/intelligence-integrations.ts
++++ b/infrastructure/lambdas/api-handler/intelligence-integrations.ts
+@@ -1,7 +1,7 @@
+ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+ 
+-export type IntelligenceSourceMode = 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
+-export type IntegrationMode = 'mock' | 'disabled' | 'live';
++export type IntelligenceSourceMode = 'manual' | 'keka_live' | 'teams_live';
++export type IntegrationMode = 'disabled' | 'live';
+ export type IntelligenceStatus =
+   | 'draft'
+   | 'data_ready'
+@@ -46,7 +46,7 @@ export interface InterviewIntelligenceRecord {
+     jobId?: string;
+     candidateId?: string;
+     interviewId?: string;
+-    syncStatus: 'not_connected' | 'mocked' | 'synced' | 'failed';
++    syncStatus: 'not_connected' | 'synced' | 'failed';
+     lastSyncAt?: number;
+     error?: string;
+   };
+@@ -54,9 +54,10 @@ export interface InterviewIntelligenceRecord {
+     mode: IntegrationMode;
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+-    transcriptStatus: 'not_available' | 'pending' | 'mocked' | 'synced' | 'failed';
++    transcriptStatus: 'not_available' | 'pending' | 'synced' | 'failed';
+     lastSyncAt?: number;
+     error?: string;
+   };
+@@ -101,7 +102,7 @@ export interface InterviewIntelligenceRecord {
+   };
+   transcript?: {
+     rawText: string;
+-    source: 'manual' | 'mock_teams' | 'teams_live';
++    source: 'manual' | 'teams_live';
+     uploadedAt: number;
+   };
+   aiEvaluation?: {
+@@ -172,6 +173,7 @@ export interface KekaIntegration {
+     panel: InterviewIntelligenceRecord['panel'];
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+   }>;
+@@ -206,6 +208,10 @@ export interface TeamsIntegration {
+   getTranscript(input: {
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
++    candidateName?: string;
++    candidateEmail?: string;
++    jobTitle?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+   }): Promise<{
+@@ -248,6 +254,16 @@ type KekaCredentials = {
+ };
+ 
+ type KekaRecord = Record<string, unknown>;
++type GraphCalendarEvent = {
++  id?: string;
++  subject?: string;
++  onlineMeetingUrl?: string;
++  webLink?: string;
++  start?: { dateTime?: string; timeZone?: string };
++  end?: { dateTime?: string; timeZone?: string };
++  onlineMeeting?: { joinUrl?: string };
++  attendees?: Array<{ emailAddress?: { address?: string; name?: string } }>;
++};
+ 
+ function getRequiredString(value: unknown): string {
+   return typeof value === 'string' ? value.trim() : '';
+@@ -299,7 +315,9 @@ function asRecord(value: unknown): KekaRecord | undefined {
+ function firstString(record: KekaRecord | undefined, keys: string[]): string | undefined {
+   if (!record) return undefined;
+   for (const key of keys) {
+-    const value = getRequiredString(record[key]);
++    const raw = record[key];
++    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
++    const value = getRequiredString(raw);
+     if (value) return value;
+   }
+   return undefined;
+@@ -319,6 +337,90 @@ function listFromKekaPage(payload: unknown): KekaRecord[] {
+   return Array.isArray(entries) ? entries.map(asRecord).filter((item): item is KekaRecord => !!item) : [];
+ }
+ 
++function cleanKekaText(value: string): string {
++  return value
++    .replace(/<[^>]+>/g, ' ')
++    .replace(/&nbsp;/gi, ' ')
++    .replace(/&amp;/gi, '&')
++    .replace(/&quot;/gi, '"')
++    .replace(/&#39;/gi, "'")
++    .replace(/\s+/g, ' ')
++    .trim();
++}
++
++function kekaDateToMs(value: string | undefined): number | undefined {
++  const text = getRequiredString(value);
++  if (!text) return undefined;
++  if (/^\d{10}(\.\d+)?$/.test(text)) return Number.parseFloat(text) * 1000;
++  if (/^\d{13}(\.\d+)?$/.test(text)) return Number.parseFloat(text);
++  const parsed = Date.parse(text);
++  return Number.isNaN(parsed) ? undefined : parsed;
++}
++
++function normalizeKekaDate(value: string | undefined): string | undefined {
++  const ms = kekaDateToMs(value);
++  return ms === undefined ? getRequiredString(value) || undefined : new Date(ms).toISOString();
++}
++
++function kekaTimeParts(value: unknown): { hours: number; minutes: number } | undefined {
++  const record = asRecord(value);
++  if (!record) return undefined;
++  const hours = Number(record.hours ?? record.hour);
++  const minutes = Number(record.minutes ?? record.minute ?? 0);
++  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return undefined;
++  return { hours, minutes };
++}
++
++function timezoneOffsetMinutes(timeZoneId?: string): number {
++  const normalized = getRequiredString(timeZoneId).toLowerCase();
++  if (normalized.includes('india')) return 330;
++  return 0;
++}
++
++function normalizeKekaScheduledAt(record: KekaRecord): string | undefined {
++  const dateText = firstString(record, ['scheduledDateTime', 'scheduledAt', 'scheduledOn', 'interviewDate', 'date', 'scheduledDate']);
++  const baseMs = kekaDateToMs(dateText);
++  if (baseMs === undefined) return normalizeKekaDate(dateText);
++
++  const time = kekaTimeParts(record.startTime);
++  if (!time) return new Date(baseMs).toISOString();
++
++  const offset = timezoneOffsetMinutes(firstString(record, ['timeZoneId', 'timezone', 'timeZone']));
++  const date = new Date(baseMs);
++  const utc = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), time.hours, time.minutes) - offset * 60 * 1000;
++  return new Date(utc).toISOString();
++}
++
++function resumeTextFromKeka(payload: unknown): string {
++  const ignoredKeys = new Set(['id', 'candidateid', 'fileid', 'filename', 'fileurl', 'url', 'downloadurl', 'createdat', 'updatedat']);
++  const lines: string[] = [];
++  const visit = (value: unknown, label?: string, depth = 0) => {
++    if (depth > 5 || value === null || value === undefined) return;
++    if (typeof value === 'string') {
++      const text = cleanKekaText(value);
++      if (text.length > 2 && !/^https?:\/\//i.test(text)) {
++        lines.push(label ? `${label}: ${text}` : text);
++      }
++      return;
++    }
++    if (typeof value === 'number' || typeof value === 'boolean') return;
++    if (Array.isArray(value)) {
++      value.slice(0, 30).forEach((entry) => visit(entry, label, depth + 1));
++      return;
++    }
++    const record = asRecord(value);
++    if (!record) return;
++    Object.entries(record).forEach(([key, entry]) => {
++      if (ignoredKeys.has(key.toLowerCase())) return;
++      const readableLabel = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
++      visit(entry, readableLabel, depth + 1);
++    });
++  };
++
++  visit(payload);
++  return Array.from(new Set(lines)).join('\n').slice(0, 18_000).trim();
++}
++
+ function toKekaPanelist(value: KekaRecord, index: number): IntelligencePanelist {
+   const name = firstString(value, ['name', 'fullName', 'interviewerName', 'employeeName']) || `Interviewer ${index + 1}`;
+   return {
+@@ -331,8 +433,19 @@ function toKekaPanelist(value: KekaRecord, index: number): IntelligencePanelist
+ 
+ function extractPanel(record: KekaRecord): IntelligencePanelist[] {
+   const source = record.panelMembers ?? record.interviewers ?? record.panel ?? record.interviewerDetails;
+-  if (!Array.isArray(source)) return [];
+-  return source.map(asRecord).filter((item): item is KekaRecord => !!item).map(toKekaPanelist);
++  if (Array.isArray(source)) {
++    return source.map(asRecord).filter((item): item is KekaRecord => !!item).map(toKekaPanelist);
++  }
++  const panelText = getRequiredString(source);
++  if (!panelText) return [];
++  return panelText
++    .split(/[,;|]/)
++    .map((name) => name.trim())
++    .filter(Boolean)
++    .map((name, index) => ({
++      interviewerId: `keka-panel-${index + 1}`,
++      name,
++    }));
+ }
+ 
+ function toKekaJob(record: KekaRecord): KekaJob {
+@@ -367,15 +480,27 @@ function toKekaCandidate(record: KekaRecord): KekaCandidate | undefined {
+ function toKekaInterview(record: KekaRecord): KekaScheduledInterview {
+   const id = firstString(record, ['id', 'interviewId']);
+   if (!id) throw new KekaIntegrationError('Keka returned an interview without an ID.');
++  const organizer = asRecord(record.organizer)
++    ?? asRecord(record.meetingOrganizer)
++    ?? asRecord(record.scheduledBy)
++    ?? asRecord(record.createdBy);
++  const meeting = asRecord(record.meeting)
++    ?? asRecord(record.onlineMeeting)
++    ?? asRecord(record.teamsMeeting);
+   return {
+     id,
+-    scheduledAt: firstString(record, ['scheduledDateTime', 'scheduledAt', 'scheduledOn', 'interviewDate', 'date']),
++    scheduledAt: normalizeKekaScheduledAt(record),
+     status: firstString(record, ['status', 'interviewStatus']),
+     panel: extractPanel(record),
+-    meetingUrl: firstString(record, ['meetingUrl', 'teamsMeetingUrl', 'onlineMeetingUrl', 'joinWebUrl', 'interviewLink']),
+-    meetingId: firstString(record, ['meetingId', 'onlineMeetingId']),
+-    organizerEmail: firstString(record, ['organizerEmail', 'meetingOrganizerEmail', 'scheduledByEmail']),
+-    organizerUserId: firstString(record, ['organizerUserId', 'organizerId', 'scheduledById']),
++    meetingUrl: firstString(record, ['meetingUrl', 'teamsMeetingUrl', 'onlineMeetingUrl', 'joinWebUrl', 'interviewLink'])
++      ?? firstString(meeting, ['meetingUrl', 'teamsMeetingUrl', 'onlineMeetingUrl', 'joinWebUrl', 'webUrl']),
++    meetingId: firstString(record, ['meetingId', 'onlineMeetingId'])
++      ?? firstString(meeting, ['id', 'meetingId', 'onlineMeetingId']),
++    organizerEmail: firstString(record, ['organizerEmail', 'meetingOrganizerEmail', 'scheduledByEmail'])
++      ?? (/@/.test(getRequiredString(record.scheduledBy)) ? getRequiredString(record.scheduledBy) : undefined)
++      ?? firstString(organizer, ['email', 'emailId', 'officialEmail', 'userPrincipalName']),
++    organizerUserId: firstString(record, ['organizerUserId', 'organizerId', 'scheduledById'])
++      ?? firstString(organizer, ['id', 'userId', 'employeeId']),
+   };
+ }
+ 
+@@ -503,17 +628,27 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
+     organizerEmail?: string;
+   }): Promise<string> {
+     const suppliedUserId = getRequiredString(input.organizerUserId);
++    const email = getRequiredString(input.organizerEmail);
++
+     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedUserId)) {
++      if (!email) {
++        const response = await this.graphGet(
++          `/users/${encodeURIComponent(suppliedUserId)}?$select=id,mail,userPrincipalName`,
++          'application/json',
++          'Microsoft Graph could not validate the meeting organiser. Verify the Teams Application Access Policy.',
++        );
++        await response.json() as { id?: string; mail?: string; userPrincipalName?: string };
++      }
+       return suppliedUserId;
+     }
+ 
+-    const email = getRequiredString(input.organizerEmail) || suppliedUserId;
+-    if (!email) {
++    const identity = email || suppliedUserId;
++    if (!identity) {
+       throw new TeamsIntegrationError('Teams sync needs the meeting organiser ID or email from the interview schedule.');
+     }
+ 
+     const response = await this.graphGet(
+-      `/users/${encodeURIComponent(email)}?$select=id`,
++      `/users/${encodeURIComponent(identity)}?$select=id`,
+       'application/json',
+       'Microsoft Graph could not resolve the meeting organiser. Verify the organiser email and grant the User.ReadBasic.All application permission.',
+     );
+@@ -525,22 +660,163 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
+     return user.id;
+   }
+ 
++  private calendarSearchTerms(input: {
++    candidateName?: string;
++    candidateEmail?: string;
++    jobTitle?: string;
++  }): string[] {
++    const words = [
++      ...getRequiredString(input.candidateName).split(/\s+/),
++      ...getRequiredString(input.jobTitle).split(/\s+/),
++      getRequiredString(input.candidateEmail),
++    ];
++    return Array.from(new Set(words
++      .map((word) => word.toLowerCase().replace(/[^a-z0-9@._-]/g, ''))
++      .filter((word) => word.length >= 3)));
++  }
++
++  private graphDateToMs(dateTime?: string, timeZone?: string): number | undefined {
++    const value = getRequiredString(dateTime);
++    if (!value) return undefined;
++    if (/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) {
++      const parsed = Date.parse(value);
++      return Number.isNaN(parsed) ? undefined : parsed;
++    }
++
++    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
++    if (!match) {
++      const parsed = Date.parse(value);
++      return Number.isNaN(parsed) ? undefined : parsed;
++    }
++
++    const offset = timezoneOffsetMinutes(timeZone);
++    return Date.UTC(
++      Number(match[1]),
++      Number(match[2]) - 1,
++      Number(match[3]),
++      Number(match[4]),
++      Number(match[5]),
++      Number(match[6] || 0),
++    ) - offset * 60 * 1000;
++  }
++
++  private scoreCalendarEvent(event: GraphCalendarEvent, input: {
++    scheduledAt: Date;
++    candidateName?: string;
++    candidateEmail?: string;
++    jobTitle?: string;
++  }): number {
++    const subject = getRequiredString(event.subject).toLowerCase();
++    const attendees = (event.attendees || [])
++      .map((attendee) => getRequiredString(attendee.emailAddress?.address).toLowerCase())
++      .filter(Boolean);
++    const terms = this.calendarSearchTerms(input);
++    let score = 0;
++
++    for (const term of terms) {
++      if (subject.includes(term)) score += 2;
++      if (attendees.some((address) => address.includes(term))) score += 3;
++    }
++
++    const candidateEmail = getRequiredString(input.candidateEmail).toLowerCase();
++    if (candidateEmail && attendees.includes(candidateEmail)) score += 8;
++
++    const startMs = this.graphDateToMs(event.start?.dateTime, event.start?.timeZone);
++    if (startMs !== undefined) {
++      const diffMinutes = Math.abs(startMs - input.scheduledAt.getTime()) / 60000;
++      if (diffMinutes <= 20) score += 6;
++      else if (diffMinutes <= 60) score += 3;
++      else if (diffMinutes <= 180) score += 1;
++    }
++
++    return score;
++  }
++
++  private async findMeetingUrlFromCalendar(input: {
++    userId: string;
++    scheduledAt?: string;
++    candidateName?: string;
++    candidateEmail?: string;
++    jobTitle?: string;
++  }): Promise<string | undefined> {
++    const scheduledAt = new Date(getRequiredString(input.scheduledAt));
++    if (Number.isNaN(scheduledAt.getTime())) return undefined;
++
++    const startDateTime = new Date(scheduledAt.getTime() - 12 * 60 * 60 * 1000).toISOString();
++    const endDateTime = new Date(scheduledAt.getTime() + 12 * 60 * 60 * 1000).toISOString();
++    const params = new URLSearchParams({
++      startDateTime,
++      endDateTime,
++      '$select': 'id,subject,start,end,onlineMeeting,onlineMeetingUrl,webLink,attendees',
++      '$top': '50',
++    });
++
++    const response = await this.graphGet(
++      `/users/${encodeURIComponent(input.userId)}/calendarView?${params.toString()}`,
++      'application/json',
++      'Microsoft Graph could not read the organiser calendar. Verify Calendars.Read application permission and that the organiser is accessible to this application.',
++    );
++    const payload = await response.json() as { value?: GraphCalendarEvent[] };
++    const teamsEvents = (payload.value || [])
++      .map((event) => ({
++        event,
++        joinUrl: getRequiredString(event.onlineMeeting?.joinUrl) || getRequiredString(event.onlineMeetingUrl),
++      }))
++      .filter((entry) => entry.joinUrl);
++
++    if (!teamsEvents.length) return undefined;
++    if (teamsEvents.length === 1) return teamsEvents[0].joinUrl;
++
++    const scored = teamsEvents
++      .map((entry) => ({
++        ...entry,
++        score: this.scoreCalendarEvent(entry.event, {
++          scheduledAt,
++          candidateName: input.candidateName,
++          candidateEmail: input.candidateEmail,
++          jobTitle: input.jobTitle,
++        }),
++      }))
++      .sort((left, right) => right.score - left.score);
++
++    if (scored[0].score > 0 && scored[0].score > scored[1].score) {
++      return scored[0].joinUrl;
++    }
++
++    throw new TeamsIntegrationError('Multiple Teams meetings were found around this Keka interview time. Add the exact Teams meeting link in Keka, or use a schedule with a unique Teams meeting.');
++  }
++
+   async getTranscript(input: {
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
++    candidateName?: string;
++    candidateEmail?: string;
++    jobTitle?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+   }): Promise<{ rawText: string; meetingId?: string; organizerUserId?: string }> {
+     const organizerUserId = await this.resolveOrganizerUserId(input);
+     const userId = encodeURIComponent(organizerUserId);
+     let meetingId = input.meetingId;
++    let meetingUrl = input.meetingUrl;
++    if (!meetingId && !meetingUrl) {
++      meetingUrl = await this.findMeetingUrlFromCalendar({
++        userId: organizerUserId,
++        scheduledAt: input.scheduledAt,
++        candidateName: input.candidateName,
++        candidateEmail: input.candidateEmail,
++        jobTitle: input.jobTitle,
++      });
++    }
++
+     if (!meetingId) {
+-      if (!input.meetingUrl) {
+-        throw new TeamsIntegrationError('Teams sync needs a meeting link or a Microsoft Graph online meeting ID.');
++      if (!meetingUrl) {
++        throw new TeamsIntegrationError('Microsoft Graph could not find a Teams meeting for this Keka interview schedule. Confirm the organiser, meeting time, and Teams meeting link in Keka.');
+       }
+ 
+       const filter = new URLSearchParams({
+-        '$filter': `JoinWebUrl eq '${input.meetingUrl.replace(/'/g, "''")}'`,
++        '$filter': `JoinWebUrl eq '${meetingUrl.replace(/'/g, "''")}'`,
+         '$select': 'id,joinWebUrl',
+       });
+       const meetingResponse = await this.graphGet(`/users/${userId}/onlineMeetings?${filter.toString()}`);
+@@ -576,71 +852,6 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
+   }
+ }
+ 
+-export class MockKekaIntegration implements KekaIntegration {
+-  async listJobs(): Promise<KekaJob[]> {
+-    return [{ id: 'mock-job-1', title: 'Senior AWS Platform Engineer', department: 'Cloud Engineering', experience: '5-8 years' }];
+-  }
+-
+-  async listCandidates(): Promise<KekaCandidate[]> {
+-    return [{ id: 'mock-candidate-1', name: 'Aarav Mehta', email: 'aarav.mehta@example.com', status: 'Interview scheduled' }];
+-  }
+-
+-  async listInterviews(): Promise<KekaScheduledInterview[]> {
+-    return [{
+-      id: 'mock-interview-1',
+-      scheduledAt: '2026-07-23T10:00:00Z',
+-      status: 'Scheduled',
+-      panel: [
+-        { interviewerId: 'panel-1', name: 'Priya Raman', email: 'priya.raman@example.com', role: 'Cloud Architect' },
+-        { interviewerId: 'panel-2', name: 'Nikhil Shah', email: 'nikhil.shah@example.com', role: 'DevOps Lead' },
+-      ],
+-      meetingUrl: 'https://teams.microsoft.com/l/meetup-join/mock-interview',
+-    }];
+-  }
+-
+-  async getInterviewData(): Promise<{
+-    job: InterviewIntelligenceRecord['job'];
+-    candidate: InterviewIntelligenceRecord['candidate'];
+-    panel: InterviewIntelligenceRecord['panel'];
+-    meetingUrl?: string;
+-  }> {
+-    return {
+-      job: {
+-        title: 'Senior AWS Platform Engineer',
+-        seniority: 'Senior',
+-        description:
+-          'Own AWS landing-zone delivery, Terraform modules, CI/CD automation, production operations, IAM design, observability, and incident response for customer cloud platforms.',
+-        requiredSkills: ['AWS', 'Terraform', 'IAM', 'CI/CD', 'Observability', 'Incident response'],
+-        preferredSkills: ['Kubernetes', 'Python automation', 'Cost optimization'],
+-      },
+-      candidate: {
+-        name: 'Aarav Mehta',
+-        email: 'aarav.mehta@example.com',
+-        resumeText:
+-          'Cloud engineer with 7 years of AWS experience, Terraform module ownership, GitHub Actions pipelines, IAM guardrails, CloudWatch dashboards, and production incident rotation.',
+-        experienceSummary: '7 years in AWS platform engineering and infrastructure automation.',
+-      },
+-      panel: [
+-        {
+-          interviewerId: 'panel-1',
+-          name: 'Priya Raman',
+-          email: 'priya.raman@example.com',
+-          role: 'Cloud Architect',
+-          focusArea: 'AWS architecture',
+-        },
+-        {
+-          interviewerId: 'panel-2',
+-          name: 'Nikhil Shah',
+-          email: 'nikhil.shah@example.com',
+-          role: 'DevOps Lead',
+-          focusArea: 'Terraform and CI/CD',
+-        },
+-      ],
+-      meetingUrl: 'https://teams.microsoft.com/l/meetup-join/mock-interview',
+-    };
+-  }
+-}
+-
+ export class KekaHireIntegration implements KekaIntegration {
+   private accessToken?: { value: string; expiresAt: number };
+ 
+@@ -722,12 +933,27 @@ export class KekaHireIntegration implements KekaIntegration {
+     return rows.map(toKekaInterview).sort((left, right) => String(right.scheduledAt || '').localeCompare(String(left.scheduledAt || '')));
+   }
+ 
++  private async getCandidateResumeText(candidateId: string): Promise<string> {
++    const safeCandidateId = encodeURIComponent(getRequiredString(candidateId));
++    if (!safeCandidateId) throw new KekaIntegrationError('Choose a Keka candidate before loading the resume.');
++    const payload = await this.get(
++      `/api/v1/hire/jobs/candidate/${safeCandidateId}/resume?pageNumber=1&pageSize=100`,
++      'Keka could not find a resume for this candidate.',
++    );
++    const resumeText = resumeTextFromKeka(payload);
++    if (!resumeText) {
++      throw new KekaIntegrationError('Keka did not return readable resume details for this candidate. Confirm CandidateResume Read access and that a resume is attached in Keka.');
++    }
++    return resumeText;
++  }
++
+   async getInterviewData(input: { jobId?: string; candidateId?: string; interviewId?: string }): Promise<{
+     job: InterviewIntelligenceRecord['job'];
+     candidate: InterviewIntelligenceRecord['candidate'];
+     panel: InterviewIntelligenceRecord['panel'];
+     meetingUrl?: string;
+     meetingId?: string;
++    scheduledAt?: string;
+     organizerUserId?: string;
+     organizerEmail?: string;
+   }> {
+@@ -737,10 +963,11 @@ export class KekaHireIntegration implements KekaIntegration {
+       throw new KekaIntegrationError('Choose the Keka job and candidate before creating an interview workspace.');
+     }
+ 
+-    const [jobs, candidates, interviews] = await Promise.all([
++    const [jobs, candidates, interviews, resumeText] = await Promise.all([
+       this.listJobs(),
+       this.listCandidates(jobId),
+       this.listInterviews(jobId, candidateId),
++      this.getCandidateResumeText(candidateId),
+     ]);
+     const job = jobs.find((entry) => entry.id === jobId);
+     const candidate = candidates.find((entry) => entry.id === candidateId);
+@@ -751,7 +978,7 @@ export class KekaHireIntegration implements KekaIntegration {
+     if (!interview) throw new KekaIntegrationError('No scheduled Keka interview was found for this candidate.');
+ 
+     const jobRow = (await this.listPage('/api/v1/hire/jobs?pageNumber=1&pageSize=200', 'Keka could not load the selected job.')).find((entry) => firstString(entry, ['id', 'jobId']) === jobId);
+-    const description = firstString(jobRow, ['description', 'jobDescription', 'summary']) || '';
++    const description = cleanKekaText(firstString(jobRow, ['description', 'jobDescription', 'summary']) || '');
+     if (!description) throw new KekaIntegrationError('The selected Keka job has no job description. Add the description in Keka before creating the workspace.');
+ 
+     return {
+@@ -765,26 +992,19 @@ export class KekaHireIntegration implements KekaIntegration {
+       candidate: {
+         name: candidate.name,
+         email: candidate.email,
++        resumeText,
++        experienceSummary: resumeText.slice(0, 600),
+       },
+       panel: interview.panel,
+       meetingUrl: interview.meetingUrl,
+       meetingId: interview.meetingId,
++      scheduledAt: interview.scheduledAt,
+       organizerUserId: interview.organizerUserId,
+       organizerEmail: interview.organizerEmail,
+     };
+   }
+ }
+ 
+-export class MockTeamsIntegration implements TeamsIntegration {
+-  async getTranscript(): Promise<{ rawText: string; meetingId?: string }> {
+-    return {
+-      meetingId: 'mock-teams-meeting-001',
+-      rawText:
+-        'Priya: Can you walk us through how you design a secure multi-account AWS landing zone? Aarav: I start with account boundaries, SCP guardrails, IAM Identity Center, centralized logging, and network segmentation. Priya: How would you handle production incident response? Aarav: I define severity, use CloudWatch alarms, runbooks, rollback plans, and post-incident reviews. Nikhil: How do you structure Terraform modules for reusable VPC and IAM patterns? Aarav: I keep modules small, versioned, validated in CI, with clear inputs and outputs. Nikhil: What would you do if Terraform state is locked during a release? Aarav: I would identify the active operation, avoid force unlock unless confirmed safe, communicate with the team, and recover from backend logs.',
+-    };
+-  }
+-}
+-
+ export class ManualIntegration implements KekaIntegration, TeamsIntegration {
+   async listJobs(): Promise<KekaJob[]> { return []; }
+   async listCandidates(): Promise<KekaCandidate[]> { return []; }
+@@ -808,13 +1028,11 @@ export class ManualIntegration implements KekaIntegration, TeamsIntegration {
+ }
+ 
+ export function createKekaIntegration(mode: string | undefined): KekaIntegration {
+-  if (mode === 'mock') return new MockKekaIntegration();
+   if (mode === 'live') return new KekaHireIntegration();
+   return new ManualIntegration();
+ }
+ 
+ export function createTeamsIntegration(mode: string | undefined): TeamsIntegration {
+-  if (mode === 'mock') return new MockTeamsIntegration();
+   if (mode === 'live') return new MicrosoftGraphTeamsIntegration();
+   return new ManualIntegration();
+ }
+diff --git a/infrastructure/lambdas/mom-processor/index.ts b/infrastructure/lambdas/mom-processor/index.ts
+index 8bd05ab..79ec1ba 100644
+--- a/infrastructure/lambdas/mom-processor/index.ts
++++ b/infrastructure/lambdas/mom-processor/index.ts
+@@ -213,18 +213,22 @@ Transcript:
+ ${transcript.slice(0, 180000)}
+ `;
+ 
++  const body: Record<string, unknown> = {
++    anthropic_version: 'bedrock-2023-05-31',
++    // Rich MOMs can contain several structured sections. Sonnet needs
++    // enough output budget to close the JSON document cleanly.
++    max_tokens: 16000,
++    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
++  };
++  if (!MOM_MODEL_ID.includes('claude-sonnet-5')) {
++    body.temperature = 0;
++  }
++
+   const response = await bedrockClient.send(new InvokeModelCommand({
+     modelId: MOM_MODEL_ID,
+     contentType: 'application/json',
+     accept: 'application/json',
+-    body: JSON.stringify({
+-      anthropic_version: 'bedrock-2023-05-31',
+-      // Rich MOMs can contain several structured sections. Sonnet 4.6 must
+-      // have enough output budget to close the JSON document cleanly.
+-      max_tokens: 16000,
+-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+-      temperature: 0,
+-    }),
++    body: JSON.stringify(body),
+   }));
+ 
+   const payload = JSON.parse(new TextDecoder().decode(response.body));
+diff --git a/infrastructure/lambdas/processor/index.ts b/infrastructure/lambdas/processor/index.ts
+index 331e72d..5018829 100644
+--- a/infrastructure/lambdas/processor/index.ts
++++ b/infrastructure/lambdas/processor/index.ts
+@@ -354,14 +354,15 @@ async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<st
+ function getModelId(selection?: string): string {
+   // 1. Legacy Check & Auto-Migration
+   const legacyKeys = ['claude-3-haiku', 'claude-3-5-sonnet', 'claude-opus-4-6'];
+-  let modelKey = selection || 'claude-3-sonnet';
++  let modelKey = selection || 'claude-sonnet-5';
+   
+   if (selection && legacyKeys.includes(selection)) {
+-    console.info(`[Legacy Migration] Promoting ${selection} -> claude-3-sonnet`);
+-    modelKey = 'claude-3-sonnet';
++    console.info(`[Legacy Migration] Promoting ${selection} -> claude-sonnet-5`);
++    modelKey = 'claude-sonnet-5';
+   }
+   
+   const mapping: Record<string, string | undefined> = {
++    'claude-sonnet-5': process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+     'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+     'claude-sonnet-4-6': process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
+     'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
+@@ -382,11 +383,12 @@ function getModelId(selection?: string): string {
+ 
+   if (allowFallback) {
+     const fallbackMapping: Record<string, string> = {
++      'claude-sonnet-5': 'global.anthropic.claude-sonnet-5',
+       'claude-3-sonnet': 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+       'claude-sonnet-4-6': 'global.anthropic.claude-sonnet-4-6',
+       'nova-pro': 'amazon.nova-pro-v1:0',
+     };
+-    const fallbackId = fallbackMapping[modelKey] || 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0';
++    const fallbackId = fallbackMapping[modelKey] || 'global.anthropic.claude-sonnet-5';
+     console.warn('[Bedrock Resolved] Region-Locked Fallback to APAC Profile:', fallbackId);
+     return fallbackId;
+   }
+@@ -651,12 +653,15 @@ async function invokeBedrock(prompt: string, modelId: string): Promise<string> {
+         inferenceConfig: { maxTokens: 6000, temperature: 0.1 }
+       });
+     } else {
+-      body = JSON.stringify({
++      const anthropicBody: Record<string, unknown> = {
+         anthropic_version: 'bedrock-2023-05-31',
+         max_tokens: 6000,
+         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+-        temperature: 0.1
+-      });
++      };
++      if (!modelId.includes('claude-sonnet-5')) {
++        anthropicBody.temperature = 0.1;
++      }
++      body = JSON.stringify(anthropicBody);
+     }
+ 
+     const response = await bedrockClient.send(new InvokeModelCommand({
+diff --git a/infrastructure/lib/infrastructure-stack.ts b/infrastructure/lib/infrastructure-stack.ts
+index b80f3c0..12685d0 100644
+--- a/infrastructure/lib/infrastructure-stack.ts
++++ b/infrastructure/lib/infrastructure-stack.ts
+@@ -114,8 +114,8 @@ export class IepStack extends cdk.Stack {
+         MOM_TABLE_NAME: momTable.tableName,
+         MOM_QUEUE_URL: momQueue.queueUrl,
+         INTELLIGENCE_TABLE_NAME: intelligenceTable.tableName,
+-        KEKA_INTEGRATION_MODE: process.env.KEKA_INTEGRATION_MODE || 'mock',
+-        TEAMS_INTEGRATION_MODE: process.env.TEAMS_INTEGRATION_MODE || 'mock',
++        KEKA_INTEGRATION_MODE: process.env.KEKA_INTEGRATION_MODE || 'disabled',
++        TEAMS_INTEGRATION_MODE: process.env.TEAMS_INTEGRATION_MODE || 'disabled',
+         // Do not place Keka credentials in Lambda environment variables when
+         // the runtime secret is configured.
+         KEKA_BASE_URL: kekaSecretArn ? '' : (process.env.KEKA_BASE_URL || ''),
+@@ -128,7 +128,8 @@ export class IepStack extends cdk.Stack {
+         KEKA_SECRET_ARN: kekaSecretArn,
+         // Microsoft Graph credentials are read only at runtime from Secrets Manager.
+         MS_TEAMS_SECRET_ARN: teamsSecretArn,
+-        // Standardized Model Sync (Sonnet 3.7 + Sonnet 4.6 + Nova)
++        // Standardized Model Sync (Sonnet 5 + legacy fallbacks + Nova)
++        BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+         BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
+         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
+@@ -196,7 +197,8 @@ export class IepStack extends cdk.Stack {
+       environment: {
+         TABLE_NAME: interviewsTable.tableName,
+         BUCKET_NAME: filesBucket.bucketName,
+-        // Standardized Worker Sync (Sonnet 3.7 + Sonnet 4.6 + Nova)
++        // Standardized Worker Sync (Sonnet 5 + legacy fallbacks + Nova)
++        BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+         BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
+         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
+@@ -227,7 +229,7 @@ export class IepStack extends cdk.Stack {
+       environment: {
+         MOM_TABLE_NAME: momTable.tableName,
+         BUCKET_NAME: filesBucket.bucketName,
+-        MOM_MODEL_ID: process.env.MOM_MODEL_ID || 'global.anthropic.claude-sonnet-4-6',
++        MOM_MODEL_ID: process.env.MOM_MODEL_ID || 'global.anthropic.claude-sonnet-5',
+         PLATFORM_VERSION: `v1.0.0-mom-${Date.now()}`,
+       },
+       bundling: {
