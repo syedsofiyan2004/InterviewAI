@@ -1,0 +1,16 @@
+// Environment consumed at module-load time by the Lambda handlers under test.
+// validateEnv() in index.ts and processor/index.ts throws if any of these are
+// unset, so they must be present before those modules are imported.
+process.env.AWS_REGION = process.env.AWS_REGION || 'ap-south-1';
+process.env.TABLE_NAME = 'test-interviews';
+process.env.BUCKET_NAME = 'test-bucket';
+process.env.QUEUE_URL = 'https://sqs.test/interviews';
+process.env.MOM_TABLE_NAME = 'test-moms';
+process.env.MOM_QUEUE_URL = 'https://sqs.test/moms';
+process.env.INTELLIGENCE_TABLE_NAME = 'test-intelligence';
+process.env.ADMIN_TABLE_NAME = 'test-admin';
+process.env.CALCULATOR_TABLE_NAME = 'test-calculations';
+process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME = 'test-calculator-orchestrator';
+process.env.CALCULATOR_SIDECAR_FUNCTION_NAME = 'test-calculator-sidecar';
+process.env.USER_POOL_ID = 'ap-south-1_test';
+process.env.SEED_ADMIN_EMAIL = 'seed.admin@minfytech.com';

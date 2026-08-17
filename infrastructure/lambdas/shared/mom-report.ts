@@ -386,7 +386,7 @@ function section(ctx: PdfContext, title: string, fill: PdfColor, accent: PdfColo
 }
 
 function boxedParagraph(ctx: PdfContext, value: string, fill: PdfColor, accent: PdfColor) {
-  const lines = wrap(valueOr(value), ctx.regular, BODY_SIZE, CONTENT_WIDTH - 24);
+  const lines = visibleLines(valueOr(value), ctx.regular, BODY_SIZE, CONTENT_WIDTH - 24, 18);
   const height = Math.max(42, lines.length * LINE_HEIGHT + 22);
   ensure(ctx, height + 8);
   const top = ctx.y;
@@ -398,7 +398,7 @@ function boxedParagraph(ctx: PdfContext, value: string, fill: PdfColor, accent: 
 }
 
 function note(ctx: PdfContext, value: string) {
-  const lines = wrap(value, ctx.regular, 8, CONTENT_WIDTH - 22);
+  const lines = visibleLines(value, ctx.regular, 8, CONTENT_WIDTH - 22, 4);
   const height = Math.max(26, lines.length * 11 + 13);
   ensure(ctx, height + 8);
   const top = ctx.y;
@@ -417,6 +417,7 @@ function table(ctx: PdfContext, options: {
   labelColumns?: number[];
   cellText?: (value: string, column: number, row: number) => string;
   cellStyle?: (value: string, column: number, row: number) => CellStyle;
+  maxLinesPerCell?: number;
 }) {
   const headerHeight = 23;
   const drawHeader = () => {
@@ -433,7 +434,13 @@ function table(ctx: PdfContext, options: {
   drawHeader();
 
   options.rows.forEach((row, rowIndex) => {
-    const wrapped = row.map((cell, index) => wrap(valueOr(options.cellText?.(cell, index, rowIndex) || cell), ctx.regular, 8.4, options.columns[index].width - 14));
+    const wrapped = row.map((cell, index) => visibleLines(
+      valueOr(options.cellText?.(cell, index, rowIndex) || cell),
+      ctx.regular,
+      8.4,
+      options.columns[index].width - 14,
+      options.maxLinesPerCell || 9,
+    ));
     const height = Math.max(27, Math.max(...wrapped.map(lines => lines.length)) * 11 + 14);
     if (ctx.y - height < MARGIN + 28) {
       ctx.page = ctx.pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
@@ -469,6 +476,23 @@ function text(ctx: PdfContext, value: string, options: { size?: number; isBold?:
     ctx.page.drawText(line, { x: MARGIN + indent, y: ctx.y, size, font, color: options.color || c.ink });
     ctx.y -= options.lineHeight || LINE_HEIGHT;
   });
+}
+
+function truncateWithEllipsis(line: string, font: PDFFont, size: number, width: number): string {
+  const ellipsis = '...';
+  let output = line.trim();
+  while (output && font.widthOfTextAtSize(`${output}${ellipsis}`, size) > width) {
+    output = output.slice(0, -1).trimEnd();
+  }
+  return output ? `${output}${ellipsis}` : ellipsis;
+}
+
+function visibleLines(text: string, font: PDFFont, size: number, width: number, maxLines?: number): string[] {
+  const lines = wrap(text, font, size, width);
+  if (!maxLines || lines.length <= maxLines) return lines;
+  const clipped = lines.slice(0, maxLines);
+  clipped[clipped.length - 1] = truncateWithEllipsis(clipped[clipped.length - 1], font, size, width);
+  return clipped;
 }
 
 function drawFooter(ctx: PdfContext) {

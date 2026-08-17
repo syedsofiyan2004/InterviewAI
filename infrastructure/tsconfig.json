@@ -7,6 +7,12 @@
       "es2022"
     ],
     "declaration": true,
+    // Nothing in this package consumes emitted JS: the CDK app runs through
+    // `ts-node --prefer-ts-exts`, Lambdas are bundled from .ts by esbuild, and
+    // Jest compiles through ts-jest. An emit only drops stale .js/.d.ts shadows
+    // beside their sources, which esbuild then bundles in place of the real
+    // code — silently shipping an old Lambda. Type-check only.
+    "noEmit": true,
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,

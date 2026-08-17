@@ -1,9 +1,7 @@
 # Node.js
 node_modules/
 dist/
-lib/
-!infrastructure/lib/
-!infrastructure/lib/*.ts
+/lib/
 *.d.ts
 *.js
 !jest.config.js
@@ -12,6 +10,17 @@ lib/
 .next/
 out/
 build/
+
+# Generated deployment and reporting artifacts
+/frontend/.next-build/
+/outputs/
+/infrastructure/outputs.json
+
+# Review/export bundles (never commit)
+*.zip
+
+# Local implementation notes may contain integration identifiers.
+/Minfy Interview Agent Imp Detials.txt
 
 # CDK
 cdk.out/

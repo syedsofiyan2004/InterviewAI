@@ -1,5 +1,84 @@
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
+export type BaseRole = 'MEMBER' | 'ADMIN';
+export type AdminTier = 'VIEWER' | 'REVIEWER' | 'APPROVER' | 'OWNER';
+export type WorkspaceStatus = 'OPEN' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
+export type LinkedRecordType = 'interview' | 'mom' | 'intelligence';
+
+export interface LinkedRecord {
+  record_type: LinkedRecordType;
+  record_id: string;
+  label?: string;
+  linked_at: number;
+  linked_by: string;
+  summary?: any;
+}
+
+export interface Member {
+  org_id: string;
+  user_id: string;
+  email: string;
+  base_role: BaseRole;
+  tier: AdminTier | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type AuditAction = 
+  | 'READ_INTERVIEW' | 'READ_MOM' | 'READ_INTELLIGENCE' | 'READ_REPORT'
+  | 'DOWNLOAD_REPORT' | 'READ_WORKSPACE' | 'READ_AUDIT_LOG' | 'SEARCH'
+  | 'SOFT_DELETE' | 'UPDATE_RECORD' | 'GRANT_TIER' | 'REVOKE_TIER'
+  | 'CHANGE_BASE_ROLE' | 'APPROVE' | 'REJECT' | 'SHARE_ADD'
+  | 'SHARE_REMOVE' | 'LIST_COGNITO_USERS' | 'QBANK_UPDATE' | 'QBANK_DELETE'
+  | 'KEKA_SYNC' | 'COMPOSITE_ANALYSIS';
+
+export interface AuditLogEntry {
+  audit_id: string;
+  ts: number;
+  actor_user_id: string;
+  actor_email?: string;
+  action: AuditAction;
+  target_type?: string;
+  target_id?: string;
+  target_owner_user_id?: string;
+  detail?: string;
+}
+
+export interface SearchResult {
+  type: 'interview' | 'mom' | 'intelligence';
+  id: string;
+  title?: string;
+  owner_user_id: string;
+  owner_email?: string;
+  created_at: number;
+  status?: string;
+}
+
+export interface AdminOverview {
+  total_interviews: number;
+  interviews: Record<string, number>;
+  total_moms: number;
+  moms: Record<string, number>;
+  total_workspaces?: number;
+  workspaces?: Record<string, number>;
+  total_intelligence?: number;
+  intelligence?: Record<string, number>;
+  total_calculations?: number;
+  calculations?: Record<string, number>;
+}
+
+export interface CognitoUser {
+  username: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  enabled: boolean;
+  attributes: Array<{ Name: string; Value: string }>;
+  has_membership?: boolean;
+  user_id: string;
+  email?: string;
+}
+
 export type InterviewStatus = 
   | 'CREATED' 
   | 'FILES_UPLOADED' 
@@ -24,7 +103,35 @@ export interface Interview {
   position: string;
 }
 
-export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'position'> {
+/**
+ * One stage transition, appended by the worker as it happens.
+ *
+ * `progress_stage`/`progress_message` only ever hold the *current* stage, so a
+ * single line is all they can show. This list is the history behind it — what
+ * ran, in order, with the server timestamp of each transition — which is what
+ * makes a scrolling log possible instead of one overwritten sentence.
+ */
+export interface ProgressEvent {
+  at: number;
+  stage: string;
+  message: string;
+}
+
+/**
+ * Server-reported progress for a running analysis.
+ *
+ * `analysis_started_at` is stamped once when the job is queued and never
+ * rewritten, so elapsed time stays correct across page refreshes. Compare it
+ * against `getServerNow()`, never `Date.now()` — it is a server timestamp.
+ */
+export interface AnalysisProgress {
+  analysis_started_at?: number | null;
+  progress_stage?: string | null;
+  progress_message?: string | null;
+  progress_events?: ProgressEvent[] | null;
+}
+
+export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'position'>, AnalysisProgress {
   metadata: InterviewMetadata;
   transcript_uploaded: boolean;
   jd_uploaded: boolean;
@@ -34,6 +141,7 @@ export interface DetailedInterview extends Omit<Interview, 'candidate_name' | 'p
   resume_s3_key?: string;
   inferred_role?: string;
   is_mismatched?: boolean;
+  question_guide?: InterviewQuestionGuide | null;
   results?: {
     overall_score: number;
     recommendation: string;
@@ -70,6 +178,25 @@ export interface EvaluationResult {
   }>;
   executive_summary: string;
   final_recommendation_note: string;
+  interview_execution?: {
+    summary: string;
+    panel_assessment: {
+      score: number;
+      questions_asked_count: number;
+      planned_question_coverage_percent: number;
+      follow_up_quality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      observations: string[];
+      missed_areas: string[];
+    };
+    interviewer_evaluations: Array<{
+      name: string;
+      questions_asked_count: number;
+      planned_question_coverage_percent: number;
+      follow_up_quality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      observations: string[];
+      missed_areas: string[];
+    }>;
+  };
 }
 
 export type MomStatus = 'CREATED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -99,7 +226,7 @@ export interface MomProject {
   completed_count: number;
 }
 
-export interface DetailedMom extends Mom {
+export interface DetailedMom extends Mom, AnalysisProgress {
   transcript_uploaded: boolean;
   transcript_s3_key?: string;
   result_s3_key?: string;
@@ -143,6 +270,8 @@ export interface MomResult {
       priority?: 'High' | 'Medium' | 'Low';
     }>;
   }>;
+  key_topics?: any[];
+  action_items?: any[];
   risks: Array<{
     description: string;
     likelihood?: 'H' | 'M' | 'L';
@@ -167,112 +296,351 @@ export interface MomResult {
   overall_summary: string;
 }
 
-export type TfJobStatus =
-  | 'CREATED'
-  | 'PLAN_QUEUED'
-  | 'PLAN_RUNNING'
-  | 'PLAN_SUCCEEDED'
-  | 'PLAN_FAILED'
-  | 'APPROVED'
-  | 'APPLY_QUEUED'
-  | 'APPLY_RUNNING'
-  | 'APPLY_SUCCEEDED'
-  | 'APPLY_FAILED';
+export interface InterviewQuestionGuide {
+  generated_at: number;
+  source: 'approved_question_bank';
+  role_title: string;
+  detected_level: 'junior' | 'mid' | 'senior' | 'lead' | 'architect';
+  focus_areas: string[];
+  optimization_status: 'optimized' | 'bank_only';
+  questions: Array<{
+    id: string;
+    bank_question_id: string;
+    category: string;
+    focus_area: string;
+    source_question: string;
+    question: string;
+    follow_ups: string[];
+    what_to_listen_for: string[];
+  }>;
+}
 
-export interface TfJob {
-  job_id: string;
-  status: TfJobStatus;
-  deployment_name: string;
-  primary_region: string;
-  role_arn: string;
-  file_count: number;
+export type IntelligenceStatus =
+  | 'draft'
+  | 'data_ready'
+  | 'questions_generated'
+  | 'transcript_ready'
+  | 'scores_submitted'
+  | 'analysis_processing'
+  | 'analysis_failed'
+  | 'analysis_generated'
+  | 'approved';
+
+export interface IntelligenceQuestion {
+  question: string;
+  followUps: string[];
+  whatToEvaluate: string[];
+  questionType?: 'introduction' | 'resume' | 'role';
+  countsTowardPanelEvaluation?: boolean;
+}
+
+export interface IntelligencePanelist {
+  interviewerId: string;
+  name: string;
+  email?: string;
+  role?: string;
+  focusArea?: string;
+  assignedQuestions?: IntelligenceQuestion[];
+  score?: number;
+  feedback?: string;
+  opinion?: 'proceed' | 'hold' | 'reject' | 'needs_review';
+}
+
+export interface InterviewIntelligenceRecord extends AnalysisProgress {
+  intelligence_id: string;
+  owner_user_id: string;
+  owner_email?: string;
   created_at: number;
   updated_at: number;
-  approved_at?: number | null;
-  plan_build_id?: string | null;
-  apply_build_id?: string | null;
-  plan_output?: string | null;
-  apply_output?: string | null;
-  error_message?: string | null;
-}
-
-export interface TfJobFile {
-  filename: string;
-  content: string;
-}
-
-export interface TfGithubPullRequest {
-  repository: string;
-  branch: string;
-  commit_url: string;
-  pull_request_url?: string | null;
-  pull_request_number?: number | null;
-}
-
-export interface TfGithubTokenVerification {
-  valid: boolean;
-  repository?: string | null;
-  default_branch?: string | null;
-  is_empty: boolean;
-  checks: {
-    repository: boolean;
-    contents_write: boolean;
-    pull_requests_write: boolean;
-    workflows_write: boolean;
-    secrets_access: boolean;
-    actions_write: boolean;
+  source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
+  status: IntelligenceStatus;
+  keka: {
+    mode: 'mock' | 'disabled' | 'live';
+    syncStatus: 'not_connected' | 'mocked' | 'synced' | 'failed';
+    lastSyncAt?: number;
+    error?: string;
   };
-  required_secrets_present: boolean;
-  existing_required_secrets: string[];
-  missing_permissions: string[];
+  teams: {
+    mode: 'mock' | 'disabled' | 'live';
+    meetingUrl?: string;
+    meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
+    transcriptStatus: 'not_available' | 'pending' | 'transcribing' | 'mocked' | 'synced' | 'failed';
+    lastSyncAt?: number;
+    error?: string;
+  };
+  job: {
+    title: string;
+    description: string;
+    seniority?: string;
+    requiredSkills: string[];
+    preferredSkills?: string[];
+  };
+  candidate: {
+    name: string;
+    email?: string;
+    resumeText?: string;
+    experienceSummary?: string;
+    resumeS3Key?: string;
+    resumeFileName?: string;
+  };
+  panel: IntelligencePanelist[];
+  questionPlan?: {
+    generatedAt: number;
+    /** Focus areas the interviewer chose for this round. */
+    selectedTopics?: string[];
+    /** How many role questions the interviewer asked for. */
+    requestedQuestionCount?: number;
+    candidateSummary: string;
+    jdSummary: string;
+    skillAreas: Array<{
+      skill: string;
+      priority: 'high' | 'medium' | 'low';
+      reason: string;
+    }>;
+    panelPlan: Array<{
+      interviewerId: string;
+      focusArea: string;
+      questions: Array<IntelligenceQuestion & {
+        expectedStrongAnswerSignals: string[];
+        redFlags: string[];
+      }>;
+    }>;
+    scoringRubric: Array<{
+      category: string;
+      maxScore: number;
+      guidance: string;
+    }>;
+  };
+  transcript?: {
+    rawText: string;
+    source: 'manual' | 'mock_teams' | 'teams_live';
+    uploadedAt: number;
+  };
+  aiEvaluation?: {
+    generatedAt: number;
+    candidateEvaluation: {
+      summary: string;
+      strengths: string[];
+      concerns: string[];
+      skillScores: Array<{ skill: string; score: number; evidence: string }>;
+      recommendation: 'proceed' | 'hold' | 'reject' | 'needs_review';
+      recommendationReason: string;
+    };
+    interviewerEvaluations: Array<{
+      interviewerId: string;
+      name: string;
+      questionsAskedCount: number;
+      jdCoveragePercent: number;
+      followUpQuality: 'strong' | 'average' | 'weak' | 'not_enough_data';
+      scoreJustification: 'well_supported' | 'partially_supported' | 'weakly_supported' | 'not_available';
+      observations: string[];
+      missedAreas: string[];
+    }>;
+    coverageMatrix: Array<{
+      jdSkill: string;
+      covered: 'yes' | 'partial' | 'no';
+      evidence: string;
+      askedBy?: string[];
+    }>;
+    panelCalibration?: {
+      panelSize: number;
+      scoreSpread?: number;
+      outliers: Array<{ interviewerId: string; name: string; score: number; reason: string }>;
+      summary: string;
+      humanReviewRequired: boolean;
+    };
+    caseEvaluation?: {
+      overallScore: number;
+      summary: string;
+      competencyScores: Array<{
+        competency: string;
+        score: number;
+        evidence: string;
+      }>;
+    };
+    finalReport: string;
+  };
+  analysisError?: string;
+  approved?: {
+    approvedBy: string;
+    approvedAt: number;
+    notes?: string;
+  };
+  caseInterview?: {
+    enabled: boolean;
+    /** 'ai' = the model's own scenario; 'template' = built from the JD after a model failure. */
+    source?: 'ai' | 'template';
+    title?: string;
+    difficulty?: string;
+    problem?: string;
+    format?: string;
+    candidatePack?: {
+      scenario: string;
+      context: string[];
+      deliverables: string[];
+      tasks: Array<{
+        title: string;
+        expectedDurationMinutes?: number;
+        instructions: string[];
+      }>;
+    };
+    interviewerGuide?: {
+      competencies: Array<{
+        name: string;
+        whatGoodLooksLike: string;
+        weakSignals: string;
+      }>;
+      strongAnswerMarkers: string[];
+      probingQuestions: Array<{
+        area: string;
+        question: string;
+      }>;
+    };
+  };
+}
+
+export interface IntegrationStatus {
+  keka: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean; credentialSource?: string };
+  teams: { mode: 'mock' | 'disabled' | 'live'; label: string; configured: boolean };
   message: string;
 }
 
-export interface TfGithubSecretsResult {
-  repository: string;
-  updated_secrets: string[];
-  message: string;
+export interface KekaJobOption {
+  id: string;
+  title: string;
+  department?: string;
+  experience?: string;
 }
 
-export interface TfGithubApplyResult {
-  repository: string;
-  ref: string;
-  workflow: string;
-  actions_url: string;
-  message: string;
+export interface KekaCandidateOption {
+  id: string;
+  name: string;
+  email?: string;
+  status?: string;
 }
 
-export interface TfProject {
-  project_id: string;
-  project_name: string;
-  description?: string | null;
-  workspace_count: number;
+export interface KekaInterviewOption {
+  id: string;
+  title?: string;
+  scheduledAt?: string;
+  status?: string;
+  meetingUrl?: string;
+  organizerEmail?: string;
+  isImported?: boolean;
+  /** Status of the already-imported round, when one exists. */
+  importedStatus?: string;
+  /** Intelligence record id of the already-imported round, when one exists. */
+  importedIntelligenceId?: string;
+}
+
+export interface ScheduledPanelist {
+  interviewerId?: string;
+  name: string;
+  email?: string;
+}
+
+export interface ScheduledInterview {
+  panelist_email: string;
+  keka_interview_id: string;
+  keka_job_id: string;
+  keka_candidate_id: string;
+  job_title: string;
+  department?: string;
+  candidate_name: string;
+  candidate_email?: string;
+  scheduled_at: number;
+  title?: string;
+  panel: ScheduledPanelist[];
+  meeting_url?: string;
+  meeting_id?: string;
+  organizer_email?: string;
+  organizer_user_id?: string;
+  keka_status?: string;
+  synced_at: number;
+  cancelled_at?: number;
+  intelligence_id?: string;
+  workspace_id?: string;
+  provisioned_at?: number;
+}
+
+export interface QuestionBankRoleSummary {
+  role_key: string;
+  role_title: string;
+  department?: string;
+  experience?: string;
+  keka_job_id?: string;
+  competencies: string[];
+  updated_at: number;
+  updated_by?: string;
+}
+
+export interface QuestionBankRole extends QuestionBankRoleSummary {
+  created_at: number;
+}
+
+export interface QuestionBankItem {
+  role_key: string;
+  question_id: string;
+  category: string;
+  topic_tag?: string;
+  competency?: string;
+  question: string;
+  follow_ups: string[];
+  strong_signals: string[];
+  red_flags: string[];
+  active: boolean;
+  source: 'SEED' | 'ADMIN';
   created_at: number;
   updated_at: number;
+  updated_by?: string;
 }
 
-export interface TfWorkspace {
-  workspace_id: string;
-  project_id?: string | null;
-  deployment_name: string;
-  primary_region: string;
-  repository_url?: string | null;
-  branch?: string | null;
-  file_count: number;
-  summary?: Record<string, unknown>;
-  created_at: number;
-  updated_at: number;
+export interface MinfyCareerJob {
+  id: string;
+  title: string;
+  department?: string;
+  location?: string;
+  sourceUrl: string;
 }
 
-export interface DetailedTfWorkspace extends TfWorkspace {
-  manifest?: Record<string, any>;
-  files: TfJobFile[];
+export interface MinfyCareerJobDetail extends MinfyCareerJob {
+  description: string;
+  fetchedAt: number;
 }
 
 // ---------------------------------------------------------------------------
 // Auth-aware fetch — attaches the Cognito ID token to every API call.
 // CognitoUserPoolsAuthorizer validates the ID token (not the access token).
 // ---------------------------------------------------------------------------
+/**
+ * Offset between this browser's clock and the API's, in ms (browser − server).
+ *
+ * Every progress timestamp the UI renders (analysis_started_at,
+ * composite_started_at, progress events) is stamped by Lambda. Subtracting one
+ * of those from `Date.now()` compares two clocks that are free to disagree: a
+ * workstation a minute behind produced negative elapsed times and pinned the
+ * progress timers to 0:00. The API publishes its clock on every response
+ * (`X-Server-Time`), so we learn the offset once and read server time from then
+ * on. Starts at 0, which is exactly right until the first response lands.
+ */
+let serverClockSkewMs = 0;
+
+/** Server time, as best this client can tell. Use for anything compared against a server timestamp. */
+export function getServerNow(): number {
+  return Date.now() - serverClockSkewMs;
+}
+
+function recordServerClock(response: Response): void {
+  const stamp = Number(response.headers.get('X-Server-Time'));
+  if (!Number.isFinite(stamp) || stamp <= 0) return;
+  // Half the round trip is a closer estimate than none, but the request start is
+  // not tracked here and a sub-second error is irrelevant to a seconds-resolution
+  // timer — so take the header at face value.
+  serverClockSkewMs = Date.now() - stamp;
+}
+
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const { getCurrentSession } = await import('./auth');
   const session = await getCurrentSession();
@@ -291,7 +659,9 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
     Authorization: token,
   };
 
-  return fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers });
+  recordServerClock(response);
+  return response;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -302,7 +672,121 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+export interface MeResponse {
+  userId: string;
+  email: string;
+  baseRole: BaseRole;
+  tier: AdminTier | null;
+  isAdmin: boolean;
+  org_id?: string;
+}
+
+export interface CompositeAnalysis {
+  compositeScore?: number;
+  overallSummary?: string;
+  keyStrengths?: string[];
+  majorConcerns?: string[];
+  finalRecommendation?: string;
+}
+
+export interface CandidateWorkspace {
+  workspace_id: string;
+  org_id: string;
+  title: string;
+  candidate_name?: string;
+  position?: string;
+  status: WorkspaceStatus;
+  owner_user_id: string;
+  owner_email?: string;
+  linked_records?: LinkedRecord[];
+  created_at: number;
+  updated_at: number;
+  deleted_at?: number;
+  /**
+   * Multi-round synthesis (APPROVER+). Written by the async composite-analysis
+   * worker, so the UI polls composite_status rather than awaiting the request.
+   */
+  composite_analysis?: CompositeAnalysis;
+  composite_status?: 'processing' | 'done' | 'failed';
+  composite_progress_stage?: string;
+  composite_progress_message?: string;
+  composite_progress_events?: ProgressEvent[] | null;
+  composite_started_at?: number;
+  composite_error?: string | null;
+  /**
+   * How many linked rounds actually carried a completed AI review into the
+   * synthesis, out of how many are linked. A composite built from 1 of 3 rounds
+   * is a different artifact from one built from all 3, so the UI states it.
+   */
+  composite_rounds_used?: number;
+  composite_rounds_total?: number;
+  composite_rounds_skipped?: string[];
+}
+
+export interface Comment {
+  comment_id: string;
+  workspace_id: string;
+  author_user_id: string;
+  author_email: string;
+  body: string;
+  resolved: boolean;
+  created_at: number;
+}
+
+export interface SharePermission {
+  workspace_id: string;
+  user_id: string;
+  user_email?: string;
+  shared_user_id?: string;
+  shared_email?: string;
+  permission: 'VIEWER' | 'COMMENTER';
+  created_at: number;
+  created_by: string;
+}
+
+export interface WorkspaceFull {
+  workspace: CandidateWorkspace;
+  comments?: Comment[];
+  comments_has_more?: boolean;
+  shares?: SharePermission[];
+  decisions?: any[];
+  linked_records?: LinkedRecord[];
+  my_access: {
+    can_comment: boolean;
+    is_owner: boolean;
+    can_decide: boolean;
+    via_admin_tier?: string;
+  };
+}
+
+export interface Member {
+  org_id: string;
+  user_id: string;
+  email: string;
+  base_role: BaseRole;
+  tier: AdminTier | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CognitoUser {
+  username: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  enabled: boolean;
+  attributes: Array<{ Name: string; Value: string }>;
+  has_membership?: boolean;
+  user_id: string;
+  email?: string;
+}
+
 export const api = {
+  async getMe(): Promise<MeResponse> {
+    const res = await authFetch(`${API_URL}/me`);
+    return handleResponse(res);
+  },
+
   async getInterviews(): Promise<{ items: Interview[]; count: number }> {
     const res = await authFetch(`${API_URL}/interviews`);
     return handleResponse(res);
@@ -458,13 +942,110 @@ export const api = {
     return handleResponse(res);
   },
 
-  async createTfJob(data: {
-    deployment_name: string;
-    primary_region: string;
-    role_arn: string;
-    files: TfJobFile[];
-  }): Promise<TfJob> {
-    const res = await authFetch(`${API_URL}/tf-jobs`, {
+  async generateInterviewQuestionGuide(id: string): Promise<InterviewQuestionGuide> {
+    const res = await authFetch(`${API_URL}/interviews/${id}/question-guide`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async getIntegrationStatus(): Promise<IntegrationStatus> {
+    const res = await authFetch(`${API_URL}/integrations/status`);
+    return handleResponse(res);
+  },
+
+  async getMinfyCareerJobs(): Promise<{ source: string; source_url: string; fetched_at: number; jobs: MinfyCareerJob[] }> {
+    const res = await authFetch(`${API_URL}/minfy-careers/jobs`);
+    return handleResponse(res);
+  },
+
+  async getMinfyCareerJob(jobId: string): Promise<{ job: MinfyCareerJobDetail }> {
+    const res = await authFetch(`${API_URL}/minfy-careers/jobs/${encodeURIComponent(jobId)}`);
+    return handleResponse(res);
+  },
+
+  async attachMinfyCareerJobDescription(id: string, jobId: string): Promise<{ status: string; s3_key: string; job: MinfyCareerJob }> {
+    const res = await authFetch(`${API_URL}/interviews/${id}/minfy-jd`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId }),
+    });
+    return handleResponse(res);
+  },
+
+  async getIntelligenceInterviews(): Promise<{ items: InterviewIntelligenceRecord[]; count: number }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews`);
+    return handleResponse(res);
+  },
+
+  async getKekaJobs(): Promise<{ items: KekaJobOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs`);
+    return handleResponse(res);
+  },
+
+  async getKekaCandidates(jobId: string): Promise<{ items: KekaCandidateOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs/${encodeURIComponent(jobId)}/candidates`);
+    return handleResponse(res);
+  },
+
+  async getKekaInterviews(jobId: string, candidateId: string): Promise<{ items: KekaInterviewOption[] }> {
+    const res = await authFetch(`${API_URL}/keka/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/interviews`);
+    return handleResponse(res);
+  },
+
+  async getMyInterviews(): Promise<{ items: ScheduledInterview[] }> {
+    const res = await authFetch(`${API_URL}/my-interviews`);
+    return handleResponse(res);
+  },
+
+  async refreshMyInterviews(): Promise<{ items: ScheduledInterview[] }> {
+    const res = await authFetch(`${API_URL}/my-interviews/refresh`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  async openMyInterview(kekaInterviewId: string): Promise<{
+    intelligence_id: string;
+    item?: InterviewIntelligenceRecord;
+    workspace_id?: string;
+    already_provisioned?: boolean;
+  }> {
+    const res = await authFetch(`${API_URL}/my-interviews/${encodeURIComponent(kekaInterviewId)}/open`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async createIntelligenceInterview(data: {
+    source_mode: 'manual' | 'mock_keka' | 'keka_live' | 'teams_live';
+    job?: {
+      title: string;
+      description: string;
+      seniority?: string;
+      requiredSkills?: string[] | string;
+      preferredSkills?: string[] | string;
+    };
+    candidate?: {
+      name: string;
+      email?: string;
+      resumeText?: string;
+      experienceSummary?: string;
+    };
+    panel?: Array<{
+      interviewerId?: string;
+      name: string;
+      email?: string;
+      role?: string;
+      focusArea?: string;
+    }>;
+    meetingUrl?: string;
+    meetingId?: string;
+    organizerUserId?: string;
+    organizerEmail?: string;
+    jobId?: string;
+    candidateId?: string;
+    interviewId?: string;
+  }): Promise<{ intelligence_id: string; item: InterviewIntelligenceRecord; workspace_id?: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -472,67 +1053,36 @@ export const api = {
     return handleResponse(res);
   },
 
-  async getTfWorkspaces(): Promise<{ items: TfWorkspace[]; count: number }> {
-    const res = await authFetch(`${API_URL}/tf-workspaces`);
+  async getIntelligenceInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`);
     return handleResponse(res);
   },
 
-  async getTfProjects(): Promise<{ items: TfProject[]; count: number }> {
-    const res = await authFetch(`${API_URL}/tf-projects`);
+  async deleteIntelligenceInterview(id: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`, { method: 'DELETE' });
     return handleResponse(res);
   },
 
-  async createTfProject(data: { project_name: string; description?: string }): Promise<TfProject> {
-    const res = await authFetch(`${API_URL}/tf-projects`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return handleResponse(res);
-  },
-
-  async updateTfProject(id: string, data: { project_name: string; description?: string }): Promise<TfProject> {
-    const res = await authFetch(`${API_URL}/tf-projects/${id}`, {
+  async updateIntelligenceDetails(id: string, data: { candidateEmail?: string; organizerEmail?: string }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ candidate_email: data.candidateEmail, organizer_email: data.organizerEmail }),
     });
     return handleResponse(res);
   },
 
-  async deleteTfProject(id: string): Promise<{ message: string; deleted_workspaces: number }> {
-    const res = await authFetch(`${API_URL}/tf-projects/${id}`, {
-      method: 'DELETE',
+  async getIntelligenceResumeUploadUrl(id: string, file: { fileName: string; contentType: string }): Promise<{ upload_url: string; s3_key: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/resume-upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: file.fileName, content_type: file.contentType }),
     });
     return handleResponse(res);
   },
 
-  async getTfProject(id: string): Promise<TfProject> {
-    const res = await authFetch(`${API_URL}/tf-projects/${id}`);
-    return handleResponse(res);
-  },
-
-  async getTfProjectWorkspaces(projectId: string): Promise<{ items: TfWorkspace[]; count: number }> {
-    const res = await authFetch(`${API_URL}/tf-workspaces?project_id=${encodeURIComponent(projectId)}`);
-    return handleResponse(res);
-  },
-
-  async getTfWorkspace(id: string): Promise<DetailedTfWorkspace> {
-    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`);
-    return handleResponse(res);
-  },
-
-  async createTfWorkspace(data: {
-    project_id: string;
-    deployment_name: string;
-    primary_region: string;
-    repository_url?: string;
-    branch?: string;
-    files: TfJobFile[];
-    summary?: Record<string, unknown>;
-    source_manifest?: Record<string, unknown>;
-  }): Promise<TfWorkspace> {
-    const res = await authFetch(`${API_URL}/tf-workspaces`, {
+  async confirmIntelligenceResume(id: string, data: { s3_key: string; file_name: string }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/confirm-resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -540,61 +1090,31 @@ export const api = {
     return handleResponse(res);
   },
 
-  async updateTfWorkspace(id: string, data: {
-    deployment_name: string;
-    repository_url?: string;
-    branch?: string;
-  }): Promise<TfWorkspace> {
-    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
+  async getQuestionTopics(intelligenceId: string): Promise<{
+    topics: Array<{ topic: string; priority: 'high' | 'medium' | 'low' }>;
+    level: string;
+    suggested_question_count: number;
+    previously_covered: Array<{ topic: string; round: string }>;
+  }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${encodeURIComponent(intelligenceId)}/question-topics`);
     return handleResponse(res);
   },
 
-  async deleteTfWorkspace(id: string): Promise<{ message: string }> {
-    const res = await authFetch(`${API_URL}/tf-workspaces/${id}`, {
-      method: 'DELETE',
-    });
-    return handleResponse(res);
-  },
-
-  async getTfJob(id: string): Promise<TfJob> {
-    const res = await authFetch(`${API_URL}/tf-jobs/${id}`);
-    return handleResponse(res);
-  },
-
-  async runTfPlan(id: string): Promise<TfJob> {
-    const res = await authFetch(`${API_URL}/tf-jobs/${id}/plan`, {
+  async generateIntelligenceQuestions(id: string, body?: { focus_areas?: string[]; question_count?: number }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${encodeURIComponent(id)}/generate-questions`, {
       method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
     });
     return handleResponse(res);
   },
 
-  async approveTfJob(id: string): Promise<TfJob> {
-    const res = await authFetch(`${API_URL}/tf-jobs/${id}/approve`, {
-      method: 'POST',
-    });
+  async generateIntelligenceCaseInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/case-interview`, { method: 'POST' });
     return handleResponse(res);
   },
 
-  async runTfApply(id: string): Promise<TfJob> {
-    const res = await authFetch(`${API_URL}/tf-jobs/${id}/apply`, {
-      method: 'POST',
-    });
-    return handleResponse(res);
-  },
-
-  async createTfGithubPullRequest(data: {
-    repository_url: string;
-    branch: string;
-    github_token: string;
-    deployment_name: string;
-    primary_region: string;
-    files: TfJobFile[];
-  }): Promise<TfGithubPullRequest> {
-    const res = await authFetch(`${API_URL}/tf-github-pr`, {
+  async updateIntelligenceTranscript(id: string, data: { rawText?: string; source?: 'manual' | 'mock_teams'; useMockTeams?: boolean }): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/transcript`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -602,56 +1122,45 @@ export const api = {
     return handleResponse(res);
   },
 
-  async dispatchTfGithubApply(data: {
-    repository_url: string;
-    github_token: string;
-    ref?: string;
-  }): Promise<TfGithubApplyResult> {
-    const res = await authFetch(`${API_URL}/tf-github-apply`, {
+  async syncTeamsTranscript(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/sync-teams-transcript`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
     });
     return handleResponse(res);
   },
 
-  async dispatchTfGithubDestroy(data: {
-    repository_url: string;
-    github_token: string;
-    confirmation: string;
-    ref?: string;
-  }): Promise<TfGithubApplyResult> {
-    const res = await authFetch(`${API_URL}/tf-github-destroy`, {
+  async updateIntelligenceScores(id: string, panel: Array<{
+    interviewerId: string;
+    score?: number;
+    feedback?: string;
+    opinion?: 'proceed' | 'hold' | 'reject' | 'needs_review';
+  }>): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/scores`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ panel }),
     });
     return handleResponse(res);
   },
 
-  async verifyTfGithubToken(data: {
-    repository_url: string;
-    github_token: string;
-  }): Promise<TfGithubTokenVerification> {
-    const res = await authFetch(`${API_URL}/tf-github-token/verify`, {
+  async analyzeIntelligenceInterview(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/analyze`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
     });
     return handleResponse(res);
   },
 
-  async updateTfGithubSecrets(data: {
-    repository_url: string;
-    github_token: string;
-    aws_access_key_id: string;
-    aws_secret_access_key: string;
-  }): Promise<TfGithubSecretsResult> {
-    const res = await authFetch(`${API_URL}/tf-github-secrets`, {
+  async approveIntelligenceInterview(id: string, notes?: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ notes }),
     });
+    return handleResponse(res);
+  },
+
+  async getIntelligenceReport(id: string): Promise<{ intelligence_id: string; status: IntelligenceStatus; report: string; download_url: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/report`);
     return handleResponse(res);
   },
 
@@ -675,5 +1184,200 @@ export const api = {
     } catch {
       // silent fail — localStorage fallback handles it
     }
+  },
+
+  async adminListMembers(): Promise<{ items: Member[] }> {
+    const res = await authFetch(`${API_URL}/admin/members`);
+    return handleResponse(res);
+  },
+
+  async adminListCognitoUsers(): Promise<{ items: CognitoUser[] }> {
+    const res = await authFetch(`${API_URL}/admin/cognito-users`);
+    return handleResponse(res);
+  },
+
+  async adminGrantTier(userId: string, tier: AdminTier, note?: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/tier`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier, note }),
+    });
+    return handleResponse(res);
+  },
+
+  async adminRevokeTier(userId: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/revoke`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async adminChangeBaseRole(userId: string, baseRole: BaseRole, email?: string): Promise<{ message: string }> {
+    const res = await authFetch(`${API_URL}/admin/members/${userId}/base-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_role: baseRole, email }),
+    });
+    return handleResponse(res);
+  },
+
+  async adminListApprovals(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/admin/approvals`);
+    return handleResponse(res);
+  },
+
+  async adminTriggerKekaSync(): Promise<{ status: string }> {
+    const res = await authFetch(`${API_URL}/admin/keka-sync`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  async adminListQuestionBank(): Promise<{ items: QuestionBankRoleSummary[]; count: number }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank`);
+    return handleResponse(res);
+  },
+
+  async adminGetQuestionBankRole(roleKey: string): Promise<{ role: QuestionBankRole | null; items: QuestionBankItem[]; count: number }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}`);
+    return handleResponse(res);
+  },
+
+  async adminUpdateQuestionBankRole(
+    roleKey: string,
+    data: Partial<Pick<QuestionBankRole, 'role_title' | 'department' | 'experience' | 'competencies'>>,
+  ): Promise<{ role: QuestionBankRole }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminCreateQuestionBankItem(
+    roleKey: string,
+    data: Pick<QuestionBankItem, 'category' | 'question'> & Partial<Pick<QuestionBankItem, 'topic_tag' | 'competency' | 'follow_ups' | 'strong_signals' | 'red_flags'>>,
+  ): Promise<{ item: QuestionBankItem }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminUpdateQuestionBankItem(
+    roleKey: string,
+    questionId: string,
+    data: Partial<Pick<QuestionBankItem, 'category' | 'topic_tag' | 'competency' | 'question' | 'follow_ups' | 'strong_signals' | 'red_flags' | 'active'>>,
+  ): Promise<{ item: QuestionBankItem }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async adminDeleteQuestionBankItem(roleKey: string, questionId: string): Promise<{ success: boolean; question_id: string }> {
+    const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async adminListCandidates(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/admin/candidates`);
+    return handleResponse(res);
+  },
+
+  async adminListInterviews(): Promise<{ items: any[] }> {
+    const res = await authFetch(`${API_URL}/admin/interviews`);
+    return handleResponse(res);
+  },
+
+  async adminListMoms(): Promise<{ items: any[] }> {
+    const res = await authFetch(`${API_URL}/admin/moms`);
+    return handleResponse(res);
+  },
+
+  async adminSearch(query: string): Promise<{ items: SearchResult[] }> {
+    const res = await authFetch(`${API_URL}/admin/search?q=${encodeURIComponent(query)}`);
+    return handleResponse(res);
+  },
+
+  async getAuditLog(cursor?: string): Promise<{ items: AuditLogEntry[]; last_evaluated_key?: string }> {
+    const url = cursor ? `${API_URL}/admin/audit-log?cursor=${encodeURIComponent(cursor)}` : `${API_URL}/admin/audit-log`;
+    const res = await authFetch(url);
+    return handleResponse(res);
+  },
+
+  async getAdminOverview(): Promise<AdminOverview> {
+    const res = await authFetch(`${API_URL}/admin/overview`);
+    return handleResponse(res);
+  },
+
+  async getWorkspaceFull(id: string): Promise<WorkspaceFull> {
+    const res = await authFetch(`${API_URL}/workspaces/${id}/full`);
+    return handleResponse(res);
+  },
+
+  async listWorkspaces(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/workspaces`);
+    return handleResponse(res);
+  },
+
+  async listSharedWithMe(): Promise<{ items: CandidateWorkspace[] }> {
+    const res = await authFetch(`${API_URL}/workspaces/shared-with-me`);
+    return handleResponse(res);
+  },
+
+  async createComment(workspace_id: string, body: string): Promise<Comment> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+    return handleResponse(res);
+  },
+
+  async resolveComment(workspace_id: string, comment_id: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/comments/${comment_id}/resolve`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async addWorkspaceShare(workspace_id: string, data: { shared_user_id: string, shared_email?: string, permission: 'VIEWER' | 'COMMENTER' }): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/shares`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  async removeWorkspaceShare(workspace_id: string, user_id: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/shares/${user_id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async postDecision(workspace_id: string, decision: 'APPROVED' | 'REJECTED', note?: string): Promise<void> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, note }),
+    });
+    return handleResponse(res);
+  },
+
+  /**
+   * Queues the multi-round synthesis (APPROVER+). Returns as soon as the worker
+   * is queued — the result lands on the workspace row, so callers poll
+   * getWorkspaceFull for composite_status instead of awaiting the analysis.
+   */
+  async generateCompositeAnalysis(workspace_id: string): Promise<{ status?: string }> {
+    const res = await authFetch(`${API_URL}/workspaces/${workspace_id}/composite-analysis`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
   },
 };

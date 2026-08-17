@@ -1,0 +1,32 @@
+checkpoint: interviewer-centric flow + uncommitted baseline (plan Parts A-D)
+
+Branch feature/interviewer-centric-flow, off codex/ui-redesign-phase-0.
+
+Single honest checkpoint: this branch held a large body of never-committed work
+(admin portal, collaboration layer, UI redesign, MOM/processor edits) with plan
+Parts A-D layered into the same untracked/modified files. There are no commit
+boundaries between them, so per-part commits are not possible for this snapshot;
+new work from here gets clean per-part commits.
+
+Plan work in this checkpoint (tsc --noEmit clean, 0 shadow files):
+- Part A: My Interviews backbone. New scheduled-interviews.ts (SCHED data-access);
+  provisionIntelligenceRecord extracted and shared by manual create + open route;
+  createIntelligenceInterview gated REVIEWER; GET /my-interviews,
+  POST /my-interviews/refresh, POST /my-interviews/{id}/open (panel-membership
+  boundary + idempotent provisioning). Plus scripts/probe-keka-status.ts
+  (read-only Keka candidate-status probe).
+- Part B: resolveRoleCompetencies + deterministic competency validator replace
+  bank topicTag/focusArea labels wherever they surfaced as "skills".
+- Part C: DynamoDB-backed editable question bank - question-bank-store.ts,
+  question-bank-routes.ts (OWNER), scripts/seed-question-bank.ts, admin schema -
+  with static fallback so behaviour is unchanged before seeding.
+- Part D: composite analysis gated APPROVER, async via __internalTask, max_tokens
+  1000->4000, empty-content guard + parse-retry-once, progress on workspace row.
+
+Pre-existing uncommitted baseline (not authored in this effort): admin-routes.ts,
+authz.ts, audit.ts, the frontend admin/candidates/shared trees + UI redesign,
+MOM/processor edits, and related tests/scripts.
+
+Hygiene: gitignore *.zip and infrastructure/outputs.json; remove tracked outputs.json.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

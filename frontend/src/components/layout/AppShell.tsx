@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { TourProvider } from '@/contexts/TourContext';
 import { useTour, checkTourStatus } from '@/contexts/TourContext';
 import { TourOverlay } from '@/components/ui/TourOverlay';
+import { CommandPalette } from '@/components/ui/CommandPalette';
 
 const PUBLIC_PATHS = ['/login'];
 
@@ -17,7 +18,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useAuth();
-  const [pointer, setPointer] = useState({ x: 55, y: 35 });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const pointerFrameRef = useRef<number | null>(null);
+  const pointerPositionRef = useRef({ x: 50, y: 42 });
+  const lastRenderedPointerRef = useRef({ x: 50, y: 42 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
@@ -26,6 +32,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [isLoading, user, isPublic, router]);
+
+  useEffect(() => () => {
+    if (pointerFrameRef.current) window.cancelAnimationFrame(pointerFrameRef.current);
+  }, []);
 
   if (isLoading) {
     return (
@@ -53,27 +63,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <TourProvider>
-      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        <Sidebar />
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          overflow: 'hidden',
+          '--sidebar-width': isSidebarCollapsed ? '76px' : '220px',
+        } as React.CSSProperties}
+      >
+        <Sidebar
+          collapsed={isSidebarCollapsed}
+          onToggleCollapsed={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
+          mobileOpen={isMobileNavigationOpen}
+          onCloseMobile={() => setIsMobileNavigationOpen(false)}
+        />
         <div style={{ flex: 1, minWidth: 0 }} className="flex flex-col overflow-hidden">
-          <Topbar />
+          <Topbar onOpenNavigation={() => setIsMobileNavigationOpen(true)} />
           <main
-            className="app-workspace flex-1 overflow-y-auto p-6 lg:p-7"
+            ref={workspaceRef}
+            className="app-workspace flex-1 overflow-y-auto p-7 lg:p-8"
             onMouseMove={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
-              setPointer({
+              const nextPosition = {
                 x: ((event.clientX - rect.left) / rect.width) * 100,
                 y: ((event.clientY - rect.top) / rect.height) * 100,
+              };
+              const previous = pointerPositionRef.current;
+              if (Math.abs(nextPosition.x - previous.x) < 1 && Math.abs(nextPosition.y - previous.y) < 1) return;
+              pointerPositionRef.current = nextPosition;
+
+              if (pointerFrameRef.current) return;
+              pointerFrameRef.current = window.requestAnimationFrame(() => {
+                const workspace = workspaceRef.current;
+                const rendered = lastRenderedPointerRef.current;
+                const position = pointerPositionRef.current;
+                if (workspace && (Math.abs(position.x - rendered.x) >= 1 || Math.abs(position.y - rendered.y) >= 1)) {
+                  workspace.style.setProperty('--mx', `${position.x}%`);
+                  workspace.style.setProperty('--my', `${position.y}%`);
+                  lastRenderedPointerRef.current = position;
+                }
+                pointerFrameRef.current = null;
               });
             }}
-            style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
           >
-            {children}
+            <div className="relative z-10">
+              {children}
+            </div>
           </main>
         </div>
       </div>
       <AppOnboardingTour />
       <TourOverlay />
+      <CommandPalette />
     </TourProvider>
   );
 }
@@ -121,14 +162,8 @@ function AppOnboardingTour() {
           body: 'Create a project first, then add one transcript or bulk upload meeting files inside that project.',
           position: 'right',
         },
-        {
-          targetId: 'tour-nav-tf-generator',
-          title: 'TF Generator',
-          body: 'Use this production review workspace to parse AWS prerequisite workbooks, validate resources, and review Terraform before controlled deployment.',
-          position: 'right',
-        },
       ], 'app-overview');
-    }, 900);
+    }, 300);
 
     return () => {
       cancelled = true;

@@ -18,6 +18,18 @@ const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const MOM_MODEL_ID = process.env.MOM_MODEL_ID!;
 
+function getUserFolder(item: any): string {
+  const email = String(item?.owner_email || '').trim().toLowerCase();
+  if (email) {
+    const localPart = email.split('@')[0] || email;
+    return localPart
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || item.owner_user_id || 'user';
+  }
+  return item.owner_user_id || 'user';
+}
+
 export const handler = async (event: SQSEvent) => {
   for (const record of event.Records) {
     const { mom_id } = JSON.parse(record.body || '{}');
@@ -37,7 +49,18 @@ export const handler = async (event: SQSEvent) => {
 };
 
 async function runMomPipeline(id: string) {
-  await updateMom(id, 'PROCESSING');
+  // analysis_started_at is stamped once here and never rewritten, so the UI can
+  // show a true elapsed time that survives a refresh (updated_at moves on every
+  // progress write and would keep resetting the timer).
+  const startedAt = Date.now();
+  await updateMom(id, 'PROCESSING', {
+    analysis_started_at: startedAt,
+    progress_stage: 'reading_transcript',
+    progress_message: 'Reading the meeting transcript...',
+    // Start of a run: the log begins here rather than inheriting a previous
+    // attempt's stages.
+    progress_events: [{ at: startedAt, stage: 'reading_transcript', message: 'Reading the meeting transcript...' }],
+  });
 
   const record = await ddbDocClient.send(new GetCommand({
     TableName: MOM_TABLE_NAME,
@@ -58,9 +81,13 @@ async function runMomPipeline(id: string) {
     throw new Error(err.message || 'TRANSCRIPT_EXTRACTION_FAILED');
   }
 
+  await setMomProgress(id, 'extracting', 'AI is extracting decisions, action items, and owners. This is the longest step.');
   const result = await analyzeTranscript(item.title || 'Untitled meeting', transcript);
-  const resultS3Key = `users/${item.owner_user_id}/moms/${id}/processed/result.json`;
-  const reportS3Key = `users/${item.owner_user_id}/moms/${id}/processed/report.pdf`;
+  const userFolder = getUserFolder(item);
+  const resultS3Key = `users/${userFolder}/moms/${id}/processed/result.json`;
+  const reportS3Key = `users/${userFolder}/moms/${id}/processed/report.pdf`;
+
+  await setMomProgress(id, 'generating_report', 'Generating the meeting report PDF...');
   const pdfReport = await generateMomPdfReport(result, {
     projectTitle: item.project_title || 'General',
   });
@@ -73,8 +100,38 @@ async function runMomPipeline(id: string) {
     title: result.title || item.title,
     meeting_date: result.date || 'Not specified',
     meeting_date_sort: parseMeetingDateToEpoch(result.date),
+    progress_stage: 'done',
+    progress_message: 'Meeting report ready.',
     error_message: null,
   });
+}
+
+/**
+ * Records the current phase for the UI progress banner. Best-effort: a failed
+ * progress write must never fail the pipeline.
+ */
+async function setMomProgress(id: string, stage: string, message: string): Promise<void> {
+  const now = Date.now();
+  try {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: id },
+      // progress_events is the history the UI renders as an activity log; the
+      // stage pair above only ever holds the phase in flight. runMomPipeline
+      // resets the list when it starts, so it stays bounded to one run.
+      UpdateExpression: 'SET progress_stage = :s, progress_message = :m, updated_at = :now, '
+        + 'progress_events = list_append(if_not_exists(progress_events, :empty), :event)',
+      ExpressionAttributeValues: {
+        ':s': stage,
+        ':m': message,
+        ':now': now,
+        ':empty': [],
+        ':event': [{ at: now, stage, message }],
+      },
+    }));
+  } catch (err) {
+    console.warn(`Could not record MOM progress (${stage}) for ${id}:`, err);
+  }
 }
 
 async function analyzeTranscript(title: string, transcript: string) {
@@ -191,6 +248,7 @@ Field rules:
 - Do not invent facts, deadlines, owners, attendees, costs, decisions, tools, or platforms that are not supported by the transcript.
 - Preserve important names, dates, products, cloud services, costs, environment names, and delivery commitments exactly when they are mentioned.
 - Do not narrate the conversation. Write outcomes and conclusions.
+- Keep every field concise and avoid repeating the same point across sections. Prefer a complete, valid JSON document over additional prose.
 - Put the final JSON inside <mom_json>...</mom_json>. Do not include markdown or commentary outside the tags.
 
 Meeting title provided by user: ${title}
@@ -199,23 +257,47 @@ Transcript:
 ${transcript.slice(0, 180000)}
 `;
 
+  const body: Record<string, unknown> = {
+    anthropic_version: 'bedrock-2023-05-31',
+    // Rich MOMs can contain several structured sections. Sonnet needs
+    // enough output budget to close the JSON document cleanly.
+    max_tokens: 24000,
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+  };
+  if (!MOM_MODEL_ID.includes('claude-sonnet-5')) {
+    body.temperature = 0;
+  }
+
   const response = await bedrockClient.send(new InvokeModelCommand({
     modelId: MOM_MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 8000,
-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-      temperature: 0,
-    }),
+    body: JSON.stringify(body),
   }));
 
   const payload = JSON.parse(new TextDecoder().decode(response.body));
-  const text = payload.content?.[0]?.text || '';
+  // Sonnet 4.6 may return an adaptive-thinking block before its final text.
+  // Read every text block rather than assuming the first content block is text.
+  const text = Array.isArray(payload.content)
+    ? payload.content
+      .filter((block: { type?: string; text?: unknown }) => (
+        block.type === 'text' && typeof block.text === 'string'
+      ))
+      .map((block: { text: string }) => block.text)
+      .join('\n')
+    : '';
   const tagged = text.match(/<mom_json>([\s\S]*?)<\/mom_json>/i)?.[1]?.trim();
   const jsonText = tagged || extractJson(text);
-  if (!jsonText) throw new Error('AI_EMPTY_RESPONSE');
+  if (!jsonText) {
+    const contentTypes = Array.isArray(payload.content)
+      ? payload.content.map((block: { type?: string }) => block.type || 'unknown').join(',')
+      : 'none';
+    console.error('MOM model response did not contain JSON text', {
+      stopReason: payload.stop_reason || 'unknown',
+      contentTypes,
+    });
+    throw new Error('AI_EMPTY_RESPONSE');
+  }
 
   const parsed = JSON.parse(jsonText);
   const validation = MomResultSchema.safeParse(parsed);

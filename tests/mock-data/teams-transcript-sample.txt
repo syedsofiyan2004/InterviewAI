@@ -1,0 +1,8 @@
+Priya: Can you walk us through how you design a secure multi-account AWS landing zone?
+Aarav: I start with account boundaries, SCP guardrails, IAM Identity Center, centralized logging, and network segmentation.
+Priya: How would you handle production incident response?
+Aarav: I define severity, use CloudWatch alarms, runbooks, rollback plans, and post-incident reviews.
+Nikhil: How do you structure Terraform modules for reusable VPC and IAM patterns?
+Aarav: I keep modules small, versioned, validated in CI, with clear inputs and outputs.
+Nikhil: What would you do if Terraform state is locked during a release?
+Aarav: I would identify the active operation, avoid force unlock unless confirmed safe, communicate with the team, and recover from backend logs.

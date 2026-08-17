@@ -1,26 +1,52 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ComponentType } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ArrowRight, CheckCircle2, Clock, FileText, FolderKanban, Plus, Trash2 } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowRight, CheckCircle2, Clock, FileText, FolderKanban, Plus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { api, Mom, MomProject } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
+import { Skeleton } from '@/components/ui/Skeleton';
+
+const STATUS_FILTERS = ['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'] as const;
+type StatusFilter = typeof STATUS_FILTERS[number];
+
+function isProcessingStatus(status: string) {
+  return status === 'CREATED' || status === 'PROCESSING';
+}
 
 export default function MomDashboard() {
   const [projects, setProjects] = useState<MomProject[]>([]);
   const [moms, setMoms] = useState<Mom[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('ALL');
+  const [loadError, setLoadError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; title: string } | null>(null);
   const [confirmDeleteProject, setConfirmDeleteProject] = useState<{ id: string; title: string; count: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedFilter = searchParams.get('status')?.toUpperCase();
+  const filter: StatusFilter = STATUS_FILTERS.includes(requestedFilter as StatusFilter)
+    ? requestedFilter as StatusFilter
+    : 'ALL';
+
+  const setActiveFilter = useCallback((nextFilter: StatusFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextFilter === 'ALL') params.delete('status');
+    else params.set('status', nextFilter.toLowerCase());
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const loadData = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
+      setLoadError(false);
       const [projectData, momData] = await Promise.all([
         api.getMomProjects(),
         api.getMoms(),
@@ -29,6 +55,7 @@ export default function MomDashboard() {
       setMoms([...momData.items].sort((a, b) => getMomSortDate(b) - getMomSortDate(a)));
     } catch (err) {
       console.error('Failed to load MOM workspace', err);
+      setLoadError(true);
       setToast({ message: 'Failed to load MOM projects', type: 'error' });
     } finally {
       setLoading(false);
@@ -36,7 +63,10 @@ export default function MomDashboard() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   useEffect(() => {
@@ -58,7 +88,11 @@ export default function MomDashboard() {
     return acc;
   }, { total: 0, completed: 0, processing: 0, failed: 0 }), [moms]);
 
-  const filtered = moms.filter((mom) => filter === 'ALL' || mom.status === filter);
+  const filtered = moms.filter((mom) => {
+    if (filter === 'ALL') return true;
+    if (filter === 'PROCESSING') return isProcessingStatus(mom.status);
+    return mom.status === filter;
+  });
 
   const handleDelete = async (id: string) => {
     try {
@@ -88,18 +122,15 @@ export default function MomDashboard() {
     <div className="max-w-6xl mx-auto space-y-8 pb-8">
       <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase mb-1">
-            Minfy AI / MOM Analyzer
-          </p>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Project Workspaces</h1>
+          <p className="page-kicker mb-1">Minfy AI / MOM Analyzer</p>
+          <h1 className="text-xl font-semibold text-text-primary tracking-tight">Project Workspaces</h1>
           <p className="text-sm text-text-muted mt-0.5">
             {projects.length} projects / {stats.total} meeting reports / {stats.completed} completed / {stats.processing} in progress
           </p>
         </div>
         <Link
           href="/mom/new"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90 shrink-0"
-          style={{ background: '#4F46E5' }}
+          className="btn-primary flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold shrink-0"
         >
           <Plus size={15} />
           New Project
@@ -108,12 +139,12 @@ export default function MomDashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat title="Projects" value={projects.length} icon={FolderKanban} active={false} />
-        <Stat title="Total MOMs" value={stats.total} icon={FileText} onClick={() => setFilter('ALL')} active={filter === 'ALL'} />
-        <Stat title="Processing" value={stats.processing} icon={Clock} onClick={() => setFilter('PROCESSING')} active={filter === 'PROCESSING'} />
-        <Stat title="Completed" value={stats.completed} icon={CheckCircle2} onClick={() => setFilter('COMPLETED')} active={filter === 'COMPLETED'} />
+        <Stat title="Total MOMs" value={stats.total} icon={FileText} onClick={() => setActiveFilter('ALL')} active={filter === 'ALL'} />
+        <Stat title="Processing" value={stats.processing} icon={Clock} onClick={() => setActiveFilter('PROCESSING')} active={filter === 'PROCESSING'} />
+        <Stat title="Completed" value={stats.completed} icon={CheckCircle2} onClick={() => setActiveFilter('COMPLETED')} active={filter === 'COMPLETED'} />
       </div>
 
-      <section className="space-y-4">
+      <section className="mt-8 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text-primary">Projects</h2>
@@ -158,7 +189,7 @@ export default function MomDashboard() {
                         <div className="min-w-0">
                           <h3 className="truncate text-base font-semibold text-text-primary">{project.project_title}</h3>
                           <p className="text-xs text-text-muted mt-0.5">
-                            Updated {project.updated_at ? format(new Date(project.updated_at), 'MMM d, yyyy') : 'recently'}
+                            Updated {project.updated_at ? format(new Date(project.updated_at), 'dd-MM-yyyy') : 'recently'}
                           </p>
                         </div>
                       </div>
@@ -186,12 +217,12 @@ export default function MomDashboard() {
 
                   <Link href={href} className="mt-5 grid grid-cols-2 gap-3">
                     <div className="rounded-lg p-3" style={{ background: 'var(--surface)' }}>
-                      <p className="text-[11px] font-medium text-text-muted">Reports</p>
-                      <p className="text-xl font-bold text-text-primary mt-1">{project.mom_count}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Reports</p>
+                      <p className="text-2xl font-semibold text-text-primary mt-1">{project.mom_count}</p>
                     </div>
                     <div className="rounded-lg p-3" style={{ background: 'var(--surface)' }}>
-                      <p className="text-[11px] font-medium text-text-muted">Completed</p>
-                      <p className="text-xl font-bold text-text-primary mt-1">{project.completed_count}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Completed</p>
+                      <p className="text-2xl font-semibold text-text-primary mt-1">{project.completed_count}</p>
                     </div>
                   </Link>
                 </div>
@@ -201,35 +232,37 @@ export default function MomDashboard() {
         )}
       </section>
 
-      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}>
-        <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div className="data-table mt-8">
+        <div className="px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
             <h3 className="text-sm font-semibold text-text-primary">Recent Meeting Reports</h3>
             <p className="text-xs text-text-muted mt-1">Open the project folder when you need to add more transcripts.</p>
           </div>
-          <select
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            className="text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent/30 transition-all"
-            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--color-text-secondary)' }}
-          >
-            <option value="ALL">All statuses</option>
-            <option value="PROCESSING">Processing</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="FAILED">Failed</option>
-          </select>
+          <div className="status-tabs">
+            {['ALL', 'COMPLETED', 'PROCESSING', 'FAILED'].map((status) => (
+              <button
+                key={status}
+                type="button"
+                className="status-tab"
+                data-active={filter === status}
+                onClick={() => setActiveFilter(status as StatusFilter)}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Title</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Project</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted">Source</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Meeting Date</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-center">Status</th>
-                <th className="px-6 py-3 text-xs font-medium text-text-muted text-right">Action</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Title</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Project</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Source</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-center">Meeting Date</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-center">Status</th>
+                <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -237,10 +270,18 @@ export default function MomDashboard() {
                 Array.from({ length: 3 }).map((_, index) => (
                   <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td colSpan={6} className="px-6 py-5">
-                      <div className="h-4 rounded animate-pulse" style={{ background: 'var(--surface)' }} />
+                      <Skeleton className="h-4 w-full" />
                     </td>
                   </tr>
                 ))
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-16 text-center">
+                    <p className="text-sm font-semibold text-text-primary">Meeting reports could not be loaded</p>
+                    <p className="mt-1 text-xs text-text-muted">Your projects and reports are unchanged. Try loading the workspace again.</p>
+                    <button type="button" onClick={() => loadData()} className="btn-secondary mt-5 px-3 py-2 text-xs font-semibold">Try again</button>
+                  </td>
+                </tr>
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-20 text-center">
@@ -249,42 +290,55 @@ export default function MomDashboard() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((mom) => (
-                  <tr key={mom.mom_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td className="px-6 py-4">
-                      <Link href={`/mom/view?id=${mom.mom_id}`} className="text-sm font-semibold text-text-primary hover:text-accent">
-                        {mom.title || 'Untitled meeting'}
-                      </Link>
+                Array.from(
+                  filtered.reduce((map, mom) => {
+                    const key = mom.project_title?.trim() || 'General Workspace';
+                    if (!map.has(key)) map.set(key, []);
+                    map.get(key)!.push(mom);
+                    return map;
+                  }, new Map<string, typeof filtered>()).entries()
+                ).flatMap(([projectGroup, groupMoms]) => [
+                  <tr key={`group-${projectGroup}`} className="bg-surface-elevated/80 border-b border-border">
+                    <td colSpan={6} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-accent">
+                      📁 {projectGroup} ({groupMoms.length} report{groupMoms.length === 1 ? '' : 's'})
                     </td>
-                    <td className="px-6 py-4 text-sm text-text-secondary">{mom.project_title || 'General'}</td>
-                    <td className="px-6 py-4 text-sm text-text-secondary capitalize">{mom.source_type || 'file'}</td>
-                    <td className="px-6 py-4 text-sm text-text-secondary text-center">
-                      {formatMomMeetingDate(mom)}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex justify-center">
-                        <StatusBadge status={mom.status || 'CREATED'} />
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex justify-end">
-                        <button
-                          onClick={() => setConfirmDelete({ id: mom.mom_id, title: mom.title || 'Untitled meeting' })}
-                          className="p-1.5 rounded-md text-text-muted hover:text-red-500 transition-colors"
-                          title="Delete MOM"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                  </tr>,
+                  ...groupMoms.map((mom) => (
+                    <tr key={mom.mom_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td className="px-6 py-4 pl-9">
+                        <Link href={`/mom/view?id=${mom.mom_id}&from=/mom`} className="text-sm font-semibold text-text-primary hover:text-accent">
+                          {mom.title || 'Untitled meeting'}
+                        </Link>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-text-secondary">{mom.project_title || 'General Workspace'}</td>
+                      <td className="px-6 py-4 text-sm text-text-secondary capitalize">{mom.source_type || 'file'}</td>
+                      <td className="px-6 py-4 text-sm text-text-secondary text-center">
+                        {formatMomMeetingDate(mom)}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex justify-center">
+                          <StatusBadge status={mom.status || 'CREATED'} />
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => setConfirmDelete({ id: mom.mom_id, title: mom.title || 'Untitled meeting' })}
+                            className="p-1.5 rounded-md text-text-muted hover:text-red-500 transition-colors"
+                            title="Delete MOM"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )),
+                ])
               )}
             </tbody>
           </table>
         </div>
       </div>
-
       {confirmDelete && (
         <ConfirmDialog
           isOpen={!!confirmDelete}
@@ -319,17 +373,17 @@ function Stat({
 }: {
   title: string;
   value: number;
-  icon: any;
+  icon: ComponentType<{ size?: number; className?: string }>;
   active: boolean;
   onClick?: () => void;
 }) {
   const content = (
     <>
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-text-muted">{title}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</p>
         <Icon size={18} className="text-accent" />
       </div>
-      <p className="text-2xl font-bold text-text-primary mt-4">{value}</p>
+      <p className="text-2xl font-semibold text-text-primary mt-4">{value}</p>
     </>
   );
 
@@ -337,10 +391,10 @@ function Stat({
     return (
       <button
       onClick={onClick}
-      className="text-left p-5 rounded-xl transition-all"
+      className="metric-card text-left p-5 transition-all hover:-translate-y-0.5"
       style={{
-        border: active ? '1px solid #4F46E5' : '1px solid var(--border)',
-        background: active ? '#4F46E512' : 'var(--surface-elevated)',
+        border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+        background: active ? 'color-mix(in srgb, var(--accent) 10%, var(--surface-elevated))' : undefined,
       }}
       >
         {content}
@@ -350,8 +404,7 @@ function Stat({
 
   return (
     <div
-      className="text-left p-5 rounded-xl transition-all"
-      style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}
+      className="metric-card text-left p-5 transition-all"
     >
       {content}
     </div>
@@ -363,7 +416,11 @@ function getMomSortDate(mom: Mom): number {
 }
 
 function formatMomMeetingDate(mom: Mom): string {
-  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'MMM d, yyyy');
-  if (mom.meeting_date && mom.meeting_date !== 'Not specified') return mom.meeting_date;
+  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'dd-MM-yyyy');
+  if (mom.meeting_date && mom.meeting_date !== 'Not specified') {
+    const parsed = new Date(mom.meeting_date);
+    if (!isNaN(parsed.getTime())) return format(parsed, 'dd-MM-yyyy');
+    return mom.meeting_date;
+  }
   return mom.status === 'COMPLETED' ? 'Not specified' : 'Pending analysis';
 }

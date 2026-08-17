@@ -9,6 +9,7 @@ import { api, Mom } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
 type InputMode = 'file' | 'text';
+type ProjectView = 'reports' | 'add' | 'bulk';
 
 function MomProjectContent() {
   const router = useRouter();
@@ -28,6 +29,7 @@ function MomProjectContent() {
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ total: number; completed: number; failed: number } | null>(null);
+  const [activeView, setActiveView] = useState<ProjectView>('reports');
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
   const bulkFolderInputRef = useRef<HTMLInputElement>(null);
 
@@ -208,13 +210,32 @@ function MomProjectContent() {
 
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase">Project MOMs</p>
-          <h1 className="text-3xl font-bold text-text-primary tracking-tight">{projectTitle}</h1>
-          <p className="text-sm text-text-muted mt-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-accent">Meeting project</p>
+          <h1 className="mt-1 text-2xl font-semibold text-text-primary">{projectTitle}</h1>
+          <p className="mt-1 text-sm text-text-secondary">
             {stats.total} meetings / {stats.completed} completed / {stats.processing} in progress
           </p>
         </div>
       </div>
+
+      <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="Project sections" role="tablist">
+        {([
+          ['reports', 'Project reports'],
+          ['add', 'Add a meeting'],
+          ['bulk', 'Bulk upload'],
+        ] as const).map(([view, label]) => (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={activeView === view}
+            onClick={() => setActiveView(view)}
+            className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeView === view ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
       {error && (
         <div className="card p-4 border-danger/30 bg-danger/5 text-danger font-bold text-sm flex items-center gap-2">
@@ -223,7 +244,8 @@ function MomProjectContent() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="card p-6 space-y-5">
+      {activeView === 'add' && (
+      <form onSubmit={handleSubmit} className="card p-6 space-y-5" role="tabpanel">
         <div className="flex items-center gap-2">
           <Plus size={18} className="text-accent" />
           <h2 className="text-lg font-semibold text-text-primary">Add Meeting Transcript</h2>
@@ -233,7 +255,7 @@ function MomProjectContent() {
           <label className="block text-xs font-semibold text-text-muted mb-2">Meeting Title</label>
           <input
             required
-            className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+            className="premium-input w-full px-4 text-sm"
             value={meetingTitle}
             onChange={(event) => setMeetingTitle(event.target.value)}
             placeholder="e.g. Weekly Migration Review"
@@ -246,7 +268,7 @@ function MomProjectContent() {
             <button
               type="button"
               onClick={() => setMode('file')}
-              className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${mode === 'file' ? 'border-accent bg-accent/5' : 'border-border bg-surface hover:border-accent/40'}`}
+              className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${mode === 'file' ? 'border-accent bg-accent/10 ring-2 ring-accent/10' : 'border-border bg-surface/80 hover:border-accent/40'}`}
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
                 <Upload size={17} />
@@ -259,7 +281,7 @@ function MomProjectContent() {
             <button
               type="button"
               onClick={() => setMode('text')}
-              className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${mode === 'text' ? 'border-accent bg-accent/5' : 'border-border bg-surface hover:border-accent/40'}`}
+              className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${mode === 'text' ? 'border-accent bg-accent/10 ring-2 ring-accent/10' : 'border-border bg-surface/80 hover:border-accent/40'}`}
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
                 <FileText size={17} />
@@ -277,7 +299,7 @@ function MomProjectContent() {
             <label className="block text-xs font-semibold text-text-muted mb-2">Transcript File</label>
             <label
               htmlFor="single-mom-file"
-              className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/50"
+              className="upload-zone flex min-h-12 cursor-pointer items-center justify-between gap-3 px-4 py-3"
             >
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-text-primary">
@@ -306,7 +328,7 @@ function MomProjectContent() {
               value={transcriptText}
               onChange={(event) => setTranscriptText(event.target.value)}
               rows={8}
-              className="w-full bg-surface border border-border rounded-md px-4 py-3 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+              className="premium-input w-full px-4 py-3 text-sm"
               placeholder="Paste meeting transcript here..."
             />
           </div>
@@ -315,14 +337,16 @@ function MomProjectContent() {
         <button
           type="submit"
           disabled={creating}
-          className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50"
+          className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {creating ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
           {creating ? 'Preparing MOM...' : 'Generate MOM In This Project'}
         </button>
       </form>
+      )}
 
-      <section className="card p-6 space-y-5">
+      {activeView === 'bulk' && (
+      <section className="card p-6 space-y-5" role="tabpanel">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <FolderUp size={18} className="text-accent" />
@@ -339,7 +363,7 @@ function MomProjectContent() {
             <button
               type="button"
               onClick={() => bulkFileInputRef.current?.click()}
-              className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-elevated px-4 py-3 text-sm font-semibold text-text-primary transition-colors hover:border-accent/50 hover:text-accent"
+              className="btn-secondary flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold"
               disabled={bulkUploading}
             >
               <FileText size={16} />
@@ -348,7 +372,7 @@ function MomProjectContent() {
             <button
               type="button"
               onClick={() => bulkFolderInputRef.current?.click()}
-              className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-elevated px-4 py-3 text-sm font-semibold text-text-primary transition-colors hover:border-accent/50 hover:text-accent"
+              className="btn-secondary flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold"
               disabled={bulkUploading}
             >
               <FolderUp size={16} />
@@ -397,7 +421,7 @@ function MomProjectContent() {
               {bulkFiles.map((selectedFile) => (
                 <div key={`${selectedFile.name}-${selectedFile.lastModified}`} className="flex items-center justify-between gap-3 text-xs">
                   <span className="truncate text-text-secondary">{inferMeetingTitle(selectedFile.name)}</span>
-                <span className="shrink-0 text-text-muted">{format(new Date(selectedFile.lastModified || Date.now()), 'MMM d, yyyy')}</span>
+                <span className="shrink-0 text-text-muted">{format(new Date(selectedFile.lastModified || 0), 'dd-MM-yyyy')}</span>
                 </div>
               ))}
             </div>
@@ -416,14 +440,16 @@ function MomProjectContent() {
           type="button"
           onClick={handleBulkSubmit}
           disabled={bulkUploading || bulkFiles.length === 0}
-          className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-45"
+          className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-45"
         >
           {bulkUploading ? <Loader2 size={18} className="animate-spin" /> : <FolderUp size={18} />}
           {bulkUploading ? 'Queueing files...' : 'Upload Files To This Project'}
         </button>
       </section>
+      )}
 
-      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface-elevated)' }}>
+      {activeView === 'reports' && (
+      <div className="data-table" role="tabpanel">
         <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
           <h3 className="text-sm font-semibold text-text-primary">Project Reports</h3>
           <p className="text-xs text-text-muted mt-1">All MOM reports created under {projectTitle}.</p>
@@ -469,6 +495,7 @@ function MomProjectContent() {
           </table>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -498,8 +525,12 @@ function getMomSortDate(mom: Mom): number {
 }
 
 function formatMomMeetingDate(mom: Mom): string {
-  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'MMM d, yyyy');
-  if (mom.meeting_date && mom.meeting_date !== 'Not specified') return mom.meeting_date;
+  if (mom.meeting_date_sort) return format(new Date(mom.meeting_date_sort), 'dd-MM-yyyy');
+  if (mom.meeting_date && mom.meeting_date !== 'Not specified') {
+    const parsed = new Date(mom.meeting_date);
+    if (!isNaN(parsed.getTime())) return format(parsed, 'dd-MM-yyyy');
+    return mom.meeting_date;
+  }
   return mom.status === 'COMPLETED' ? 'Not specified' : 'Pending analysis';
 }
 

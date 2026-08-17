@@ -2,33 +2,37 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, ClipboardList, CloudCog, FileText, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Calculator, Loader2, Sparkles } from 'lucide-react';
 import { api } from '@/lib/api';
+import { calculatorApi } from '@/lib/calculatorApi';
 
 type HubStats = {
   interviews: number;
   moms: number;
+  calculations: number;
   loading: boolean;
 };
 
 export default function HubPage() {
-  const [stats, setStats] = useState<HubStats>({ interviews: 0, moms: 0, loading: true });
-  const [pointer, setPointer] = useState({ x: 50, y: 45 });
+  const [stats, setStats] = useState<HubStats>({ interviews: 0, moms: 0, calculations: 0, loading: true });
 
   useEffect(() => {
     let mounted = true;
 
     async function loadStats() {
       try {
-        const [interviewsResult, momsResult] = await Promise.allSettled([
+        // allSettled so one app's endpoint failing never blanks the other cards.
+        const [interviewsResult, momsResult, calculationsResult] = await Promise.allSettled([
           api.getInterviews(),
           api.getMoms(),
+          calculatorApi.getCalculations(),
         ]);
 
         if (!mounted) return;
         setStats({
           interviews: interviewsResult.status === 'fulfilled' ? interviewsResult.value.count : 0,
           moms: momsResult.status === 'fulfilled' ? momsResult.value.count : 0,
+          calculations: calculationsResult.status === 'fulfilled' ? calculationsResult.value.count : 0,
           loading: false,
         });
       } catch {
@@ -45,106 +49,123 @@ export default function HubPage() {
   const apps = useMemo(() => [
     {
       title: 'Interview Evaluator',
-      description: 'Assess interview transcripts against job descriptions with AI scoring, evidence, and PDF reports.',
+      description: 'Paste an interview transcript and a job description. Get a scored report with evidence for each competency.',
+      proof: 'Output: Score / Strengths / Red flags / PDF',
       href: '/interviews',
-      icon: ClipboardList,
+      logoSrc: '/interview-evaluator-logo.png',
+      logoAlt: 'Interview Evaluator',
+      icon: undefined as typeof Calculator | undefined,
       statLabel: 'Evaluations',
       stat: stats.interviews,
     },
     {
       title: 'MOM Analyzer',
-      description: 'Convert meeting transcripts into summaries, decisions, risks, next steps, and owner-based action items.',
+      description: 'Upload your meeting recording transcript. Get decisions, risks, and action items with owners - ready to share.',
+      proof: 'Output: Decisions / Actions / Risks / PDF',
       href: '/mom',
-      icon: FileText,
+      logoSrc: '/mom-analyzer-logo.png',
+      logoAlt: 'MOM Analyzer',
+      icon: undefined as typeof Calculator | undefined,
       statLabel: 'MOMs',
       stat: stats.moms,
     },
     {
-      title: 'TF Generator',
-      description: 'Parse AWS prerequisite workbooks, validate manifests, and generate reviewable Terraform before deployment.',
-      href: '/tf-generator',
-      icon: CloudCog,
-      statLabel: 'Review',
-      stat: 'Ready',
+      title: 'AWS Cost Calculator',
+      description: 'Describe a workload in plain English. Get a real AWS Pricing Calculator estimate with a cost breakdown you can share.',
+      proof: 'Output: Estimate / Breakdown / calculator.aws link',
+      href: '/calculator',
+      logoSrc: '/aws-cost-estimator-logo.png',
+      logoAlt: 'AWS Cost Estimator',
+      icon: Calculator as typeof Calculator | undefined,
+      statLabel: 'Estimates',
+      stat: stats.calculations,
     },
-  ], [stats.interviews, stats.moms]);
+  ], [stats.interviews, stats.moms, stats.calculations]);
 
   return (
-    <div
-      className="hub-stage min-h-[calc(100vh-7rem)] rounded-2xl p-[clamp(22px,3.2vw,42px)]"
-      onMouseMove={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        setPointer({
-          x: ((event.clientX - rect.left) / rect.width) * 100,
-          y: ((event.clientY - rect.top) / rect.height) * 100,
-        });
-      }}
-      style={{ '--mx': `${pointer.x}%`, '--my': `${pointer.y}%` } as React.CSSProperties}
-    >
-      <div className="hub-grid" />
-      <div className="hub-pointer-field" />
-
-      <div className="relative z-10 flex w-full max-w-7xl flex-col gap-8">
-        <header className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+    <div className="hub-stage min-h-[calc(100vh-7rem)] rounded-[1.5rem] p-[clamp(22px,3.2vw,42px)]">
+      <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-10">
+        <header className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-end">
           <div className="max-w-3xl">
-            <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-accent-foreground shadow-lg shadow-accent/20">
-                <ShieldCheck size={22} />
-              </div>
+            <div className="mb-7 flex items-center gap-4">
+              <span className="brand-logo-tile h-24 w-24 sm:h-28 sm:w-28">
+                <img src="/minfy-mimo-hub-logo.png" alt="" className="h-full w-full object-contain" />
+              </span>
               <div>
-                <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy AI</p>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Work clarity suite</p>
+                <p className="text-lg font-semibold tracking-tight text-text-primary">Minfy MiMo AI Hub</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent">Internal tools</p>
               </div>
             </div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-accent">
-              Interview intelligence / Meeting clarity
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
+              AI workspaces
             </p>
-            <h1 className="mt-4 max-w-2xl text-[clamp(38px,6vw,76px)] font-semibold leading-[0.96] tracking-tight text-text-primary">
-              Conversations,
-              <span className="block text-accent">understood.</span>
+            <h1 className="mt-3 max-w-3xl text-[clamp(38px,6vw,76px)] font-semibold leading-[0.96] tracking-tight text-text-primary">
+              Your meetings and interviews,
+              <span className="block text-accent">actually documented.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-text-secondary">
-              Choose a workspace to evaluate interviews, summarize meetings, and turn long discussions into useful reports.
+            <p className="mt-4 max-w-2xl text-base leading-7 text-text-secondary">
+              Upload a transcript. Get a proper report. Keep every source, score, and next action in one place.
             </p>
           </div>
-          {stats.loading && (
-            <div className="hub-status-pill flex items-center gap-2 text-xs text-text-secondary">
-              <Loader2 size={14} className="animate-spin" />
-              Loading workspace stats
+          <div className="hub-overview-card">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Your workspace</p>
+              {stats.loading ? <Loader2 size={15} className="animate-spin text-accent" /> : <Sparkles size={15} className="text-accent" />}
             </div>
-          )}
+            <div className="mt-6 grid grid-cols-2 divide-x divide-border">
+              <div className="pr-4">
+                <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.interviews}</p>
+                <p className="mt-1 text-xs text-text-muted">Evaluations</p>
+              </div>
+              <div className="pl-4">
+                <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.moms}</p>
+                <p className="mt-1 text-xs text-text-muted">Meeting reports</p>
+              </div>
+            </div>
+            <p className="mt-5 border-t border-border pt-4 text-xs leading-5 text-text-secondary">Choose a workspace to continue from where the last review stopped.</p>
+          </div>
         </header>
 
-        <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <section className="space-y-4" aria-label="Applications">
           {apps.map((app, index) => {
-            const Icon = app.icon;
             return (
               <Link
                 key={app.title}
                 href={app.href}
                 className="hub-workspace-card group"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-4">
+                <div className="grid h-full gap-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                  <div className="flex min-w-0 items-start gap-4">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
                       0{index + 1}
                     </span>
-                    <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                      <Icon size={22} />
+                    <span className="app-wordmark-tile">
+                      {app.logoSrc ? (
+                        <img src={app.logoSrc} alt={app.logoAlt} className="h-full w-full object-contain" />
+                      ) : app.icon ? (
+                        // No wordmark asset for this app yet. An icon reads as
+                        // deliberate; a missing <img> renders as a broken tile.
+                        <app.icon size={26} className="text-accent" aria-hidden />
+                      ) : null}
+                    </span>
+                    <div className="min-w-0 space-y-3">
+                      <h2 className="text-xl font-semibold text-text-primary">{app.title}</h2>
+                      <p className="max-w-xl text-sm leading-6 text-text-secondary">{app.description}</p>
+                      <code className="inline-flex max-w-full rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-semibold leading-5 text-text-secondary max-sm:whitespace-normal">
+                        {app.proof}
+                      </code>
                     </div>
                   </div>
-                  <ArrowRight size={18} className="text-text-muted transition-transform group-hover:translate-x-1 group-hover:text-accent" />
-                </div>
 
-                <div className="mt-8 space-y-3">
-                  <div className="flex items-end justify-between gap-4">
-                    <h2 className="text-xl font-semibold text-text-primary">{app.title}</h2>
-                    <div className="text-right">
-                      <p className="text-3xl font-bold leading-none text-text-primary">{app.stat}</p>
-                      <p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-text-muted">{app.statLabel}</p>
+                  <div className="flex items-center justify-between gap-4 border-t border-border pt-5 md:min-w-[11rem] md:border-l md:border-t-0 md:pl-6 md:pt-0">
+                    <div>
+                      <p className="text-2xl font-semibold leading-none text-text-primary">{app.stat}</p>
+                      <p className="mt-1 text-xs uppercase tracking-wide text-text-muted">{app.statLabel}</p>
                     </div>
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition-colors group-hover:border-accent/40 group-hover:text-accent">
+                      <ArrowRight size={17} className="transition-transform group-hover:translate-x-0.5" />
+                    </span>
                   </div>
-                  <p className="max-w-xl text-sm leading-6 text-text-secondary">{app.description}</p>
                 </div>
               </Link>
             );

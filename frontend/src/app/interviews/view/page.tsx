@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { api, DetailedInterview, EvaluationResult } from '@/lib/api';
+import { api, DetailedInterview, EvaluationResult, InterviewQuestionGuide } from '@/lib/api';
 import { 
   ArrowLeft, 
   Loader2, 
@@ -14,19 +14,31 @@ import {
   FileText,
   Trash2,
   Download,
-  ArrowRight
+  ArrowRight,
+  BookOpenCheck,
+  ChevronDown,
+  RefreshCw,
+  ClipboardList,
+  MessageSquareText,
+  Sparkles
 } from 'lucide-react';
 import Link from 'next/link';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { BackButton } from '@/components/ui/BackButton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast, type ToastType } from '@/components/ui/Toast';
+import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EvidenceCard } from '@/components/ui/EvidenceCard';
+import { HeroNumber } from '@/components/ui/HeroNumber';
 import { useTour, checkTourStatus } from '@/contexts/TourContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+type EvaluationView = 'overview' | 'guide' | 'analysis' | 'report';
 
 function InterviewDetailsContent() {
   const searchParams = useSearchParams();
@@ -35,10 +47,13 @@ function InterviewDetailsContent() {
   const [interview, setInterview] = useState<DetailedInterview | null>(null);
   const [result, setResult] = useState<EvaluationResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [guideLoading, setGuideLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const [selectedView, setSelectedView] = useState<EvaluationView | null>(null);
   const { startTour } = useTour();
   const startedToursRef = useRef<Set<string>>(new Set());
 
@@ -63,8 +78,13 @@ function InterviewDetailsContent() {
       setInterview(data);
       
       if (data.status === 'COMPLETED') {
-        const fullResult = await api.getEvaluationResult(id);
-        setResult(fullResult);
+        setReportLoading(true);
+        try {
+          const fullResult = await api.getEvaluationResult(id);
+          setResult(fullResult);
+        } finally {
+          setReportLoading(false);
+        }
         return true; 
       }
       
@@ -128,6 +148,38 @@ function InterviewDetailsContent() {
     } catch (err) {
       setToast({ message: 'Failed to restart analysis', type: 'error' });
       setLoading(false);
+    }
+  };
+
+  const handlePrepareQuestionGuide = async () => {
+    if (!interview?.jd_s3_key) return;
+    try {
+      setGuideLoading(true);
+      const guide = await api.generateInterviewQuestionGuide(id);
+      setInterview((current) => current ? { ...current, question_guide: guide } : current);
+      setToast({
+        message: guide.optimization_status === 'optimized'
+          ? 'Interview guide prepared from the approved question bank and calibrated to the JD.'
+          : 'Interview guide prepared from the approved question bank.',
+        type: 'success',
+      });
+    } catch (err) {
+      // The guide endpoint writes to DynamoDB before returning. If a browser or
+      // gateway response is interrupted after that write, verify the record so
+      // users never see a false failure beside a successfully prepared guide.
+      try {
+        const latest = await api.getInterview(id);
+        if (latest.question_guide) {
+          setInterview(latest);
+          setToast({ message: 'Interview guide prepared successfully.', type: 'success' });
+          return;
+        }
+      } catch {
+        // Preserve the original request error when the verification request also fails.
+      }
+      setToast({ message: err instanceof Error ? err.message : 'Failed to prepare the interview guide', type: 'error' });
+    } finally {
+      setGuideLoading(false);
     }
   };
 
@@ -210,7 +262,7 @@ function InterviewDetailsContent() {
         {
           targetId: 'tour-document-enrollment',
           title: 'Upload required documents',
-          body: 'Upload the job description and interview transcript. Both are required before analysis can start.',
+          body: 'Start with the job description. Add the resume if available, prepare the guide, then upload the transcript after the interview.',
           position: 'bottom',
         },
         {
@@ -220,15 +272,21 @@ function InterviewDetailsContent() {
           position: 'bottom',
         },
         {
+          targetId: 'tour-question-guide',
+          title: 'Recommended interview guide',
+          body: 'Prepare approved questions transformed into fair, scenario-based prompts for this role.',
+          position: 'top',
+        },
+        {
           targetId: 'tour-transcript-upload-view',
           title: 'Interview transcript',
-          body: 'Upload the full interview conversation so the evaluation can cite direct evidence.',
+          body: 'Once the guide is ready, upload the full interview conversation so the evaluation can cite direct evidence.',
           position: 'bottom',
         },
         {
           targetId: 'tour-readiness-gate',
           title: 'Readiness gate',
-          body: 'This checklist confirms whether the required documents are present and aligned.',
+          body: 'This checklist confirms that the guide, transcript, and role alignment are ready for evaluation.',
           position: 'left',
         },
         {
@@ -238,16 +296,32 @@ function InterviewDetailsContent() {
           position: 'top',
         },
       ], tourKey);
-    }, 900);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [interview, loading, result, startTour]);
 
   if (loading && !interview) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
-        <Loader2 className="animate-spin text-accent" size={40} />
-        <p className="text-text-secondary font-normal tracking-tight">Loading evaluation details...</p>
+      <InterviewDetailsSkeleton label="Loading evaluation details..." />
+    );
+  }
+
+  if (reportLoading && interview?.status === 'COMPLETED') {
+    return <InterviewDetailsSkeleton label="Loading the completed report..." />;
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-xl mx-auto mt-20 card p-8 text-center space-y-6">
+        <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center mx-auto">
+          <AlertCircle size={32} />
+        </div>
+        <h3 className="text-xl font-semibold text-text-primary">Failed to load</h3>
+        <p className="text-text-secondary">{error}</p>
+        <Link href="/interviews" className="inline-block px-6 py-2 bg-accent text-accent-foreground font-semibold rounded-md">
+          Back to Dashboard
+        </Link>
       </div>
     );
   }
@@ -268,14 +342,15 @@ function InterviewDetailsContent() {
   }
 
   const isInFlight = interview?.status === 'QUEUED' || interview?.status === 'PROCESSING';
-
+  const activeView: EvaluationView = selectedView ?? (
+    result || isInFlight || interview?.status === 'FAILED' ? 'analysis' : 'overview'
+  );
+  const hasReport = !!result && !!interview?.report_s3_key;
+  
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
-        <Link href="/interviews" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-xs font-normal">
-          <ArrowLeft size={16} />
-          Back to Dashboard
-        </Link>
+        <BackButton defaultHref="/interviews" defaultLabel="Evaluations" />
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-text-muted">Status</span>
@@ -291,38 +366,64 @@ function InterviewDetailsContent() {
         </div>
       </div>
 
-      <header id="tour-result-header" className="space-y-4">
-        <div className="flex items-end justify-between">
+      <header id="tour-result-header" className="card overflow-hidden">
+        <div className="flex flex-col gap-5 p-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Interview evaluation</p>
             <h1 className="text-2xl font-semibold text-text-primary">{interview?.metadata.candidate_name}</h1>
-            <p className="text-base text-text-secondary">{interview?.metadata.position}</p>
+            <p className="text-sm text-text-secondary">{interview?.metadata.position}</p>
           </div>
           
           {result && interview?.report_s3_key && (
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
                 id="tour-download-report"
                 onClick={handleDownloadReport}
-                className="flex items-center gap-2 bg-accent text-accent-foreground px-4 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition-all shadow-lg shadow-accent/20"
+                className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
               >
                 <Download size={18} />
                 Download PDF Report
               </button>
-              <div className="h-8 w-px bg-border mx-2" />
-              <div className="text-right">
-                <p className="text-xs font-semibold text-text-muted mb-1">Overall Rating</p>
-                <div className="text-4xl font-semibold text-accent leading-none">
-                  {formatScore(result.overall_score)}
-                  <span className="text-xl text-text-muted ml-1">/10</span>
-                </div>
-              </div>
+              <HeroNumber value={formatScore(result.overall_score)} suffix="/10" label="Overall rating" />
             </div>
           )}
         </div>
       </header>
 
-      {!result && !isInFlight && interview?.status !== 'FAILED' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <EvaluationViewTabs activeView={activeView} onChange={setSelectedView} />
+
+      {activeView === 'overview' && (
+        <div className="space-y-8" role="tabpanel" id="evaluation-overview-panel" aria-labelledby="evaluation-overview-tab">
+          <InterviewWorkflowRail interview={interview} result={result} isInFlight={isInFlight} />
+
+          {!isInFlight && interview && (
+            <section id="tour-question-guide" className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <BookOpenCheck size={20} />
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Interview guide</h2>
+                  <p className="mt-1 text-sm leading-6 text-text-secondary">
+                    {interview.question_guide
+                      ? 'The approved question guide is ready for review before the interview.'
+                      : 'Prepare the guide after adding the job description. It is not needed to upload a resume.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedView('guide')}
+                className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
+              >
+                {interview.question_guide ? 'View guide' : 'Prepare guide'}
+                <ArrowRight size={16} />
+              </button>
+            </section>
+          )}
+
+          {!result && !isInFlight && interview?.status !== 'FAILED' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div id="tour-document-enrollment" className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
@@ -342,11 +443,20 @@ function InterviewDetailsContent() {
                    onSuccess={fetchInterview} 
                    setToast={setToast}
                 />
+                <FileUploadSection
+                   id="tour-resume-upload-view"
+                   type="resume"
+                   interviewId={id}
+                   isUploaded={!!interview?.resume_s3_key}
+                   onSuccess={fetchInterview}
+                   setToast={setToast}
+                />
                 <FileUploadSection 
                    id="tour-transcript-upload-view"
                    type="transcript" 
                    interviewId={id} 
                    isUploaded={!!interview?.transcript_s3_key} 
+                   disabled={!interview?.question_guide}
                    onSuccess={fetchInterview} 
                    setToast={setToast}
                 />
@@ -365,7 +475,8 @@ function InterviewDetailsContent() {
                <div className="space-y-3">
                   <p className="text-xs font-semibold text-text-muted mb-2">Checklist</p>
                   <CheckItem label="JD Uploaded" done={!!interview?.jd_s3_key} />
-                  <CheckItem label="Transcript Uploaded" done={!!interview?.transcript_s3_key} />
+                  <CheckItem label="Question Guide Prepared" done={!!interview?.question_guide} />
+                  <CheckItem label="Transcript Uploaded" done={!!interview?.transcript_s3_key} warn={!interview?.question_guide && !!interview?.transcript_s3_key} />
                   <CheckItem 
                     label="Role Match Verified" 
                     done={!!interview?.jd_s3_key && interview?.is_mismatched === false && !!interview?.inferred_role} 
@@ -400,8 +511,9 @@ function InterviewDetailsContent() {
                      AI Assistant Guidance
                   </p>
                    <p className="text-xs text-text-secondary leading-relaxed font-normal">
-                      {!interview?.jd_s3_key ? "First, upload the Job Description to baseline the evaluation rubric." : 
-                       !interview?.transcript_s3_key ? "Great, now upload the Interview Transcript to begin the technical deep-dive." :
+                      {!interview?.jd_s3_key ? "First, upload the Job Description to prepare the interview guide." :
+                       !interview?.question_guide ? "The JD is ready. Prepare the approved question guide before adding the transcript." :
+                       !interview?.transcript_s3_key ? "The guide is ready. Upload the interview transcript to begin the evaluation." :
                        !interview?.inferred_role ? "AI is currently verifying the document alignment. Please wait a moment..." :
                        interview?.is_mismatched ? `Alignment Blocked: ${(interview as any).alignment_reason || 'JD/Role mismatch detected.'}` :
                        "Everything looks aligned. You can now start the AI evaluation to generate the Bar-Raiser report."}
@@ -411,7 +523,7 @@ function InterviewDetailsContent() {
                <button
                   id="tour-start-assessment"
                   onClick={handleManualAnalyze}
-                  disabled={!interview?.jd_s3_key || !interview?.transcript_s3_key || loading || (interview as any).is_mismatched}
+                  disabled={!interview?.jd_s3_key || !interview?.question_guide || !interview?.transcript_s3_key || loading || (interview as any).is_mismatched}
                   className="w-full py-4 bg-accent text-accent-foreground font-semibold uppercase tracking-widest text-xs rounded-lg hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2 shadow-xl shadow-accent/20"
                >
                   {loading ? <Loader2 className="animate-spin" size={18} /> : (
@@ -423,23 +535,56 @@ function InterviewDetailsContent() {
                </button>
             </div>
           </div>
+            </div>
+          )}
+
+          {(result || isInFlight || interview?.status === 'FAILED') && (
+            <EvaluationEmptyState
+              icon={<ClipboardList size={20} />}
+              title="Evaluation workspace"
+              detail="Use the analysis view to follow the evaluation and open the report view when the PDF is available."
+              actionLabel="Open analysis"
+              onAction={() => setSelectedView('analysis')}
+            />
+          )}
         </div>
       )}
 
+      {activeView === 'guide' && (
+        <div className="space-y-6" role="tabpanel" id="evaluation-guide-panel" aria-labelledby="evaluation-guide-tab">
+          {!isInFlight && interview ? (
+            <QuestionGuideSection
+              guide={interview.question_guide || null}
+              canGenerate={!!interview.jd_s3_key}
+              canRefresh={!interview.transcript_s3_key && !result}
+              loading={guideLoading}
+              onGenerate={handlePrepareQuestionGuide}
+            />
+          ) : (
+            <EvaluationEmptyState
+              icon={<BookOpenCheck size={20} />}
+              title="Interview guide is locked"
+              detail="The guide remains available once the current analysis finishes."
+              actionLabel="View analysis"
+              onAction={() => setSelectedView('analysis')}
+            />
+          )}
+        </div>
+      )}
+
+      {activeView === 'analysis' && (
+        <div className="space-y-8" role="tabpanel" id="evaluation-analysis-panel" aria-labelledby="evaluation-analysis-tab">
       {isInFlight && (
-        <div id="tour-processing" className="card p-12 text-center space-y-6">
-          <div className="relative w-20 h-20 mx-auto">
-             <div className="absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent animate-spin" />
-             <div className="absolute inset-0 flex items-center justify-center text-accent">
-                <Target size={32} />
-             </div>
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-2xl font-semibold text-text-primary tracking-tight">AI Analysis in Progress</h3>
-            <p className="text-text-secondary max-w-sm mx-auto">
-              Amazon Bedrock is currently evaluating the transcript against the JD rubric. This usually takes 30-45 seconds.
-            </p>
-          </div>
+        <div id="tour-processing">
+          <LiveProgressBanner
+            taskType="analysis"
+            title="AI Interview Analysis in Progress"
+            subtitle="Amazon Bedrock is evaluating the candidate transcript against the job description and scoring rubric..."
+            startTime={interview?.analysis_started_at}
+            progressMessage={interview?.progress_message}
+            progressStage={interview?.progress_stage}
+            progressEvents={interview?.progress_events}
+          />
         </div>
       )}
 
@@ -464,6 +609,7 @@ function InterviewDetailsContent() {
       {result && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-8">
+            <InterviewExecutionSection execution={result.interview_execution} />
             {/* Dimension Breakdown */}
             <section id="tour-dimensions" className="space-y-4">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
@@ -472,7 +618,7 @@ function InterviewDetailsContent() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {result.dimension_breakdown.map((dim, i) => (
-                  <div key={i} className="card p-5 space-y-3 hover:border-accent/20 transition-colors">
+                  <div key={i} className="metric-card p-5 space-y-3 hover:border-accent/40 transition-colors">
                     <div className="flex justify-between items-start">
                       <h4 className="font-semibold text-text-primary text-sm tracking-tight">{dim.dimension}</h4>
                       <span className={cn(
@@ -481,7 +627,7 @@ function InterviewDetailsContent() {
                       )}>{formatScore(dim.score)}/10</span>
                     </div>
                     <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{dim.reason}</p>
-                    <div className="h-1 w-full bg-border/30 rounded-full overflow-hidden">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/40">
                       <div 
                         className={cn(
                            "h-full transition-all duration-1000",
@@ -503,17 +649,12 @@ function InterviewDetailsContent() {
               </h3>
               <div className="space-y-4">
                 {(result as any).evidence_items?.map((item: any, i: number) => (
-                  <div key={i} className="card p-6 bg-surface/50 border-l-4 border-l-accent">
-                    <p className="italic text-text-primary leading-relaxed relative z-10">&ldquo;{item.quote}&rdquo;</p>
-                    <div className="mt-4 flex items-center gap-3">
-                      <span className="text-xs font-medium normal-case text-accent bg-accent/5 px-2 py-0.5 rounded border border-accent/10">
-                        {item.dimension}
-                      </span>
-                      <span className="text-xs font-normal text-text-secondary">
-                        Context: {item.context}
-                      </span>
-                    </div>
-                  </div>
+                  <EvidenceCard
+                    key={i}
+                    title={item.dimension}
+                    excerpt={item.quote}
+                    source={item.context ? `Context: ${item.context}` : undefined}
+                  />
                 ))}
               </div>
             </section>
@@ -583,13 +724,73 @@ function InterviewDetailsContent() {
                </p>
             </div>
             
-             <div className="card p-6 space-y-3 border-border bg-blue-50/10">
+             <div className="card p-6 space-y-3 border-border bg-accent/5">
                <h4 className="text-xs font-normal text-text-muted">Final Note</h4>
                <p className="text-sm text-text-primary italic leading-relaxed">
                  {(result as any).final_recommendation_note}
                </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {!result && !isInFlight && interview?.status !== 'FAILED' && (
+        <EvaluationEmptyState
+          icon={<Target size={20} />}
+          title="Assessment is not ready yet"
+          detail="Complete the document checklist and start the assessment from the overview when the interview transcript is ready."
+          actionLabel="Open overview"
+          onAction={() => setSelectedView('overview')}
+        />
+      )}
+        </div>
+      )}
+
+      {activeView === 'report' && (
+        <div role="tabpanel" id="evaluation-report-panel" aria-labelledby="evaluation-report-tab">
+          {hasReport ? (
+            <section className="card overflow-hidden">
+              <div className="border-b border-border bg-surface px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Shareable outcome</p>
+                <h2 className="mt-1 text-xl font-semibold text-text-primary">Interview evaluation report</h2>
+              </div>
+              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <div>
+                  <p className="text-sm leading-6 text-text-secondary">
+                    The completed PDF includes the scorecard, recommendation, direct transcript evidence, strengths, and areas for review.
+                  </p>
+                  <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-text-muted">Candidate</dt>
+                      <dd className="mt-1 text-sm font-semibold text-text-primary">{interview?.metadata.candidate_name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-text-muted">Overall rating</dt>
+                      <dd className="mt-1 text-sm font-semibold text-text-primary">{formatScore(result?.overall_score)} / 10</dd>
+                    </div>
+                  </dl>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadReport}
+                  className="btn-primary inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold"
+                >
+                  <Download size={18} />
+                  Download PDF report
+                </button>
+              </div>
+            </section>
+          ) : (
+            <EvaluationEmptyState
+              icon={<Download size={20} />}
+              title="Report will appear here"
+              detail={isInFlight
+                ? 'The PDF becomes available as soon as the current analysis is complete.'
+                : 'Complete the assessment first. The report is generated automatically from the final evaluation.'}
+              actionLabel={isInFlight ? 'View analysis' : 'Open overview'}
+              onAction={() => setSelectedView(isInFlight ? 'analysis' : 'overview')}
+            />
+          )}
         </div>
       )}
 
@@ -609,6 +810,451 @@ function InterviewDetailsContent() {
           onClose={() => setToast(null)} 
         />
       )}
+    </div>
+  );
+}
+
+function InterviewDetailsSkeleton({ label }: { label: string }) {
+  return (
+    <div className="mx-auto max-w-6xl space-y-8" aria-live="polite" aria-busy="true">
+      <div className="h-4 w-36 animate-pulse rounded bg-surface-elevated" />
+      <div className="space-y-3">
+        <div className="h-8 w-72 animate-pulse rounded bg-surface-elevated" />
+        <div className="h-4 w-52 animate-pulse rounded bg-surface-elevated" />
+      </div>
+      <div className="card p-5">
+        <div className="flex items-center gap-3 text-sm font-semibold text-text-secondary">
+          <Loader2 className="animate-spin text-accent" size={18} />
+          {label}
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="h-16 animate-pulse rounded-lg bg-surface" />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvaluationViewTabs({
+  activeView,
+  onChange,
+}: {
+  activeView: EvaluationView;
+  onChange: (view: EvaluationView) => void;
+}) {
+  const views: Array<{ id: EvaluationView; label: string; detail: string; icon: typeof ClipboardList }> = [
+    { id: 'overview', label: 'Overview', detail: 'Files and readiness', icon: ClipboardList },
+    { id: 'guide', label: 'Interview guide', detail: 'Questions and cues', icon: BookOpenCheck },
+    { id: 'analysis', label: 'Analysis', detail: 'Evidence and decision', icon: Target },
+    { id: 'report', label: 'Report', detail: 'Downloadable PDF', icon: Download },
+  ];
+
+  return (
+    <nav className="card overflow-x-auto p-2" aria-label="Evaluation sections" role="tablist">
+      <div className="flex min-w-max gap-1">
+        {views.map((view) => {
+          const Icon = view.icon;
+          const selected = activeView === view.id;
+          return (
+            <button
+              key={view.id}
+              id={`evaluation-${view.id}-tab`}
+              type="button"
+              role="tab"
+              aria-controls={`evaluation-${view.id}-panel`}
+              aria-selected={selected}
+              onClick={() => onChange(view.id)}
+              className={cn(
+                'flex min-w-[150px] items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors',
+                selected
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+              )}
+            >
+              <Icon size={17} className={selected ? 'text-accent-foreground' : 'text-accent'} />
+              <span>
+                <span className="block text-sm font-semibold">{view.label}</span>
+                <span className={cn('mt-0.5 block text-[11px]', selected ? 'text-accent-foreground/80' : 'text-text-muted')}>
+                  {view.detail}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function EvaluationEmptyState({
+  icon,
+  title,
+  detail,
+  actionLabel,
+  onAction,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <section className="card flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-accent">
+          {icon}
+        </span>
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">{title}</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">{detail}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onAction}
+        className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold"
+      >
+        {actionLabel}
+        <ArrowRight size={16} />
+      </button>
+    </section>
+  );
+}
+
+function InterviewWorkflowRail({
+  interview,
+  result,
+  isInFlight,
+}: {
+  interview: DetailedInterview | null;
+  result: EvaluationResult | null;
+  isInFlight: boolean;
+}) {
+  const steps = [
+    {
+      label: 'Context',
+      detail: 'JD and resume',
+      done: !!interview?.jd_s3_key,
+      icon: ClipboardList,
+    },
+    {
+      label: 'Guide',
+      detail: 'Scenario questions',
+      done: !!interview?.question_guide,
+      icon: BookOpenCheck,
+    },
+    {
+      label: 'Transcript',
+      detail: 'Interview conversation',
+      done: !!interview?.transcript_s3_key,
+      icon: MessageSquareText,
+    },
+    {
+      label: 'Review',
+      detail: isInFlight ? 'Analysis in progress' : 'Evidence and report',
+      done: !!result,
+      icon: Sparkles,
+    },
+  ];
+
+  const activeIndex = result
+    ? 3
+    : isInFlight
+      ? 3
+      : !interview?.jd_s3_key
+        ? 0
+        : !interview.question_guide
+          ? 1
+          : !interview.transcript_s3_key
+            ? 2
+            : 3;
+
+  return (
+    <section className="card p-3 sm:p-4" aria-label="Interview workflow progress">
+      <div className="grid gap-2 sm:grid-cols-4">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          const isActive = index === activeIndex;
+          return (
+            <div
+              key={step.label}
+              className={cn(
+                'relative flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
+                isActive ? 'bg-accent/10' : 'bg-surface/60',
+              )}
+            >
+              <span className={cn(
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                step.done ? 'bg-success/15 text-success' : isActive ? 'bg-accent text-accent-foreground' : 'bg-surface-elevated text-text-muted',
+              )}>
+                {step.done ? <CheckCircle2 size={16} /> : <Icon size={16} />}
+              </span>
+              <span className="min-w-0">
+                <span className={cn('block truncate text-xs font-semibold', isActive ? 'text-text-primary' : 'text-text-secondary')}>
+                  {step.label}
+                </span>
+                <span className="block truncate text-[11px] text-text-muted">{step.detail}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function QuestionGuideSection({
+  guide,
+  canGenerate,
+  canRefresh,
+  loading,
+  onGenerate,
+}: {
+  guide: InterviewQuestionGuide | null;
+  canGenerate: boolean;
+  canRefresh: boolean;
+  loading: boolean;
+  onGenerate: () => void;
+}) {
+  const questionGroups = guide?.questions.reduce<Record<string, InterviewQuestionGuide['questions']>>((groups, question) => {
+    const category = question.category || 'Interview questions';
+    (groups[category] ||= []).push(question);
+    return groups;
+  }, {}) || {};
+
+  return (
+    <section id="tour-question-guide" className="card overflow-hidden">
+      <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+            <BookOpenCheck size={20} />
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-text-primary">Recommended Interview Guide</h2>
+              <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                Approved question bank
+              </span>
+              {/* Provenance, not decoration. `bank_only` means the model call that
+                  calibrates the wording to this JD did not complete, so what is
+                  shown is the bank's own text. The backend already reports which
+                  one happened; without showing it, a fallback guide is
+                  indistinguishable from a tailored one. */}
+              {guide && (
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                    guide.optimization_status === 'optimized'
+                      ? 'border-success/30 bg-success/10 text-success'
+                      : 'border-warning/30 bg-warning/10 text-warning'
+                  }`}
+                  title={
+                    guide.optimization_status === 'optimized'
+                      ? 'Question wording was calibrated to this job description by the AI.'
+                      : 'The AI calibration step did not complete, so these are the approved bank questions as written. Regenerate to try again.'
+                  }
+                >
+                  {guide.optimization_status === 'optimized' ? 'JD-calibrated' : 'Bank wording only'}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">
+              A structured guide built from the approved question bank, tailored to the role, level, job description, and optional resume. Each prompt is written to sound natural in a live interview.
+            </p>
+          </div>
+        </div>
+
+        {(!guide || canRefresh) && (
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={!canGenerate || loading}
+            className="btn-primary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loading ? <RefreshCw size={16} className="animate-spin" /> : <BookOpenCheck size={16} />}
+            {loading ? 'Preparing guide...' : guide ? 'Refresh interview guide' : 'Prepare interview guide'}
+          </button>
+        )}
+      </div>
+
+      {!guide && (
+        <div className="border-t border-border bg-surface px-6 py-4">
+          <p className="text-xs leading-5 text-text-muted">
+            {canGenerate
+              ? 'The role profile is ready. Prepare the guide to review scenario prompts, follow-ups, and the evidence to listen for.'
+              : 'Add the job description first. A transcript is not needed to prepare the interview guide.'}
+          </p>
+        </div>
+      )}
+
+      {guide && (
+        <div className="border-t border-border">
+          <div className="grid gap-4 bg-surface px-6 py-4 sm:grid-cols-3">
+            <GuideMetric label="Expected level" value={guide.detected_level} />
+            <GuideMetric label="Questions selected" value={String(guide.questions.length)} />
+            <GuideMetric
+              label="Guide style"
+              value="Interview-ready scenarios"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-2 border-t border-border px-6 py-4">
+            {guide.focus_areas.map((area) => (
+              <span key={area} className="rounded-full bg-accent/8 px-3 py-1 text-xs font-medium text-accent">
+                {area}
+              </span>
+            ))}
+          </div>
+
+          <div className="space-y-6 border-t border-border px-6 py-6">
+            {Object.entries(questionGroups).map(([category, questions]) => (
+              <section key={category} className="overflow-hidden rounded-xl border border-border bg-surface-elevated">
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">{category}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">{questions.length} interview-ready {questions.length === 1 ? 'prompt' : 'prompts'}</p>
+                  </div>
+                </div>
+                <div className="divide-y divide-border">
+                  {questions.map((item) => (
+              <details key={item.id} className="group px-4 py-1">
+                <summary className="flex cursor-pointer list-none items-start gap-4 py-4">
+                  <span className="mt-0.5 font-mono text-xs font-semibold text-accent">{item.id}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                      {/*
+                      Scenario question · {item.category} / {item.focus_area}
+                      */}
+                      Scenario prompt - {item.focus_area}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold leading-6 text-text-primary">{item.question}</p>
+                  </div>
+                  <ChevronDown size={17} className="mt-1 shrink-0 text-text-muted transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="space-y-4 pb-5 pl-12">
+                  <div className="rounded-lg border border-border bg-surface px-4 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Question purpose</p>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">{item.source_question}</p>
+                  </div>
+                  <div className="grid gap-5 md:grid-cols-2">
+                  <GuideList title="Suggested follow-ups" items={item.follow_ups} />
+                  <GuideList title="What to listen for" items={item.what_to_listen_for} />
+                  </div>
+                </div>
+              </details>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InterviewExecutionSection({ execution }: { execution: EvaluationResult['interview_execution'] }) {
+  if (!execution) return null;
+
+  const qualityLabel = execution.panel_assessment.follow_up_quality.replace(/_/g, ' ');
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-2">
+        <ClipboardList size={20} className="text-accent" />
+        <h3 className="text-lg font-semibold text-text-primary">Interview Execution Review</h3>
+      </div>
+      <div className="card p-5">
+        <p className="text-sm leading-6 text-text-secondary">{execution.summary}</p>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <ExecutionMetric label="Panel quality" value={`${execution.panel_assessment.score.toFixed(1)} / 10`} />
+          <ExecutionMetric label="Guide coverage" value={`${execution.panel_assessment.planned_question_coverage_percent}%`} />
+          <ExecutionMetric label="Follow-ups" value={qualityLabel} />
+        </div>
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <ExecutionList title="What went well" items={execution.panel_assessment.observations} />
+          <ExecutionList title="Areas to improve" items={execution.panel_assessment.missed_areas} muted />
+        </div>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface-elevated">
+        <table className="w-full min-w-[680px] text-left">
+          <thead className="border-b border-border bg-surface">
+            <tr>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Interviewer</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Questions</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Guide coverage</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Follow-up quality</th>
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Review note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {execution.interviewer_evaluations.map((interviewer, index) => (
+              <tr key={`${interviewer.name}-${index}`} className="border-b border-border last:border-b-0">
+                <td className="px-4 py-3 text-sm font-semibold text-text-primary">{interviewer.name}</td>
+                <td className="px-4 py-3 text-sm text-text-secondary">{interviewer.questions_asked_count}</td>
+                <td className="px-4 py-3 text-sm text-text-secondary">{interviewer.planned_question_coverage_percent}%</td>
+                <td className="px-4 py-3 text-sm capitalize text-text-secondary">{interviewer.follow_up_quality.replace(/_/g, ' ')}</td>
+                <td className="px-4 py-3 text-sm leading-6 text-text-secondary">{interviewer.observations[0] || 'No additional observation recorded.'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ExecutionMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-surface px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">{label}</p>
+      <p className="mt-1 text-sm font-semibold capitalize text-text-primary">{value}</p>
+    </div>
+  );
+}
+
+function ExecutionList({ title, items, muted = false }: { title: string; items: string[]; muted?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</p>
+      {items.length ? (
+        <ul className="mt-2 space-y-2">
+          {items.map((item) => (
+            <li key={item} className="flex gap-2 text-sm leading-6 text-text-secondary">
+              <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${muted ? 'bg-text-muted' : 'bg-success'}`} />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm leading-6 text-text-muted">No concerns were identified from the available transcript evidence.</p>
+      )}
+    </div>
+  );
+}
+
+function GuideMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">{label}</p>
+      <p className="mt-1 text-sm font-semibold capitalize text-text-primary">{value}</p>
+    </div>
+  );
+}
+
+function GuideList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-text-primary">{title}</p>
+      <ul className="mt-2 space-y-2">
+        {items.map((item) => (
+          <li key={item} className="flex gap-2 text-xs leading-5 text-text-secondary">
+            <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -635,13 +1281,15 @@ function FileUploadSection({
   type, 
   interviewId, 
   isUploaded, 
+  disabled = false,
   onSuccess,
   setToast
 }: { 
   id?: string,
-  type: 'jd' | 'transcript', 
+  type: 'jd' | 'transcript' | 'resume',
   interviewId: string, 
   isUploaded: boolean, 
+  disabled?: boolean,
   onSuccess: () => void,
   setToast: (toast: { message: string, type: ToastType } | null) => void
 }) {
@@ -649,7 +1297,7 @@ function FileUploadSection({
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || disabled) return;
 
     try {
       setUploading(true);
@@ -687,6 +1335,7 @@ function FileUploadSection({
   return (
     <div id={id} className={cn(
       "card p-5 border-dashed flex flex-col items-center justify-center gap-3 transition-all",
+      disabled ? "bg-surface/50 border-border opacity-60" :
       isUploaded ? "bg-success/5 border-success/30 shadow-inner" : "bg-surface/50 border-border hover:border-accent/40"
     )}>
       <div className={cn(
@@ -698,7 +1347,7 @@ function FileUploadSection({
       
       <div className="text-center">
         <p className="text-sm font-semibold text-text-primary uppercase tracking-tight">
-          {type === 'jd' ? 'Job Description' : 'Interview Transcript'}
+          {type === 'jd' ? 'Job Description' : type === 'resume' ? 'Candidate Resume' : 'Interview Transcript'}
         </p>
         <p className="text-[10px] text-text-muted font-normal mt-0.5">
           {isUploaded ? 'File Ready' : 'Awaiting Upload'}
@@ -706,7 +1355,11 @@ function FileUploadSection({
       </div>
 
       <div className="flex flex-col gap-2 w-full mt-2">
-        {uploading ? (
+        {disabled ? (
+          <p className="py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+            Prepare the question guide first
+          </p>
+        ) : uploading ? (
           <div className="flex items-center justify-center gap-2 py-2 text-xs font-semibold text-accent animate-pulse">
             <Loader2 size={14} className="animate-spin" />
             Uploading...

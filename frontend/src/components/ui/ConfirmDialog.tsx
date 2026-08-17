@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -31,17 +31,64 @@ export function ConfirmDialog({
   variant = 'danger'
 }: ConfirmDialogProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
-    if (isOpen) {
-      setIsVisible(true);
-      document.body.style.overflow = 'hidden';
-    } else {
-      const timer = setTimeout(() => setIsVisible(false), 200);
-      document.body.style.overflow = 'unset';
-      return () => clearTimeout(timer);
-    }
+    const timer = isOpen
+      ? window.requestAnimationFrame(() => setIsVisible(true))
+      : window.setTimeout(() => setIsVisible(false), 200);
+
+    return () => {
+      if (isOpen) window.cancelAnimationFrame(timer);
+      else window.clearTimeout(timer);
+    };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    lastFocusedElementRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusTimer = window.setTimeout(() => cancelButtonRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.setTimeout(() => lastFocusedElementRef.current?.focus(), 0);
+    };
+  }, [isOpen, onCancel]);
 
   if (!isOpen && !isVisible) return null;
 
@@ -50,20 +97,27 @@ export function ConfirmDialog({
       "fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-200",
       isOpen ? "opacity-100" : "opacity-0"
     )}>
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm" 
+      <div
+        className="absolute inset-0 bg-background/80"
         onClick={onCancel}
+        aria-hidden="true"
       />
       
-      {/* Modal */}
-      <div className={cn(
-        "relative w-full max-w-md bg-surface border border-border rounded-xl shadow-2xl p-6 transition-all duration-200",
+      <div
+        ref={dialogRef}
+        role={variant === 'danger' ? 'alertdialog' : 'dialog'}
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        className={cn(
+        "ui-panel relative w-full max-w-md rounded-2xl p-6 transition-all duration-200",
         isOpen ? "scale-100 translate-y-0" : "scale-95 translate-y-4"
       )}>
         <button 
+          type="button"
           onClick={onCancel}
           className="absolute top-4 right-4 p-1 rounded-md text-text-muted hover:text-text-primary transition-colors"
+          aria-label="Close confirmation dialog"
         >
           <X size={18} />
         </button>
@@ -77,8 +131,8 @@ export function ConfirmDialog({
           </div>
 
           <div className="flex-1 pt-1">
-            <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
-            <p className="text-sm text-text-secondary mt-2 leading-relaxed">
+            <h3 id={titleId} className="text-lg font-semibold text-text-primary">{title}</h3>
+            <p id={descriptionId} className="text-sm text-text-secondary mt-2 leading-relaxed">
               {description}
             </p>
           </div>
@@ -86,15 +140,18 @@ export function ConfirmDialog({
 
         <div className="flex items-center justify-end gap-3 mt-8">
           <button
+            ref={cancelButtonRef}
+            type="button"
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-elevated rounded-md transition-all"
+            className="btn-secondary px-4 py-2 text-sm font-medium"
           >
             {cancelLabel}
           </button>
           <button
+            type="button"
             onClick={onConfirm}
             className={cn(
-              "px-4 py-2 text-sm font-semibold text-white rounded-md transition-all shadow-sm",
+              "px-4 py-2 text-sm font-semibold text-white rounded-lg transition-all shadow-sm",
               variant === 'danger' ? "bg-danger hover:bg-danger/90" : "bg-accent hover:bg-accent/90"
             )}
           >

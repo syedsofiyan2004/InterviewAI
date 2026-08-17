@@ -40,30 +40,35 @@ export default function NewMomProjectPage() {
       </Link>
 
       <div className="space-y-2">
-        <p className="text-[11px] font-semibold tracking-[0.12em] text-accent uppercase">MOM Analyzer</p>
-        <h1 className="text-3xl font-bold text-text-primary tracking-tight">New Project</h1>
-        <p className="text-text-secondary">
+        <p className="page-kicker">MOM Analyzer</p>
+        <h1 className="text-2xl font-semibold text-text-primary">New project</h1>
+        <p className="text-sm leading-6 text-text-secondary">
           Create a project folder first. You can add multiple meeting transcripts inside it.
         </p>
       </div>
 
       {error && (
-        <div className="card p-4 border-danger/30 bg-danger/5 text-danger font-bold text-sm">
+        <div className="card border-danger/30 bg-danger/5 p-4 text-sm font-semibold text-danger" role="alert" aria-live="assertive">
           {error}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="card p-8 space-y-6">
+        <div className="border-b border-border pb-5">
+          <h2 className="text-lg font-semibold text-text-primary">Project details</h2>
+          <p className="mt-1 text-sm leading-6 text-text-secondary">Use a project name your delivery team will recognise when searching meeting reports later.</p>
+        </div>
         <div>
           <label className="block text-xs font-semibold text-text-muted mb-2">Project Title</label>
           <input
             required
-            className="w-full h-11 bg-surface border border-border rounded-md px-4 text-sm focus:ring-2 focus:ring-ring focus:outline-none transition-all"
+            className="premium-input w-full px-4 text-sm"
             value={projectTitle}
             onChange={(event) => setProjectTitle(event.target.value)}
             placeholder="e.g. Verbal"
+            aria-describedby="project-title-help"
           />
-          <p className="mt-1.5 text-xs text-text-muted">
+          <p id="project-title-help" className="mt-1.5 text-xs leading-5 text-text-muted">
             Meeting reports added inside this folder will stay grouped under this project.
           </p>
         </div>
@@ -71,7 +76,7 @@ export default function NewMomProjectPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-3 bg-accent text-accent-foreground font-semibold rounded-md hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-50"
+          className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {loading ? <Loader2 size={18} className="animate-spin" /> : <FolderKanban size={18} />}
           {loading ? 'Creating project...' : 'Create Project'}

@@ -50,6 +50,25 @@ const LocalEvaluationSchema = z.object({
     fit: z.enum(['Strong', 'Partial', 'Gap']),
     evidence: z.string(),
   })).max(12).optional(),
+  interview_execution: z.object({
+    summary: z.string(),
+    panel_assessment: z.object({
+      score: z.number().min(0).max(10),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(8),
+      missed_areas: z.array(z.string()).max(8),
+    }),
+    interviewer_evaluations: z.array(z.object({
+      name: z.string(),
+      questions_asked_count: z.number().int().min(0),
+      planned_question_coverage_percent: z.number().min(0).max(100),
+      follow_up_quality: z.enum(['strong', 'average', 'weak', 'not_enough_data']),
+      observations: z.array(z.string()).max(6),
+      missed_areas: z.array(z.string()).max(6),
+    })).max(12),
+  }).optional().catch(undefined),
 });
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -62,6 +81,18 @@ validateEnv(['TABLE_NAME', 'BUCKET_NAME']);
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
+
+function getUserFolder(item: any): string {
+  const email = String(item?.owner_email || '').trim().toLowerCase();
+  if (email) {
+    const localPart = email.split('@')[0] || email;
+    return localPart
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || item.owner_user_id || 'user';
+  }
+  return item.owner_user_id || 'user';
+}
 
 export const handler = async (event: SQSEvent) => {
   for (const record of event.Records) {
@@ -105,6 +136,38 @@ async function updateStatus(id: string, status: string, results: any = {}) {
   }));
 }
 
+/**
+ * Records which phase the evaluation is actually in, for the UI progress banner.
+ *
+ * Best-effort: a failed progress write must never fail the evaluation, so
+ * errors are logged and swallowed. Touches only the progress attributes.
+ *
+ * Each transition is also appended to progress_events, the history the UI renders
+ * as an activity log. progress_stage/progress_message hold only the current
+ * phase; the analyze route resets the list when it queues the run, so it stays
+ * bounded to one run.
+ */
+async function setProgress(id: string, stage: string, message: string): Promise<void> {
+  const now = Date.now();
+  try {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `INTERVIEW#${id}`, SK: 'METADATA' },
+      UpdateExpression: 'SET progress_stage = :s, progress_message = :m, updated_at = :now, '
+        + 'progress_events = list_append(if_not_exists(progress_events, :empty), :event)',
+      ExpressionAttributeValues: {
+        ':s': stage,
+        ':m': message,
+        ':now': now,
+        ':empty': [],
+        ':event': [{ at: now, stage, message }],
+      },
+    }));
+  } catch (err) {
+    console.warn(`Could not record progress (${stage}) for ${id}:`, err);
+  }
+}
+
 async function runEvaluationPipeline(id: string) {
   // 1. Fetch record
   let item;
@@ -125,6 +188,7 @@ async function runEvaluationPipeline(id: string) {
 
   // 2. Load and Extract JD
   console.log('Step 1: Extracting Job Description text...');
+  await setProgress(id, 'reading_documents', 'Reading job description and transcript files...');
   let jd: string;
   try {
     const { extractTextFromBuffer } = await import('../shared/utils.js');
@@ -175,18 +239,25 @@ async function runEvaluationPipeline(id: string) {
 
   // 4. Step: Parse JD & Build Rubric
   console.log('Step 3: Parsing JD and building rubric...');
+  await setProgress(id, 'building_rubric', 'Building the scoring rubric from the job description...');
   const rubric = await withRetry(() => parseJDAndBuildRubric(jd, item.model_id), 3, 'JD_BEDROCK_PARSE_FAILED');
 
   // 5. Step: Extract Evidence & Score
   console.log('Step 4: Extracting evidence and scoring...');
-  const evaluation = await withRetry(() => extractEvidenceAndScore(transcript, rubric, item.model_id, resume), 3, 'AI_MALFORMED_OUTPUT');
+  await setProgress(id, 'scoring', 'AI is scoring candidate responses against the rubric. This is the longest step.');
+  const evaluation = await withRetry(
+    () => extractEvidenceAndScore(transcript, rubric, item.model_id, resume, item.question_guide),
+    3,
+    'AI_MALFORMED_OUTPUT',
+  );
 
   // Data is already validated inside evaluateTranscript() using LocalEvaluationSchema
   const validatedResult = evaluation;
 
   // 7. Persist Full Result to S3
+  const userFolder = getUserFolder(item);
   const ownerPrefix = item.owner_user_id
-    ? `users/${item.owner_user_id}/interviews/${id}`
+    ? `users/${userFolder}/interviews/${id}`
     : `processed/${id}`;
   const resultS3Key = item.owner_user_id
     ? `${ownerPrefix}/processed/result.json`
@@ -203,6 +274,7 @@ async function runEvaluationPipeline(id: string) {
   }
 
   // 8. Generate and Persist PDF Report
+  await setProgress(id, 'generating_report', 'Generating the downloadable PDF report...');
   console.log('Step 7: Generating PDF report...');
   let reportS3Key: string | undefined = undefined;
   try {
@@ -318,15 +390,17 @@ async function parseJDAndBuildRubric(jd: string, selection?: string): Promise<st
 function getModelId(selection?: string): string {
   // 1. Legacy Check & Auto-Migration
   const legacyKeys = ['claude-3-haiku', 'claude-3-5-sonnet', 'claude-opus-4-6'];
-  let modelKey = selection || 'claude-3-sonnet';
+  let modelKey = selection || 'claude-sonnet-5';
   
   if (selection && legacyKeys.includes(selection)) {
-    console.info(`[Legacy Migration] Promoting ${selection} -> claude-3-sonnet`);
-    modelKey = 'claude-3-sonnet';
+    console.info(`[Legacy Migration] Promoting ${selection} -> claude-sonnet-5`);
+    modelKey = 'claude-sonnet-5';
   }
   
   const mapping: Record<string, string | undefined> = {
+    'claude-sonnet-5': process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
     'claude-3-sonnet': process.env.BEDROCK_SONNET_PROFILE_ARN,
+    'claude-sonnet-4-6': process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
     'nova-pro': process.env.BEDROCK_NOVA_PROFILE_ARN,
   };
 
@@ -345,10 +419,12 @@ function getModelId(selection?: string): string {
 
   if (allowFallback) {
     const fallbackMapping: Record<string, string> = {
+      'claude-sonnet-5': 'global.anthropic.claude-sonnet-5',
       'claude-3-sonnet': 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
+      'claude-sonnet-4-6': 'global.anthropic.claude-sonnet-4-6',
       'nova-pro': 'amazon.nova-pro-v1:0',
     };
-    const fallbackId = fallbackMapping[modelKey] || 'apac.anthropic.claude-3-7-sonnet-20250219-v1:0';
+    const fallbackId = fallbackMapping[modelKey] || 'global.anthropic.claude-sonnet-5';
     console.warn('[Bedrock Resolved] Region-Locked Fallback to APAC Profile:', fallbackId);
     return fallbackId;
   }
@@ -356,7 +432,95 @@ function getModelId(selection?: string): string {
   throw new Error(`MODEL_PROFILE_NOT_CONFIGURED: ${modelKey}`);
 }
 
-async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string, resume?: string): Promise<any> {
+function normalizeInterviewExecution(value: any, transcript: string, questionGuide?: any) {
+  const plannedQuestions = Array.isArray(questionGuide?.questions) ? questionGuide.questions.length : 0;
+  const questionsAsked = (transcript.match(/\?/g) || []).length;
+  const coverage = plannedQuestions
+    ? Math.min(100, Math.round((questionsAsked / plannedQuestions) * 100))
+    : 0;
+  /**
+   * Defaults for whatever the model did not return.
+   *
+   * The counts are measurements — question marks in the transcript, guide length
+   * — and are honest to report as such. The score and the follow-up rating are
+   * judgments, and counting '?' characters is not one: this used to award 8/10
+   * for four question marks, which is indistinguishable in the report from a
+   * score the model actually reasoned about. So an absent assessment now reads as
+   * absent (0 / not_enough_data) and says so, rather than being invented.
+   */
+  const unassessed = {
+    summary: plannedQuestions
+      ? 'Interview execution was reviewed against the prepared question guide and the available transcript evidence.'
+      : 'Interview execution was reviewed from the available transcript evidence.',
+    panel_assessment: {
+      score: 0,
+      questions_asked_count: questionsAsked,
+      planned_question_coverage_percent: coverage,
+      follow_up_quality: 'not_enough_data',
+      observations: [
+        'The AI review did not return a panel assessment, so panel quality is unscored for this interview.',
+        questionsAsked
+          ? `${questionsAsked} transcript-visible question${questionsAsked === 1 ? '' : 's'} were counted directly from the transcript.`
+          : 'No transcript-visible questions could be reliably detected.',
+        plannedQuestions
+          ? `The prepared guide contained ${plannedQuestions} question${plannedQuestions === 1 ? '' : 's'} for comparison.`
+          : 'No prepared guide was available for direct question coverage comparison.',
+      ],
+      missed_areas: plannedQuestions && coverage < 100
+        ? ['Some prepared guide areas may not have been covered in the transcript.']
+        : [],
+    },
+    interviewer_evaluations: [{
+      name: 'Interview panel',
+      questions_asked_count: questionsAsked,
+      planned_question_coverage_percent: coverage,
+      follow_up_quality: 'not_enough_data',
+      observations: ['Individual speakers could not be reliably identified from the transcript.'],
+      missed_areas: plannedQuestions && coverage < 100 ? ['Review prepared guide coverage before making a final hiring decision.'] : [],
+    }],
+  };
+
+  if (!value || typeof value !== 'object') return unassessed;
+  const safeNumber = (candidate: unknown, defaultValue: number, min: number, max: number) => {
+    const parsed = Number(candidate);
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : defaultValue;
+  };
+  const cleanList = (candidate: unknown, defaultValue: string[], limit: number) => Array.isArray(candidate)
+    ? candidate.map((item) => String(item || '').trim()).filter(Boolean).slice(0, limit)
+    : defaultValue;
+  const providedInterviewers = Array.isArray(value.interviewer_evaluations)
+    ? value.interviewer_evaluations
+      .map((entry: any, index: number) => ({
+        name: String(entry?.name || `Panel interviewer ${index + 1}`).trim(),
+        questions_asked_count: Math.round(safeNumber(entry?.questions_asked_count, 0, 0, 999)),
+        planned_question_coverage_percent: safeNumber(entry?.planned_question_coverage_percent, 0, 0, 100),
+        follow_up_quality: ['strong', 'average', 'weak', 'not_enough_data'].includes(entry?.follow_up_quality)
+          ? entry.follow_up_quality
+          : 'not_enough_data',
+        observations: cleanList(entry?.observations, [], 6),
+        missed_areas: cleanList(entry?.missed_areas, [], 6),
+      }))
+      .filter((entry: any) => entry.name)
+      .slice(0, 12)
+    : [];
+
+  return {
+    summary: String(value.summary || unassessed.summary).trim(),
+    panel_assessment: {
+      score: safeNumber(value?.panel_assessment?.score, unassessed.panel_assessment.score, 0, 10),
+      questions_asked_count: Math.round(safeNumber(value?.panel_assessment?.questions_asked_count, unassessed.panel_assessment.questions_asked_count, 0, 999)),
+      planned_question_coverage_percent: safeNumber(value?.panel_assessment?.planned_question_coverage_percent, unassessed.panel_assessment.planned_question_coverage_percent, 0, 100),
+      follow_up_quality: ['strong', 'average', 'weak', 'not_enough_data'].includes(value?.panel_assessment?.follow_up_quality)
+        ? value.panel_assessment.follow_up_quality
+        : unassessed.panel_assessment.follow_up_quality,
+      observations: cleanList(value?.panel_assessment?.observations, unassessed.panel_assessment.observations, 8),
+      missed_areas: cleanList(value?.panel_assessment?.missed_areas, unassessed.panel_assessment.missed_areas, 8),
+    },
+    interviewer_evaluations: providedInterviewers.length ? providedInterviewers : unassessed.interviewer_evaluations,
+  };
+}
+
+async function extractEvidenceAndScore(transcript: string, rubric: string, selection?: string, resume?: string, questionGuide?: any): Promise<any> {
   const prompt = `
     Evaluate the interview transcript against the rubric with a SCEPTICAL executive lens.
     
@@ -401,6 +565,7 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     
     - Use a scale of 0.0 to 10.0 for all scores (Decimals allowed, e.g., 8.5).
     - JD Fit Score: Percentage match (0-100).
+    - INTERVIEW EXECUTION REVIEW: Assess the interview panel separately from the candidate. Compare transcript-visible questions and follow-ups with the prepared guide where available. Do not score the panel based on candidate quality. Identify individual interviewers only when speaker labels make their identity clear; otherwise use a single "Interview panel" entry. Do not invent speakers or question coverage.
     
     JSON Schema:
     <evaluation_json>
@@ -424,7 +589,28 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
       "experience_level": "string",
       "fit_gap_analysis": [
         { "requirement": "summary", "fit": "Strong" | "Partial" | "Gap", "evidence": "verbatim quote" }
-      ]
+      ],
+      "interview_execution": {
+        "summary": "short evidence-based assessment of interview quality",
+        "panel_assessment": {
+          "score": 0.0-10.0,
+          "questions_asked_count": 0,
+          "planned_question_coverage_percent": 0-100,
+          "follow_up_quality": "strong" | "average" | "weak" | "not_enough_data",
+          "observations": ["string"],
+          "missed_areas": ["string"]
+        },
+        "interviewer_evaluations": [
+          {
+            "name": "speaker name or Interview panel",
+            "questions_asked_count": 0,
+            "planned_question_coverage_percent": 0-100,
+            "follow_up_quality": "strong" | "average" | "weak" | "not_enough_data",
+            "observations": ["string"],
+            "missed_areas": ["string"]
+          }
+        ]
+      }
     }
     </evaluation_json>
     
@@ -441,6 +627,9 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
     ${rubric}
 
     ${resume ? `CANDIDATE RESUME:\n${resume}\n\n` : ''}
+
+    PREPARED INTERVIEW GUIDE:
+    ${questionGuide ? JSON.stringify(questionGuide) : 'No prepared question guide was available.'}
 
     TRANSCRIPT:
     ${transcript}
@@ -460,7 +649,10 @@ async function extractEvidenceAndScore(transcript: string, rubric: string, selec
       throw new Error(`FINAL_RESULT_VALIDATION_FAILED: ${errorMsg}`);
     }
     
-    return validation.data;
+    return {
+      ...validation.data,
+      interview_execution: normalizeInterviewExecution(validation.data.interview_execution, transcript, questionGuide),
+    };
   } catch (err: any) {
     if (err.message?.includes('VALIDATION_FAILED')) throw err;
     if (err.message?.includes('MODEL_PROFILE_NOT_CONFIGURED')) throw err;
@@ -498,15 +690,18 @@ async function invokeBedrock(prompt: string, modelId: string): Promise<string> {
     if (isNova) {
       body = JSON.stringify({
         messages: [{ role: 'user', content: [{ text: prompt }] }],
-        inferenceConfig: { maxTokens: 6000, temperature: 0.1 }
+        inferenceConfig: { maxTokens: 12000, temperature: 0.1 }
       });
     } else {
-      body = JSON.stringify({
+      const anthropicBody: Record<string, unknown> = {
         anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: 6000,
+        max_tokens: 12000,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        temperature: 0.1
-      });
+      };
+      if (!modelId.includes('claude-sonnet-5')) {
+        anthropicBody.temperature = 0.1;
+      }
+      body = JSON.stringify(anthropicBody);
     }
 
     const response = await bedrockClient.send(new InvokeModelCommand({
@@ -517,7 +712,9 @@ async function invokeBedrock(prompt: string, modelId: string): Promise<string> {
     }));
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-    const text = isNova ? responseBody.output?.message?.content?.[0]?.text : responseBody.content?.[0]?.text;
+    const text = isNova
+      ? responseBody.output?.message?.content?.map((block: { text?: string }) => block.text || '').join('\n')
+      : responseBody.content?.filter((block: { type?: string; text?: string }) => block.type === 'text' && block.text).map((block: { text: string }) => block.text).join('\n');
     
     if (!text || text.trim().length === 0) {
       throw new Error('JD_BEDROCK_EMPTY_RESPONSE');
@@ -617,6 +814,14 @@ export async function generateInterviewPdfReport(interviewParams: any, results: 
     return `${text}...`;
   };
 
+  const truncateWithEllipsis = (value: string, f: any, size: number, maxWidth: number): string => {
+    let text = String(value || '').trim();
+    while (text.length > 1 && f.widthOfTextAtSize(`${text}...`, size) > maxWidth) {
+      text = text.slice(0, -1).trimEnd();
+    }
+    return text ? `${text}...` : '...';
+  };
+
   const measureLines = (value: string, f: any, size: number, maxWidth: number): string[] => {
     const words = String(value || '')
       .split(/\s+/)
@@ -637,6 +842,30 @@ export async function generateInterviewPdfReport(interviewParams: any, results: 
     }
     if (line) lines.push(line);
     return lines;
+  };
+
+  const visibleLines = (value: string, f: any, size: number, maxWidth: number, maxLines?: number): string[] => {
+    const lines = measureLines(value, f, size, maxWidth);
+    if (!maxLines || lines.length <= maxLines) return lines;
+    const clipped = lines.slice(0, maxLines);
+    clipped[clipped.length - 1] = truncateWithEllipsis(clipped[clipped.length - 1], f, size, maxWidth);
+    return clipped;
+  };
+
+  const drawLinesAt = (
+    lines: string[],
+    x: number,
+    top: number,
+    opts: { size?: number; f?: any; color?: any; lineHeight?: number } = {},
+  ) => {
+    const size = opts.size ?? 8;
+    const f = opts.f ?? font;
+    const color = opts.color ?? C.gray800;
+    const lineHeight = opts.lineHeight ?? 12;
+    lines.forEach((line, index) => {
+      page.drawText(line, { x, y: top - index * lineHeight, size, font: f, color });
+    });
+    return lines.length * lineHeight;
   };
 
   // Wrap and draw text, returns lines used
@@ -813,6 +1042,10 @@ export async function generateInterviewPdfReport(interviewParams: any, results: 
   const strengths = results.strengths.slice(0, 6);
   const risks = results.areas_for_review.slice(0, 6);
   const rows = Math.max(strengths.length, risks.length);
+  const firstStrengthLines = strengths[0] ? visibleLines(strengths[0], font, 7.5, colW - 16, 3) : [];
+  const firstRiskLines = risks[0] ? visibleLines(risks[0], font, 7.5, colW - 16, 3) : [];
+  const firstRowHeight = Math.max(16, Math.max(firstStrengthLines.length, firstRiskLines.length, 1) * 11 + 6);
+  needsSpace(14 + firstRowHeight);
 
   // Column headers
   page.drawText('KEY STRENGTHS', { x: ML, y, size: 7.5, font: boldFont, color: C.green });
@@ -820,26 +1053,61 @@ export async function generateInterviewPdfReport(interviewParams: any, results: 
   y -= 14;
 
   for (let i = 0; i < rows; i++) {
-    needsSpace(20);
+    const strengthLines = strengths[i] ? visibleLines(strengths[i], font, 7.5, colW - 16, 3) : [];
+    const riskLines = risks[i] ? visibleLines(risks[i], font, 7.5, colW - 16, 3) : [];
+    const rowHeight = Math.max(16, Math.max(strengthLines.length, riskLines.length, 1) * 11 + 6);
+    needsSpace(rowHeight);
 
     if (strengths[i]) {
       page.drawCircle({ x: ML + 4, y: y + 3, size: 2.5, color: C.green });
-      const s = fitText(strengths[i], font, 7.5, colW - 16);
-      page.drawText(s, { x: ML + 12, y, size: 7.5, font, color: C.gray800 });
+      drawLinesAt(strengthLines, ML + 12, y, { size: 7.5, lineHeight: 11, color: C.gray800 });
     }
 
     if (risks[i]) {
       page.drawCircle({ x: ML + colW + 28, y: y + 3, size: 2.5, color: C.red });
-      const r = fitText(risks[i], font, 7.5, colW - 16);
-      page.drawText(r, { x: ML + colW + 36, y, size: 7.5, font, color: C.gray800 });
+      drawLinesAt(riskLines, ML + colW + 36, y, { size: 7.5, lineHeight: 11, color: C.gray800 });
     }
 
-    y -= 16;
+    y -= rowHeight;
   }
 
   gap(4);
 
   // ══════════════════════════════════════════════
+  if (results.interview_execution) {
+    sectionTitle('Interview Execution Review');
+    drawText(results.interview_execution.summary, { size: 8.5, lineHeight: 14, color: C.gray800 });
+    gap(4);
+
+    const panelReview = results.interview_execution.panel_assessment;
+    const reviewMetrics = [
+      { label: 'PANEL QUALITY', value: `${panelReview.score.toFixed(1)}/10` },
+      { label: 'GUIDE COVERAGE', value: `${panelReview.planned_question_coverage_percent}%` },
+      { label: 'FOLLOW-UPS', value: panelReview.follow_up_quality.replace(/_/g, ' ').toUpperCase() },
+    ];
+    const reviewBoxW = CW / 3 - 6;
+    needsSpace(54);
+    reviewMetrics.forEach((metric, index) => {
+      const x = ML + index * (reviewBoxW + 9);
+      page.drawRectangle({ x, y: y - 46, width: reviewBoxW, height: 46, color: C.gray100 });
+      page.drawText(metric.label, { x: x + 8, y: y - 15, size: 6.5, font: boldFont, color: C.gray600 });
+      page.drawText(fitText(metric.value, boldFont, 9, reviewBoxW - 16), { x: x + 8, y: y - 31, size: 9, font: boldFont, color: C.indigoDark });
+    });
+    y -= 56;
+
+    results.interview_execution.interviewer_evaluations.slice(0, 6).forEach((interviewer) => {
+      needsSpace(30);
+      page.drawText(fitText(interviewer.name, boldFont, 8, CW * 0.28), { x: ML, y, size: 8, font: boldFont, color: C.black });
+      page.drawText(`${interviewer.questions_asked_count} questions`, { x: ML + CW * 0.32, y, size: 7.5, font, color: C.gray600 });
+      page.drawText(`${interviewer.planned_question_coverage_percent}% guide coverage`, { x: ML + CW * 0.52, y, size: 7.5, font, color: C.gray600 });
+      page.drawText(interviewer.follow_up_quality.replace(/_/g, ' '), { x: ML + CW * 0.78, y, size: 7.5, font, color: C.indigo });
+      y -= 12;
+      const observation = interviewer.observations[0] || interviewer.missed_areas[0];
+      if (observation) drawText(observation, { x: ML, size: 7.5, lineHeight: 11, color: C.gray600, maxWidth: CW });
+      gap(6);
+    });
+  }
+
   // VERDICT BOX
   // ══════════════════════════════════════════════
   sectionTitle('Final Verdict');
