@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { analyseWorkbook } from '../lambdas/api-handler/calculator-workbook';
+import { canonicalise } from '../lambdas/shared/canonical-workbook';
 import { groupResources } from '../lambdas/calculator-orchestrator/prompt';
-import { materializePlanResources, planFromGroup } from '../lambdas/calculator-orchestrator/pipeline';
+import { materializePlanResources, planFromGroup, resourcesFromCanonicalModel } from '../lambdas/calculator-orchestrator/pipeline';
 import { buildInitialPlan } from '../lambdas/shared/estimate-planning';
 
 const fixture = (name: string) => path.resolve(__dirname, '..', '..', 'docs', name);
@@ -48,7 +49,7 @@ describe('generic compiler regression workbooks', () => {
 
   test('confirmed Digital Assets inputs compile every first-period group without omission', async () => {
     const analysis = await analyseWorkbook(fs.readFileSync(fixture('Digital_Assets.xlsx')), 'renamed-input.xlsx');
-    const resources = materializePlanResources(analysis.resources, digitalAssetsRevision);
+    const resources = materializePlanResources(resourcesFromCanonicalModel(analysis.canonicalModel), digitalAssetsRevision);
     const firstScenario = analysis.insights.bands?.[0]?.key;
     const groups = groupResources(resources.filter((row) => row.scenario === firstScenario), new Map(), 'baseline');
     const plans = groups.map((group) => ({ group, plan: planFromGroup(group, 'ap-south-1') }));
@@ -81,9 +82,48 @@ describe('generic compiler regression workbooks', () => {
     });
   }, 30_000);
 
+  test('a workbook-stated Fargate tasks-per-day frequency survives compilation', () => {
+    const canonical = canonicalise({
+      metrics: [{
+        sheet: 'Any Layout',
+        scenario: { key: 'fy26', label: 'FY26', kind: 'period' },
+        service: 'AWS Fargate',
+        cells: [
+          { row: 10, label: 'ECS Fargate number of tasks per day', value: '10' },
+          { row: 11, label: 'ECS Fargate task duration (minutes)', value: '1440' },
+          { row: 12, label: 'ECS Fargate task vCPU per task', value: '1' },
+          { row: 13, label: 'ECS Fargate task memory GB per task', value: '2' },
+        ],
+      }],
+      scenarios: [{ key: 'fy26', label: 'FY26', kind: 'period' }],
+    });
+    const rows = resourcesFromCanonicalModel(canonical);
+    const groups = groupResources(rows, new Map(), 'baseline');
+    const fargate = groups.find((group) => group.service === 'AWS Fargate');
+    const plan = fargate ? planFromGroup(fargate, 'ap-south-1') : undefined;
+
+    expect(fargate?.configuration?.fargateTask).toMatchObject({
+      taskFrequency: 'perDay',
+      taskCount: expect.objectContaining({ originalValue: 10, originalPeriod: 'day' }),
+      taskDuration: expect.objectContaining({
+        originalValue: 1440,
+        originalUnit: 'minutes',
+        derived: expect.objectContaining({ value: 24, unit: 'hours' }),
+      }),
+    });
+    expect(plan?.calculatorConfig).toMatchObject({
+      numberOfTasks: { value: '10', unit: 'perDay' },
+      taskDuration: { value: '24', unit: 'hr' },
+    });
+    expect(rows[0].source_evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sheet: 'Any Layout', row: 10, label: 'ECS Fargate number of tasks per day', value: '10' }),
+      expect.objectContaining({ sheet: 'Any Layout', row: 11, label: 'ECS Fargate task duration (minutes)', value: '1440' }),
+    ]));
+  });
+
   test('confirmed inputs compile every nonzero group in every Digital Assets scenario', async () => {
     const analysis = await analyseWorkbook(fs.readFileSync(fixture('Digital_Assets.xlsx')), 'another-customer-input.xlsx');
-    const resources = materializePlanResources(analysis.resources, digitalAssetsRevision);
+    const resources = materializePlanResources(resourcesFromCanonicalModel(analysis.canonicalModel), digitalAssetsRevision);
     const failures = (analysis.insights.bands || []).flatMap((band) => (
       groupResources(resources.filter((row) => row.scenario === band.key), new Map(), 'baseline')
         .map((group) => ({ group, plan: planFromGroup(group, 'ap-south-1') }))

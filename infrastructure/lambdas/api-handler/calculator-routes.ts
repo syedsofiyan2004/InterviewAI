@@ -18,7 +18,6 @@ import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../sha
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { analyseWorkbook } from './calculator-workbook';
-import { canonicalise } from '../shared/canonical-workbook';
 import {
   applyPlanProposal,
   buildInitialPlan,
@@ -257,24 +256,16 @@ async function createCalculationInternal(
       // The file NAME decides the reader (.xlsx vs .csv), so pass the original rather
       // than the key: the key's uuid prefix is noise, but its extension is not.
       const analysis = await analyseWorkbook(buffer, inputFileName || input.input_s3_key);
-      resources = analysis.resources;
+      resources = analysis.legacyResources;
       inputWarnings = analysis.warnings.slice(0, MAX_INPUT_WARNINGS);
       workbook = analysis.insights;
       workbookHash = analysis.workbookIR.fileHash;
       workbookIrS3Key = `users/${userId}/calculator/analysis/${workbookHash}/workbook-ir.json`;
       canonicalModelS3Key = `users/${userId}/calculator/analysis/${workbookHash}/canonical-cost-model.json`;
-      const canonical = canonicalise({
-        inventory: analysis.resources,
-        scenarios: analysis.insights.bands?.map((band) => ({
-          key: band.key,
-          label: band.label,
-          kind: band.kind,
-        })),
-      });
       try {
         await Promise.all([
           saveFileContent(BUCKET_NAME, workbookIrS3Key, JSON.stringify(analysis.workbookIR), 'application/json'),
-          saveFileContent(BUCKET_NAME, canonicalModelS3Key, JSON.stringify(canonical), 'application/json'),
+          saveFileContent(BUCKET_NAME, canonicalModelS3Key, JSON.stringify(analysis.canonicalModel), 'application/json'),
         ]);
       } catch (error) {
         console.error('[createCalculation] could not store analysis artifacts:', error);

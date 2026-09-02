@@ -175,6 +175,12 @@ export interface CanonicalShape {
   countDerivedUnit?: string;
   countDerivedPeriod?: string;
   countConversionFormula?: string;
+  durationOriginalValue?: number | string;
+  durationOriginalUnit?: string;
+  durationOriginalPeriod?: string;
+  durationDerivedValue?: number | string;
+  durationDerivedUnit?: string;
+  durationConversionFormula?: string;
   vcpu?: number;
   ramGb?: number;
   /** Runtime hours a month for ONE unit of `count`. */
@@ -387,7 +393,7 @@ export interface CanonicalInput {
 export type UnitInference =
   | { ok: true; unit: CanonicalUnit; amount: number; conversions: string[]; measurement: {
     originalValue: number;
-    originalUnit: CanonicalUnit;
+    originalUnit: string;
     originalScale?: string;
     originalPeriod: 'month' | 'year' | 'day' | 'unspecified';
     derivedValue: number;
@@ -488,6 +494,9 @@ export function inferUnit(label: string, value: number): UnitInference {
   let amount = value;
   const conversions: string[] = [];
   const originalPeriod = perYear ? 'year' : perDay ? 'day' : perMonth ? 'month' : 'unspecified';
+  const originalUnit = MINUTES.test(text) ? 'minutes'
+    : unit === INSTANCE_UNIT ? 'hours'
+      : unit.replace(/\/month$/, '');
   let originalScale: string | undefined;
 
   // Scale expansions first, because "(millions/yr)" has to become units before it becomes
@@ -538,7 +547,7 @@ export function inferUnit(label: string, value: number): UnitInference {
     conversions,
     measurement: {
       originalValue: value,
-      originalUnit: unit,
+      originalUnit,
       ...(originalScale ? { originalScale } : {}),
       originalPeriod,
       derivedValue: derived,
@@ -1036,6 +1045,10 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
   let countConversionFormula: string | undefined;
   let countConversions: string[] = [];
   let runtimePerUnit: number | undefined;
+  let runtimeOriginalValue: number | string | undefined;
+  let runtimeOriginalUnit: string | undefined;
+  let runtimeOriginalPeriod: string | undefined;
+  let runtimeConversionFormula: string | undefined;
   let runtimeConversions: string[] = [];
   let countRows = 0;
   let countZeros = 0;
@@ -1080,6 +1093,10 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
         const reading = inferUnit(cellLabel, parsed.amount);
         if (reading.ok && reading.unit === INSTANCE_UNIT) {
           runtimePerUnit = reading.amount;
+          runtimeOriginalValue = reading.measurement.originalValue;
+          runtimeOriginalUnit = reading.measurement.originalUnit;
+          runtimeOriginalPeriod = reading.measurement.originalPeriod;
+          runtimeConversionFormula = reading.measurement.conversionFormula;
           runtimeConversions = reading.conversions;
           sink.accountedMetricCells++;
           return;
@@ -1197,6 +1214,12 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
       countDerivedPeriod: 'month',
       ...(countConversionFormula ? { countConversionFormula } : {}),
     } : {}),
+    durationOriginalValue: runtimeOriginalValue ?? runtime.hours,
+    durationOriginalUnit: runtimeOriginalUnit ?? 'hours',
+    durationOriginalPeriod: runtimeOriginalPeriod ?? 'month',
+    durationDerivedValue: runtime.hours,
+    durationDerivedUnit: 'hours',
+    ...(runtimeConversionFormula ? { durationConversionFormula: runtimeConversionFormula } : {}),
     vcpu,
     ramGb,
     hoursPerUnit: runtime.hours,
@@ -1246,6 +1269,27 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
   }
 
   if (!quantities.length) {
+    if (count !== undefined && group.service) {
+      sink.rows.push({
+        id: `${group.sheet ?? 'sheet'}!${provenance[0]?.row ?? index + 1}#${scenario?.key ?? index}`,
+        billing: 'usage',
+        service: group.service,
+        label,
+        scenario,
+        environment: group.environment,
+        region: group.region,
+        shape,
+        quantities,
+        attributes,
+        provenance,
+        unpriced,
+        notes: [
+          group.notes,
+          'Count was preserved, but no direct billable unit or complete Calculator shape was present in the workbook.',
+        ].filter(Boolean).join(' '),
+      });
+      return;
+    }
     exclude(unpriced.length
       ? unpriced[0].reason
       : 'no size, count, specification or usage figure could be read from the group, so there is no '

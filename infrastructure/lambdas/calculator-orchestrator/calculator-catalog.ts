@@ -10,13 +10,29 @@ export interface CalculatorServiceCatalog {
   serviceCode: string;
   serviceName: string;
   fields: CalculatorCatalogField[];
+  minimalConfig?: Record<string, unknown>;
+  defaultConfig?: Record<string, unknown>;
+  traps?: string[];
+  warnings?: string[];
+  schemaVersion?: string;
+  schemaHash?: string;
 }
 
 export function parseServiceCatalog(result: McpToolResult): CalculatorServiceCatalog {
   if (result.isError) throw new Error(`CATALOG_LOOKUP_FAILED: ${result.text.slice(0, 300)}`);
   const parsed = JSON.parse(result.text);
   if (!parsed?.serviceCode || !Array.isArray(parsed.fields)) throw new Error('CATALOG_RESPONSE_INVALID');
-  return parsed as CalculatorServiceCatalog;
+  return {
+    serviceCode: String(parsed.serviceCode),
+    serviceName: String(parsed.serviceName || parsed.serviceCode),
+    fields: parsed.fields,
+    ...(parsed.minimalConfig && typeof parsed.minimalConfig === 'object' ? { minimalConfig: parsed.minimalConfig } : {}),
+    ...(parsed.defaultConfig && typeof parsed.defaultConfig === 'object' ? { defaultConfig: parsed.defaultConfig } : {}),
+    ...(Array.isArray(parsed.traps) ? { traps: parsed.traps.map(String) } : {}),
+    ...(Array.isArray(parsed.warnings) ? { warnings: parsed.warnings.map(String) } : {}),
+    ...(parsed.schemaVersion ? { schemaVersion: String(parsed.schemaVersion) } : {}),
+    ...(parsed.schemaHash ? { schemaHash: String(parsed.schemaHash) } : {}),
+  };
 }
 
 function isValueUnit(value: unknown): boolean {
@@ -34,7 +50,7 @@ export function resolveConfigAgainstCatalog(
   catalog: CalculatorServiceCatalog,
   config: Record<string, unknown>,
 ): Record<string, unknown> {
-  const resolved = { ...config };
+  const resolved = { ...(catalog.defaultConfig || {}), ...(catalog.minimalConfig || {}), ...config };
   for (const field of catalog.fields) {
     if (field.type !== 'dropdown' || !field.options?.length || resolved[field.id] === undefined) continue;
     const current = resolved[field.id];

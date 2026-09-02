@@ -272,8 +272,15 @@ function CalculationDetailContent() {
             <div className="min-w-0">
               <p className="text-sm font-semibold text-danger">This estimate could not be built</p>
               <p className="mt-1 break-words text-sm leading-6 text-text-secondary">
-                {data.error_message || 'The estimator did not return a usable result.'}
+                {data.error_message || result?.validationErrors?.[0] || 'The estimate failed validation.'}
               </p>
+              {!data.error_message && !!result?.validationErrors?.length && (
+                <ul className="mt-3 space-y-1.5">
+                  {result.validationErrors.slice(0, 8).map((message, index) => (
+                    <li key={index} className="text-sm leading-6 text-text-secondary">{message}</li>
+                  ))}
+                </ul>
+              )}
               <Link
                 href="/calculator/new"
                 className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
@@ -322,7 +329,7 @@ function CalculationDetailContent() {
         </div>
       )}
 
-      {result && (
+      {result && data?.status !== 'FAILED' && (
         <>
           <div className="card p-6">
             <div className="flex flex-wrap items-end justify-between gap-4">

@@ -647,6 +647,8 @@ export const CalculationResultSchema = z.object({
   ebsRatePerGbMonth: z.number().optional(),
   /** Empty only for legacy results that predate strict saved-estimate validation. */
   validationErrors: z.array(z.string().max(1000)).optional(),
+  /** Build/runtime fingerprints used to diagnose stale production deployments. */
+  diagnostics: z.record(z.string(), z.unknown()).optional(),
 });
 export type CalculationResult = z.infer<typeof CalculationResultSchema>;
 

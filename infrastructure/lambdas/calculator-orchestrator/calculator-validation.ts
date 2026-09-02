@@ -15,6 +15,7 @@ export interface ManifestServiceInput {
   group: string;
   description: string;
   config?: Record<string, unknown>;
+  semanticIntent?: Record<string, unknown>;
   fingerprintFields?: string[];
   requestedPricing: string;
   resolvedPricing: string;
@@ -62,6 +63,7 @@ export function createExecutionManifest(input: {
       calculatorService: service.calculatorService || '',
       group: service.group,
       description: service.description,
+      ...(service.semanticIntent ? { semanticIntent: service.semanticIntent } : {}),
       criticalFields: criticalFields(service.config || {}, service.fingerprintFields),
     })),
     constraints: input.constraints,
@@ -262,7 +264,7 @@ function actualField(
         .map(() => true),
     ];
   }
-  if (field === 'fargate.task_frequency_per_day') return values('tasksPerDay');
+  if (field === 'fargate.task_frequency_per_day') return values('numberOfTasks');
   const fingerprintValidatedFields = new Set([
     'database.engine', 'api_gateway.api_type', 'sns.delivery_type', 'ses.send_source',
     'cognito.tier', 'lambda.execution_profile', 'bedrock.model', 'bedrock.tokens_per_call',

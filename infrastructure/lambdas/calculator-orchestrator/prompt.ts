@@ -70,6 +70,7 @@ export interface ResourceGroup {
   vcpu?: number;
   ramGb?: number;
   purchaseModel?: string;
+  role?: string;
   region?: string;
   hoursPerDay: number;
   hoursPerMonth?: number;
@@ -89,7 +90,7 @@ export interface ResourceGroup {
    * can still point back at the machines it stands for. Indices rather than copies, so
    * a group stays small on a stored item.
    */
-  members: number[];
+  members: Array<number | string>;
   /** What the sheet itself said this group costs per month, summed. */
   reportedMonthly: number;
   /**
@@ -122,6 +123,10 @@ export interface ResourceGroup {
   }>;
   /** Canonical evidence retained for service adapters that must distinguish billing variants. */
   details?: string[];
+  /** Resource-centric semantic configuration preserved from canonical workbook assembly. */
+  configuration?: Record<string, unknown>;
+  /** Source cells from the canonical workbook rows that formed this group. */
+  sourceEvidence?: Array<{ sheet?: string; row?: number; col?: number; a1?: string; label?: string; value?: string }>;
 }
 
 /** How many machines one row stands for. A quantity column is common and load-bearing. */
@@ -233,11 +238,10 @@ export function groupResources(
     // unequal pools cannot collapse into a fractional endpoint shape.
     const semanticResourceIdentity = /sagemaker|custom model hosting/i.test(service)
       ? trimmed(resource.name) ?? trimmed(resource.metric) ?? ''
-      : /\bfargate\b/i.test(service)
-        ? trimmed(resource.metric) ?? trimmed(resource.name) ?? ''
-        : '';
+      : '';
     const key = [
       environment ?? '', service, size ?? '', trimmed(resource.os) ?? '',
+      trimmed(resource.role) ?? '',
       vcpu ?? '', ramGb ?? '', trimmed(resource.purchase_model) ?? '',
       trimmed(resource.region) ?? '', resource.hoursPerMonth ?? '', hoursPerDay,
       semanticResourceIdentity,
@@ -272,11 +276,22 @@ export function groupResources(
       existing.rows += 1;
       existing.diskGb += (resource.disk_gb ?? 0) * count;
       existing.reportedMonthly += resource.reported_monthly ?? 0;
+      if (!existing.role && resource.role) existing.role = resource.role;
       if (existing.names.length < 3 && resource.name) existing.names.push(resource.name);
-      existing.members.push(Number(resource.plan_resource_id ?? index));
+      existing.members.push(resource.plan_resource_id ?? index);
       const detail = [resource.metric, resource.notes, resource.raw, ...(resource.attributes || []).map((entry) => `${entry.label}: ${entry.value}`)]
         .filter(Boolean).join(' | ');
       if (detail && (existing.details?.length || 0) < 50) (existing.details ??= []).push(detail);
+      if (resource.configuration) existing.configuration = {
+        ...(existing.configuration || {}),
+        ...resource.configuration,
+      };
+      if (resource.source_evidence?.length) {
+        existing.sourceEvidence = [
+          ...(existing.sourceEvidence || []),
+          ...resource.source_evidence,
+        ].slice(0, 100);
+      }
       addQuantities(existing, meteredResource);
       continue;
     }
@@ -289,6 +304,7 @@ export function groupResources(
       vcpu,
       ramGb,
       purchaseModel: trimmed(resource.purchase_model),
+      role: resource.role,
       region: trimmed(resource.region),
       hoursPerDay,
       hoursPerMonth: resource.hoursPerMonth,
@@ -296,8 +312,10 @@ export function groupResources(
       rows: 1,
       diskGb: (resource.disk_gb ?? 0) * count,
       names: resource.name ? [resource.name] : [],
-      members: [Number(resource.plan_resource_id ?? index)],
+      members: [resource.plan_resource_id ?? index],
       reportedMonthly: resource.reported_monthly ?? 0,
+      ...(resource.configuration ? { configuration: resource.configuration } : {}),
+      ...(resource.source_evidence?.length ? { sourceEvidence: resource.source_evidence.slice(0, 100) } : {}),
       details: [[resource.metric, resource.notes, resource.raw, ...(resource.attributes || []).map((entry) => `${entry.label}: ${entry.value}`)]
         .filter(Boolean).join(' | ')].filter(Boolean),
     });

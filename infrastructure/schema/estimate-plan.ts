@@ -305,6 +305,7 @@ export const ExecutionManifestSchema = z.object({
     calculatorService: z.string(),
     group: z.string(),
     description: z.string(),
+    semanticIntent: z.record(z.string(), z.unknown()).optional(),
     criticalFields: z.record(z.string(), z.unknown()),
   })),
   constraints: z.array(RequirementConstraintSchema),

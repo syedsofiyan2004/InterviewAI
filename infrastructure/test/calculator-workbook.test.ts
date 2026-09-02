@@ -939,7 +939,7 @@ describe('The billing quantities on a transposed sheet', () => {
       unit: 'invocations/month',
       amount: 5_000_000,
       originalValue: 5,
-      originalUnit: 'invocations/month',
+      originalUnit: 'invocations',
       originalScale: 'millions',
       originalPeriod: 'month',
       derivedValue: 5_000_000,
