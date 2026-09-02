@@ -26,6 +26,7 @@ export const CalculationStatus = z.enum([
   'REVIEW_REQUIRED',
   'PROCESSING',
   'COMPLETED',
+  'NEEDS_REVIEW',
   'PARTIAL',
   'FAILED',
 ]);
@@ -551,7 +552,7 @@ export const CalculationScenarioSchema = z.object({
    */
   pricing_mix: z.string().max(600).optional(),
   /** Saved-link validation is authoritative; a local price alone cannot complete a scenario. */
-  status: z.enum(['SAVING', 'VALIDATING', 'COMPLETED', 'PARTIAL', 'FAILED']).optional(),
+  status: z.enum(['SAVING', 'VALIDATING', 'COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED']).optional(),
   upfront: z.number().nullable().optional(),
   /** Optional for estimates stored before deterministic read-back validation existed. */
   requirement_checks: z.array(RequirementCheckSchema).optional(),

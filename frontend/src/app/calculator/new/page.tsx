@@ -22,10 +22,20 @@ import {
   TEMPLATE_COLUMNS,
   TEMPLATE_ROWS,
   type CalculationProject,
+  type CalculatorReviewCatalog,
   type EstimatePlanV2,
   type EnvironmentHours,
   type PlanProposal,
 } from '@/lib/calculatorApi';
+import {
+  REVIEW_CONTROL_SPECS,
+  answerIsComplete,
+  defaultAnswerFor,
+  formatReviewAnswer,
+  validateFiniteOptions,
+  type ReviewControlField,
+  type ReviewValue,
+} from '@/lib/calculatorReviewControls';
 
 /**
  * Common AWS regions. The field stays a free-text-backed select rather than an
@@ -62,15 +72,6 @@ const EXAMPLE = `A production WordPress environment:
 - RDS PostgreSQL db.t3.medium, Multi-AZ, 100 GB storage
 - 200 GB of S3 Standard storage
 - NAT Gateway with 500 GB monthly data processing`;
-
-const QUESTION_EXAMPLES: Record<string, string> = {
-  'sagemaker.inference_configuration': 'real-time inference, ml.g5.xlarge',
-  'bedrock.model': 'Anthropic: Claude Sonnet 4',
-  'bedrock.tokens_per_call': 'input 2000, output 500',
-  'cognito.tier': 'Essentials, 1000000',
-  'nat_gateway.configuration': 'Regional NAT Gateway, 1',
-  'quicksight.subscription_profile': '100%, 0%, 10 GB',
-};
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
@@ -116,7 +117,8 @@ function NewCalculationForm() {
   const [calculationId, setCalculationId] = useState<string | null>(null);
   const [plan, setPlan] = useState<EstimatePlanV2 | null>(null);
   const [customRequirements, setCustomRequirements] = useState('');
-  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, ReviewValue>>({});
+  const [reviewCatalog, setReviewCatalog] = useState<CalculatorReviewCatalog | null>(null);
   const [proposal, setProposal] = useState<PlanProposal | null>(null);
   const [customizing, setCustomizing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -149,6 +151,15 @@ function NewCalculationForm() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [calculationId, reviewParam]);
+
+  useEffect(() => {
+    if (!plan) return;
+    let cancelled = false;
+    calculatorApi.getCalculatorReviewCatalog()
+      .then((catalog) => { if (!cancelled) setReviewCatalog(catalog); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [plan?.planId]);
 
   const setHours = (index: number, raw: string) => {
     const parsed = Number(raw);
@@ -211,20 +222,151 @@ function NewCalculationForm() {
   const currentRevision = plan?.revisions.find((entry) => entry.revisionId === plan.currentRevisionId);
   const openQuestions = plan?.unresolved.filter((entry) => !entry.resolved) || [];
   const answerForQuestion = (question: EstimatePlanV2['unresolved'][number]) => (
-    questionAnswers[question.id]?.trim()
-    || (question.field === 'resource.region' ? 'ap-south-1' : '')
+    questionAnswers[question.id] ?? defaultAnswerFor(question.field, question.options)
   );
+
+  const setQuestionAnswer = (
+    question: EstimatePlanV2['unresolved'][number],
+    field: ReviewControlField,
+    raw: string,
+  ) => {
+    const value = field.kind === 'number' ? Number(raw) : raw;
+    const spec = REVIEW_CONTROL_SPECS[question.field];
+    setQuestionAnswers((current) => {
+      if (!spec || spec.controls.length === 1 && field.key === 'value') {
+        return { ...current, [question.id]: value };
+      }
+      const previous = current[question.id] ?? defaultAnswerFor(question.field, question.options);
+      const record = previous && typeof previous === 'object' && !Array.isArray(previous)
+        ? previous as Record<string, string | number>
+        : {};
+      return { ...current, [question.id]: { ...record, [field.key]: value } };
+    });
+  };
+
+  const liveOptionsFor = (
+    question: EstimatePlanV2['unresolved'][number],
+    control: ReviewControlField,
+  ) => {
+    const live = reviewCatalog?.fields?.[question.field] || [];
+    if (!live.length || control.kind !== 'searchable-select') return control.options || [];
+    const filtered = live.filter((option) => {
+      const text = `${option.id} ${option.label} ${option.calculatorField}`.toLowerCase();
+      if (control.key === 'instanceType') return /\bml\./.test(text);
+      if (control.key === 'workloadType') return /real.?time|inference/.test(text);
+      if (control.key === 'provider') return /anthropic|amazon|meta|mistral|cohere/.test(text);
+      if (control.key === 'model') return /claude|titan|llama|mistral|command/.test(text);
+      if (control.key === 'mode') return /regional|nat/.test(text);
+      if (control.key === 'tier') return /lite|essentials|plus/.test(text);
+      if (control.key === 'value') return true;
+      return false;
+    });
+    return (filtered.length ? filtered : live)
+      .map((option) => ({ value: option.id, label: option.label }))
+      .slice(0, 200);
+  };
+
+  const validateQuestionAnswer = (question: EstimatePlanV2['unresolved'][number], answer: ReviewValue) => {
+    const spec = REVIEW_CONTROL_SPECS[question.field];
+    if (!spec) return validateFiniteOptions(question.field, answer, question.options);
+    const record = answer && typeof answer === 'object' && !Array.isArray(answer)
+      ? answer as Record<string, string | number>
+      : { value: answer as string | number };
+    return spec.controls.flatMap((control) => {
+      if (control.kind !== 'searchable-select') return [];
+      const options = liveOptionsFor(question, control);
+      if (!options.length) return [];
+      const raw = record[control.key];
+      if (raw === undefined || raw === null || raw === '') return [];
+      return options.some((option) => option.value === String(raw) || option.label === String(raw))
+        ? []
+        : [`${control.label} must be selected from the AWS-supported options.`];
+    });
+  };
+
+  const renderReviewControl = (question: EstimatePlanV2['unresolved'][number]) => {
+    const spec = REVIEW_CONTROL_SPECS[question.field];
+    const controls = spec?.controls || [{
+      key: 'value',
+      label: 'Value',
+      kind: question.options?.length ? 'searchable-select' as const : 'text' as const,
+      options: question.options?.map((option) => ({ value: option, label: option })),
+      source: question.options?.length ? 'Recommended' as const : 'Detected from workbook' as const,
+      recommended: defaultAnswerFor(question.field, question.options) as string,
+      required: true,
+    }];
+    const answer = answerForQuestion(question);
+    const record = answer && typeof answer === 'object' && !Array.isArray(answer)
+      ? answer as Record<string, string | number>
+      : { value: answer as string | number };
+
+    return (
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {controls.map((control) => {
+          const id = `${question.id}-${control.key}`;
+          const value = record[control.key] ?? control.recommended ?? '';
+          return (
+            <div key={control.key}>
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor={id} className="text-xs font-semibold text-text-secondary">
+                  {control.label}
+                </label>
+                <span className="rounded-md border border-border bg-surface-elevated px-2 py-0.5 text-[11px] font-semibold text-text-muted">
+                  {control.source}
+                </span>
+              </div>
+              {control.kind === 'searchable-select' ? (
+                <>
+                <input
+                  id={id}
+                  list={`${id}-options`}
+                  className="premium-input w-full px-4 text-sm"
+                  value={String(value)}
+                  onChange={(event) => setQuestionAnswer(question, control, event.target.value)}
+                />
+                <datalist id={`${id}-options`}>
+                  {!control.required && <option value="" />}
+                  {liveOptionsFor(question, control).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </datalist>
+                </>
+              ) : (
+                <input
+                  id={id}
+                  type={control.kind === 'number' ? 'number' : 'text'}
+                  className="premium-input w-full px-4 text-sm"
+                  value={String(value)}
+                  min={control.min}
+                  max={control.max}
+                  step={control.step}
+                  onChange={(event) => setQuestionAnswer(question, control, event.target.value)}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   const applyRequiredAnswers = async () => {
     if (!calculationId) return;
-    const missing = openQuestions.filter((question) => question.impact === 'high' && !answerForQuestion(question));
+    const missing = openQuestions.filter((question) => (
+      question.impact === 'high' && !answerIsComplete(question.field, answerForQuestion(question), question.options)
+    ));
     if (missing.length) {
       setError(`Answer the ${missing.length} remaining required field${missing.length === 1 ? '' : 's'}.`);
       return;
     }
+    const optionErrors = openQuestions.flatMap((question) => validateQuestionAnswer(question, answerForQuestion(question)));
+    if (optionErrors.length) {
+      setError(optionErrors[0]);
+      return;
+    }
     const answered = openQuestions
       .map((question) => ({ question, answer: answerForQuestion(question) }))
-      .filter(({ answer }) => Boolean(answer))
+      .filter(({ answer, question }) => answerIsComplete(question.field, answer, question.options))
       .map(({ question, answer }) => ({
         scope: question.scope,
         field: question.field,
@@ -422,41 +564,10 @@ function NewCalculationForm() {
                     <div className="mt-4 space-y-4">
                       {openQuestions.map((question) => (
                         <div key={question.id}>
-                          <label htmlFor={question.id} className="block text-xs font-semibold text-text-secondary">
+                          <p className="block text-xs font-semibold text-text-secondary">
                             {question.prompt}
-                          </label>
-                          {question.field === 'resource.region' ? (
-                            <select
-                              id={question.id}
-                              className="premium-input mt-2 w-full px-4 text-sm"
-                              value={questionAnswers[question.id] || 'ap-south-1'}
-                              onChange={(event) => setQuestionAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
-                            >
-                              {REGIONS.map((option) => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </select>
-                          ) : question.options?.length ? (
-                            <select
-                              id={question.id}
-                              className="premium-input mt-2 w-full px-4 text-sm"
-                              value={questionAnswers[question.id] || ''}
-                              onChange={(event) => setQuestionAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
-                            >
-                              <option value="">Choose an option</option>
-                              {question.options.map((option) => (
-                                <option key={option} value={option}>{option}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              id={question.id}
-                              className="premium-input mt-2 w-full px-4 text-sm"
-                              value={questionAnswers[question.id] || ''}
-                              onChange={(event) => setQuestionAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
-                              placeholder={QUESTION_EXAMPLES[question.field] || `Value for ${question.field}`}
-                            />
-                          )}
+                          </p>
+                          {renderReviewControl(question)}
                         </div>
                       ))}
                     </div>
@@ -512,7 +623,7 @@ function NewCalculationForm() {
                   {proposal.requirements.map((requirement) => (
                     <div key={requirement.id} className="grid gap-1 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <span className="font-semibold text-text-primary">{requirement.field}</span>
-                      <span className="break-words text-text-secondary sm:text-right">{String(requirement.expected)}</span>
+                      <span className="break-words text-text-secondary sm:text-right">{formatReviewAnswer(requirement.expected)}</span>
                     </div>
                   ))}
                   {proposal.unresolved.map((question) => (

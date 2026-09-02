@@ -157,7 +157,7 @@ export interface PipelineProgress {
 
 export interface PipelineOutcome {
   result: CalculationResult;
-  status: 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
   /** Bedrock calls made. Named `iterations` to match what the record already stores. */
   iterations: number;
   /** Every priced lookup and sidecar call, for the diagnostics counter. */
@@ -1847,7 +1847,7 @@ interface SaveEntry {
 
 interface ValidatedSaveResult {
   url: string | null;
-  status: 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
   warning?: string;
   requirementChecks: RequirementCheck[];
   validationErrors: string[];
@@ -2347,12 +2347,16 @@ async function saveEstimate(
         ? [linkCheck.reason || 'AWS Pricing Calculator link browser validation could not be completed.']
         : []),
     ])];
+    const reviewErrors = validation.reviewRequired.map((check) => {
+      const constraint = manifest.constraints.find((entry) => entry.id === check.constraintId);
+      return `${constraint?.field || check.constraintId}: ${check.message || check.status.toLowerCase()}`;
+    });
     return {
       url: String(url),
-      status: validationErrors.length ? 'PARTIAL' : 'COMPLETED',
-      ...(validationErrors.length ? { warning: validationErrors.join(' ') } : {}),
+      status: validationErrors.length ? 'PARTIAL' : reviewErrors.length ? 'NEEDS_REVIEW' : 'COMPLETED',
+      ...(validationErrors.length || reviewErrors.length ? { warning: [...validationErrors, ...reviewErrors].join(' ') } : {}),
       requirementChecks: validation.checks,
-      validationErrors,
+      validationErrors: [...validationErrors, ...reviewErrors],
       snapshot: renderedSnapshot,
       manifest,
     };
@@ -2953,9 +2957,9 @@ export async function runEstimatePipeline(
       label: segment.label,
       kind: segment.kind,
       status: savedSegments[index].status,
-      monthly: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.monthly ?? null : null,
-      upfront: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.upfront ?? null : null,
-      total_12_months: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.total12Months ?? null : null,
+      monthly: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.monthly ?? null : null,
+      upfront: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.upfront ?? null : null,
+      total_12_months: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.total12Months ?? null : null,
       url: savedSegments[index].url,
       requirement_checks: savedSegments[index].requirementChecks,
       validation_errors: savedSegments[index].validationErrors,
@@ -2978,12 +2982,14 @@ export async function runEstimatePipeline(
   const allValidationErrors = savedSegments.flatMap((entry) => entry.validationErrors);
   const outcomeStatus: PipelineOutcome['status'] = savedSegments.every((entry) => entry.status === 'COMPLETED')
     ? 'COMPLETED'
-    : savedSegments.every((entry) => entry.status === 'FAILED') ? 'FAILED' : 'PARTIAL';
+    : savedSegments.every((entry) => entry.status === 'FAILED') ? 'FAILED'
+      : savedSegments.every((entry) => entry.status === 'COMPLETED' || entry.status === 'NEEDS_REVIEW') ? 'NEEDS_REVIEW'
+        : 'PARTIAL';
 
   const result: CalculationResult = {
     url: saved.url,
     currency: 'USD',
-    monthlyTotal: saved.status === 'COMPLETED' ? saved.snapshot?.monthly ?? null : null,
+    monthlyTotal: ['COMPLETED', 'NEEDS_REVIEW'].includes(saved.status) ? saved.snapshot?.monthly ?? null : null,
     lineItems: toLineItems(priced),
     environments: toEnvironments(priced, record),
     scenarios,

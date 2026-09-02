@@ -536,6 +536,38 @@ function cleanKekaText(value: string): string {
     .trim();
 }
 
+function normalizePersonName(value: string | undefined): string {
+  return cleanKekaText(getRequiredString(value))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function employeeDisplayName(record: KekaRecord): string | undefined {
+  return firstString(record, ['displayName', 'name', 'fullName', 'employeeName'])
+    ?? getRequiredString([
+      firstString(record, ['firstName', 'first_name']),
+      firstString(record, ['middleName', 'middle_name']),
+      firstString(record, ['lastName', 'last_name']),
+    ].filter(Boolean).join(' '));
+}
+
+function employeeEmail(record: KekaRecord): string | undefined {
+  return firstString(record, ['email', 'emailId', 'officialEmail', 'workEmail']);
+}
+
+function exactSingleEmployeeEmail(rows: KekaRecord[], panelName: string): string | null {
+  const target = normalizePersonName(panelName);
+  if (!target) return null;
+  const exactEmails = Array.from(new Set(
+    rows
+      .filter((row) => normalizePersonName(employeeDisplayName(row)) === target)
+      .map(employeeEmail)
+      .filter((email): email is string => !!email),
+  ));
+  return exactEmails.length === 1 ? exactEmails[0] : null;
+}
+
 function kekaDateToMs(value: string | undefined): number | undefined {
   const text = getRequiredString(value);
   if (!text) return undefined;
@@ -1188,6 +1220,7 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
 export class KekaHireIntegration implements KekaIntegration {
   private accessToken?: { value: string; expiresAt: number };
   private readonly employeeEmailsById = new Map<string, string | null>();
+  private readonly employeeEmailsByName = new Map<string, string | null>();
   /**
    * Set once the HRIS employee directory answers with a denial, so the rest of
    * the run stops asking. Readable by the sweep, which reports it as the reason
@@ -1304,7 +1337,7 @@ export class KekaHireIntegration implements KekaIntegration {
       }
       const emails = new Map(rows.map((row) => [
         firstString(row, ['id', 'employeeId', 'employee_id']),
-        firstString(row, ['email', 'emailId', 'officialEmail', 'workEmail']),
+        employeeEmail(row),
       ]).filter((entry): entry is [string, string] => !!entry[0] && !!entry[1]));
 
       for (const id of ids) {
@@ -1312,11 +1345,46 @@ export class KekaHireIntegration implements KekaIntegration {
       }
     }
 
+    const unresolvedNames = Array.from(new Set(
+      interviews.flatMap((interview) => interview.panel)
+        .filter((member) => {
+          if (member.email) return false;
+          const byId = this.employeeEmailsById.get(getRequiredString(member.interviewerId));
+          return !byId;
+        })
+        .map((member) => member.name)
+        .map(normalizePersonName)
+        .filter((name) => name && !this.employeeEmailsByName.has(name)),
+    ));
+
+    for (const normalizedName of unresolvedNames) {
+      if (this.panelEmailLookupDenied) break;
+      const member = interviews.flatMap((interview) => interview.panel)
+        .find((panelist) => normalizePersonName(panelist.name) === normalizedName);
+      if (!member) continue;
+      try {
+        const rows = await this.listPage(
+          `/api/v1/hris/employees?searchKey=${encodeURIComponent(member.name)}&pageNumber=1&pageSize=5`,
+          'Keka could not find employee records for the interview panel.',
+          PANEL_EMAIL_PERMISSION_MESSAGE,
+        );
+        this.employeeEmailsByName.set(normalizedName, exactSingleEmployeeEmail(rows, member.name));
+      } catch (err) {
+        if (!(err instanceof KekaIntegrationError) || (err.kind !== 'denied' && err.kind !== 'absent')) throw err;
+        this.panelEmailLookupDenied = err.message;
+        console.warn('[Keka] Panel email lookup unavailable; continuing with Hire-supplied emails only:', err.message);
+        break;
+      }
+    }
+
     return interviews.map((interview) => ({
       ...interview,
       panel: interview.panel.map((member) => ({
         ...member,
-        email: member.email || this.employeeEmailsById.get(getRequiredString(member.interviewerId)) || undefined,
+        email: member.email
+          || this.employeeEmailsById.get(getRequiredString(member.interviewerId))
+          || this.employeeEmailsByName.get(normalizePersonName(member.name))
+          || undefined,
       })),
     }));
   }

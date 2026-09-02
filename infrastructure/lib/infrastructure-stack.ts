@@ -20,13 +20,25 @@ import * as path from 'path';
 
 /**
  * How often the Keka schedule sweep runs. An operator lever rather than a
- * constant: KEKA_SYNC_STATUS_MODE=all walks every candidate of every job, which
- * must sweep far less often than the status-filtered default. Clamped so a
- * mistyped value cannot become rate(0) or a rate EventBridge will not accept,
- * and shared by the rule and the Lambda env so the two cannot drift.
+ * constant: KEKA_SYNC_STATUS_MODE=all walks every candidate of every job, so the
+ * floor stays above the worker lease/timing jitter. Clamped so a mistyped value
+ * cannot become rate(0) or a rate EventBridge will not accept, and shared by the
+ * rule and the Lambda env so the two cannot drift.
  */
+export function kekaSyncRateMinutes(env: NodeJS.ProcessEnv = process.env): number {
+  const minutes = Number(env.KEKA_SYNC_RATE_MINUTES);
+  if (Number.isFinite(minutes) && minutes > 0) {
+    return Math.min(24 * 60, Math.max(15, Math.floor(minutes)));
+  }
+  const hours = Number(env.KEKA_SYNC_RATE_HOURS);
+  if (Number.isFinite(hours) && hours > 0) {
+    return Math.min(24 * 60, Math.max(15, Math.floor(hours * 60)));
+  }
+  return 6 * 60;
+}
+
 export function kekaSyncRateHours(env: NodeJS.ProcessEnv = process.env): number {
-  return Math.min(24, Math.max(1, Number(env.KEKA_SYNC_RATE_HOURS) || 6));
+  return Math.ceil(kekaSyncRateMinutes(env) / 60);
 }
 
 export class IepStack extends cdk.Stack {
@@ -277,6 +289,7 @@ export class IepStack extends cdk.Stack {
         // tenant with no usable status field — far more Keka calls, so raise
         // KEKA_SYNC_RATE_HOURS with it.
         KEKA_SYNC_STATUS_MODE: process.env.KEKA_SYNC_STATUS_MODE || 'filtered',
+        KEKA_SYNC_RATE_MINUTES: String(kekaSyncRateMinutes()),
         KEKA_SYNC_RATE_HOURS: String(kekaSyncRateHours()),
         // How far either side of now the sweep indexes interviews. Blank means the
         // worker's own defaults (7 back, 30 forward). Raise the lookback to bring
@@ -522,7 +535,9 @@ export class IepStack extends cdk.Stack {
     // own ARN, so it does NOT cover this — without an explicit grant every estimate
     // would fail at the queue step with AccessDenied.
     apiHandler.addEnvironment('CALCULATOR_ORCHESTRATOR_FUNCTION_NAME', calculatorOrchestrator.functionName);
+    apiHandler.addEnvironment('CALCULATOR_SIDECAR_FUNCTION_NAME', calculatorSidecar.functionName);
     calculatorOrchestrator.grantInvoke(apiHandler);
+    calculatorSidecar.grantInvoke(apiHandler);
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
     //
@@ -814,6 +829,7 @@ export class IepStack extends cdk.Stack {
     calculator.addMethod('POST', apiHandlerIntegration, authMethodOptions);
     // Presigned PUT for a resource spreadsheet. Static segment, declared before
     // {id} so it is matched as a literal and never captured as an id.
+    calculator.addResource('review-catalog').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     calculator.addResource('upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     calculator.addResource('analyze').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
@@ -1020,9 +1036,9 @@ export class IepStack extends cdk.Stack {
     comments.addResource('{commentId}').addResource('resolve').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     // Background Keka schedule sweep that populates My Interviews. Rate comes
-    // from kekaSyncRateHours() so it matches the value handed to the Lambda.
+    // from kekaSyncRateMinutes() so it matches the value handed to the Lambda.
     new events.Rule(this, 'KekaScheduleSyncRule', {
-      schedule: events.Schedule.rate(cdk.Duration.hours(kekaSyncRateHours())),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(kekaSyncRateMinutes())),
       targets: [new targets.LambdaFunction(apiHandler, {
         event: events.RuleTargetInput.fromObject({
           __internalTask: 'keka-schedule-sync',

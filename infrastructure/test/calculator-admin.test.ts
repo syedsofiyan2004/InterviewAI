@@ -2,6 +2,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import 'aws-sdk-client-mock-jest';
 import { DeleteCommand, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import type { APIGatewayProxyEvent } from 'aws-lambda';
 import { ddbDocClient } from '../lambdas/shared/aws';
 import { deleteCalculation } from '../lambdas/api-handler/calculator-routes';
@@ -18,6 +19,7 @@ import { adminListCalculations } from '../lambdas/api-handler/admin-routes';
 
 const ddbMock = mockClient(ddbDocClient);
 const s3Mock = mockClient(S3Client);
+const lambdaMock = mockClient(LambdaClient);
 
 const OWNER = 'user-owner';
 const OTHER = 'user-other';
@@ -37,6 +39,15 @@ const record = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+function mcpResponse(payload: Record<string, unknown>) {
+  return {
+    Payload: new TextEncoder().encode(JSON.stringify({
+      statusCode: 200,
+      body: `event: message\ndata: ${JSON.stringify(payload)}\n\n`,
+    })),
+  } as any;
+}
+
 function event(userId: string | null, email = 'owner@minfytech.com'): APIGatewayProxyEvent {
   return {
     httpMethod: 'DELETE',
@@ -49,8 +60,14 @@ function event(userId: string | null, email = 'owner@minfytech.com'): APIGateway
 beforeEach(() => {
   ddbMock.reset();
   s3Mock.reset();
+  lambdaMock.reset();
   ddbMock.on(DeleteCommand).resolves({});
   s3Mock.on(DeleteObjectCommand).resolves({});
+  lambdaMock.on(InvokeCommand).resolves(mcpResponse({
+    jsonrpc: '2.0',
+    id: 1,
+    result: { tools: [] },
+  }));
   jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
@@ -74,6 +91,51 @@ describe('Deleting an estimate', () => {
     const deletedKeys = s3Mock.commandCalls(DeleteObjectCommand).map((call) => call.args[0].input.Key);
     expect(deletedKeys).toContain(`users/${OWNER}/calculator/uploads/abc-resources.xlsx`);
     expect(deletedKeys).toContain(`users/${OWNER}/calculator/${ID}/estimate.pdf`);
+  });
+
+  test('remote AWS Calculator deletion is reported as unsupported when the MCP has no delete tool', async () => {
+    ddbMock.on(GetCommand).resolves({ Item: record() });
+
+    const response = await deleteCalculation(ID, event(OWNER));
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.remote_estimates).toEqual(expect.objectContaining({
+      requested: 1,
+      deleted: 0,
+      supported: false,
+    }));
+    expect(body.remote_estimates.warnings.join(' ')).toMatch(/does not expose.*deletion/i);
+  });
+
+  test('remote AWS Calculator deletion runs when the MCP supports it', async () => {
+    ddbMock.on(GetCommand).resolves({ Item: record() });
+    lambdaMock.on(InvokeCommand).callsFake((input) => {
+      const eventPayload = JSON.parse(new TextDecoder().decode(input.Payload as Uint8Array));
+      const rpc = JSON.parse(eventPayload.body);
+      if (rpc.method === 'tools/list') {
+        return mcpResponse({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { tools: [{ name: 'delete_estimate', inputSchema: {} }] },
+        });
+      }
+      return mcpResponse({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { content: [{ type: 'text', text: 'deleted' }], isError: false },
+      });
+    });
+
+    const response = await deleteCalculation(ID, event(OWNER));
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).remote_estimates).toEqual(expect.objectContaining({
+      requested: 1,
+      deleted: 1,
+      supported: true,
+    }));
+    expect(lambdaMock.commandCalls(InvokeCommand).length).toBeGreaterThanOrEqual(2);
   });
 
   test('someone else gets 404 and nothing is deleted', async () => {

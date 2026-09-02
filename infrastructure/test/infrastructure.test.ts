@@ -1,7 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as events from 'aws-cdk-lib/aws-events';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { IepStack, kekaSyncRateHours } from '../lib/infrastructure-stack';
+import { IepStack, kekaSyncRateHours, kekaSyncRateMinutes } from '../lib/infrastructure-stack';
 
 /**
  * Synth-level assertions for the Admin Portal / workspace layer. These guard the
@@ -18,9 +18,11 @@ let template: Template;
  * on 24 in this environment. Pinned to the default here so the template under
  * test is the same one on every machine; the lever itself is covered separately.
  */
+const RATE_MINUTES_ENV = process.env.KEKA_SYNC_RATE_MINUTES;
 const RATE_HOURS_ENV = process.env.KEKA_SYNC_RATE_HOURS;
 
 beforeAll(() => {
+  delete process.env.KEKA_SYNC_RATE_MINUTES;
   delete process.env.KEKA_SYNC_RATE_HOURS;
   const app = new cdk.App();
   const stack = new IepStack(app, 'TestStack', {
@@ -30,6 +32,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  if (RATE_MINUTES_ENV === undefined) delete process.env.KEKA_SYNC_RATE_MINUTES;
+  else process.env.KEKA_SYNC_RATE_MINUTES = RATE_MINUTES_ENV;
   if (RATE_HOURS_ENV === undefined) delete process.env.KEKA_SYNC_RATE_HOURS;
   else process.env.KEKA_SYNC_RATE_HOURS = RATE_HOURS_ENV;
 });
@@ -136,7 +140,7 @@ describe('New routes are registered and authenticated', () => {
 
   test('Keka schedule sync is an EventBridge target on the existing API handler', () => {
     template.hasResourceProperties('AWS::Events::Rule', {
-      ScheduleExpression: 'rate(6 hours)',
+      ScheduleExpression: events.Schedule.rate(cdk.Duration.minutes(kekaSyncRateMinutes({}))).expressionString,
       State: 'ENABLED',
       Targets: Match.arrayWith([
         Match.objectLike({
@@ -154,11 +158,15 @@ describe('New routes are registered and authenticated', () => {
     expect(own).toHaveLength(3);
   });
 
-  test('KEKA_SYNC_STATUS_MODE=all raises the sweep rate, clamped to once a day', () => {
+  test('Keka sync rate supports minute granularity and remains clamped', () => {
     // The lever exists because status-mode 'all' walks every candidate of every
     // job. Both bounds matter: an unclamped value could become rate(0), or a
     // rate EventBridge rejects. Asserted on the shared helper rather than by
     // re-synthesising, which would bundle three Lambdas per case.
+    expect(kekaSyncRateMinutes({ KEKA_SYNC_RATE_MINUTES: '30' })).toBe(30);
+    expect(kekaSyncRateMinutes({ KEKA_SYNC_RATE_MINUTES: '5' })).toBe(15);
+    expect(kekaSyncRateMinutes({ KEKA_SYNC_RATE_MINUTES: '99999' })).toBe(1440);
+    expect(kekaSyncRateMinutes({ KEKA_SYNC_RATE_MINUTES: 'not-a-number' })).toBe(360);
     expect(kekaSyncRateHours({ KEKA_SYNC_RATE_HOURS: '24' })).toBe(24);
     expect(kekaSyncRateHours({ KEKA_SYNC_RATE_HOURS: '999' })).toBe(24);
     expect(kekaSyncRateHours({ KEKA_SYNC_RATE_HOURS: '0' })).toBe(6);
@@ -171,9 +179,14 @@ describe('New routes are registered and authenticated', () => {
     // runs daily would make the sweep silently overlap itself.
     const rules = template.findResources('AWS::Events::Rule');
     const expression = (Object.values(rules)[0] as any).Properties.ScheduleExpression;
-    expect(expression).toBe(events.Schedule.rate(cdk.Duration.hours(kekaSyncRateHours({}))).expressionString);
+    expect(expression).toBe(events.Schedule.rate(cdk.Duration.minutes(kekaSyncRateMinutes({}))).expressionString);
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Environment: { Variables: Match.objectLike({ KEKA_SYNC_RATE_HOURS: String(kekaSyncRateHours({})) }) },
+      Environment: {
+        Variables: Match.objectLike({
+          KEKA_SYNC_RATE_MINUTES: String(kekaSyncRateMinutes({})),
+          KEKA_SYNC_RATE_HOURS: String(kekaSyncRateHours({})),
+        }),
+      },
     });
   });
 

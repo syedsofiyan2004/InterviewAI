@@ -173,7 +173,7 @@ function CalculationDetailContent() {
       const next = await calculatorApi.getCalculationResult(id);
       setData(next);
       setError(null);
-      return ['COMPLETED', 'PARTIAL', 'FAILED', 'REVIEW_REQUIRED'].includes(next.status);
+      return ['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED', 'REVIEW_REQUIRED'].includes(next.status);
     } catch (err: unknown) {
       setError(errorMessage(err, 'Could not load this estimate'));
       // Stop polling on a hard error rather than hammering a failing endpoint.
@@ -308,6 +308,34 @@ function CalculationDetailContent() {
         </div>
       )}
 
+      {data?.status === 'NEEDS_REVIEW' && (
+        <div className="card border-warning/30 bg-warning/5 p-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-text-primary">
+                Estimate created - {(result?.validationErrors?.length || 1)} item{(result?.validationErrors?.length || 1) === 1 ? '' : 's'} need verification
+              </p>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">
+                The AWS Calculator estimate exists, but some requirements could not be verified automatically.
+              </p>
+              {!!result?.validationErrors?.length && (
+                <div className="mt-3 divide-y divide-border border-y border-border">
+                  {result.validationErrors.map((message, index) => (
+                    <div key={index} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                      <span className="text-sm leading-6 text-text-secondary">{message}</span>
+                      <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="btn-secondary px-3 py-1.5 text-xs font-semibold">
+                        Review
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {data?.status === 'PARTIAL' && (
         <div className="card border-warning/30 bg-warning/5 p-5">
           <div className="flex items-start gap-3">
@@ -366,47 +394,53 @@ function CalculationDetailContent() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void downloadPdf()}
-                  disabled={downloading}
-                  title={DOWNLOAD_CONTENTS.PDF}
-                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                >
-                  {downloading ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
-                  {downloading ? 'Preparing...' : 'Download PDF'}
-                </button>
+                {data?.status !== 'PARTIAL' && (
+                  <button
+                    type="button"
+                    onClick={() => void downloadPdf()}
+                    disabled={downloading}
+                    title={DOWNLOAD_CONTENTS.PDF}
+                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {downloading ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
+                    {downloading ? 'Preparing...' : 'Download PDF'}
+                  </button>
+                )}
                 {/* The workbook, not a second rendering of the PDF: its totals are live
                     formulas, so a cost review can change a figure or type in a credit
                     percentage and watch everything downstream move. */}
-                <button
-                  type="button"
-                  onClick={() => void downloadWorkbook()}
-                  disabled={downloadingWorkbook}
-                  title={DOWNLOAD_CONTENTS.Excel}
-                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                >
-                  {downloadingWorkbook
-                    ? <Loader2 size={15} className="animate-spin" />
-                    : <FileSpreadsheet size={15} />}
-                  {downloadingWorkbook ? 'Preparing...' : 'Download Excel'}
-                </button>
+                {data?.status !== 'PARTIAL' && (
+                  <button
+                    type="button"
+                    onClick={() => void downloadWorkbook()}
+                    disabled={downloadingWorkbook}
+                    title={DOWNLOAD_CONTENTS.Excel}
+                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {downloadingWorkbook
+                      ? <Loader2 size={15} className="animate-spin" />
+                      : <FileSpreadsheet size={15} />}
+                    {downloadingWorkbook ? 'Preparing...' : 'Download Excel'}
+                  </button>
+                )}
                 {/* Word, because a matrix estimate is a grid of shareable links: OOXML carries
                     real hyperlinks, so each row reads as one click instead of a 90-character
                     URL printed as ink. */}
-                <button
-                  type="button"
-                  onClick={() => void downloadDocument()}
-                  disabled={downloadingDocument}
-                  title={DOWNLOAD_CONTENTS.Word}
-                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                >
-                  {downloadingDocument
-                    ? <Loader2 size={15} className="animate-spin" />
-                    : <FileText size={15} />}
-                  {downloadingDocument ? 'Preparing...' : 'Download Word'}
-                </button>
-                {result.url && data?.status === 'COMPLETED' && (
+                {data?.status !== 'PARTIAL' && (
+                  <button
+                    type="button"
+                    onClick={() => void downloadDocument()}
+                    disabled={downloadingDocument}
+                    title={DOWNLOAD_CONTENTS.Word}
+                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {downloadingDocument
+                      ? <Loader2 size={15} className="animate-spin" />
+                      : <FileText size={15} />}
+                    {downloadingDocument ? 'Preparing...' : 'Download Word'}
+                  </button>
+                )}
+                {result.url && ['COMPLETED', 'NEEDS_REVIEW'].includes(data?.status || '') && (result.scenarios?.length || 0) <= 1 && (
                   <a
                     href={result.url}
                     target="_blank"
@@ -417,7 +451,7 @@ function CalculationDetailContent() {
                     <ExternalLink size={15} />
                   </a>
                 )}
-                {result.url && data?.status === 'PARTIAL' && (
+                {result.url && data?.status === 'PARTIAL' && (result.scenarios?.length || 0) <= 1 && (
                   <a
                     href={result.url}
                     target="_blank"
@@ -435,6 +469,8 @@ function CalculationDetailContent() {
                 say which — so the answer used to be to download all three and look. Stated
                 here as well as in each button's tooltip, because a tooltip is invisible on a
                 touch screen and to anyone who does not think to hover. */}
+            {data?.status !== 'PARTIAL' && (
+              <>
             <div className="mt-4 border-t border-border pt-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">In each download</p>
               <ul className="mt-2 space-y-1.5">
@@ -454,6 +490,8 @@ function CalculationDetailContent() {
               <strong className="font-semibold text-text-secondary">Update estimate</strong> there to
               refresh against current pricing.
             </p>
+              </>
+            )}
           </div>
 
           {/* One card per band of scenarios, each row carrying its own shareable estimate.
@@ -756,7 +794,7 @@ function CalculationDetailContent() {
       <ConfirmDialog
         isOpen={confirmDelete}
         title="Delete estimate?"
-        description="This will permanently delete this estimate, its uploaded sheet and its PDF."
+        description="This will permanently delete this estimate and local files. Remote AWS Pricing Calculator estimates will also be removed only when the installed MCP supports deletion."
         confirmLabel="Delete"
         onConfirm={() => void remove()}
         onCancel={() => setConfirmDelete(false)}

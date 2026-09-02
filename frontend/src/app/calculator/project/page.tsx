@@ -305,7 +305,7 @@ function CalculatorProjectContent() {
         <ConfirmDialog
           isOpen={!!confirmDelete}
           title="Delete estimate?"
-          description={`This will permanently delete "${confirmDelete.name}", its uploaded sheet and its documents.`}
+          description={`This will permanently delete "${confirmDelete.name}" and local files. Remote AWS Pricing Calculator estimates will also be removed only when the installed MCP supports deletion.`}
           confirmLabel="Delete"
           onConfirm={() => void remove(confirmDelete)}
           onCancel={() => setConfirmDelete(null)}
