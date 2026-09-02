@@ -173,6 +173,56 @@ export const PlanDecisionSchema = z.object({
 });
 export type PlanDecision = z.infer<typeof PlanDecisionSchema>;
 
+export const ResourceReadinessStatusSchema = z.enum([
+  'PARSED',
+  'SEMANTICALLY_MAPPED',
+  'NEEDS_INPUT',
+  'CALCULATOR_READY',
+  'COMPILED',
+  'VALIDATED',
+]);
+export type ResourceReadinessStatus = z.infer<typeof ResourceReadinessStatusSchema>;
+
+export const SourceMeasurementSchema = z.object({
+  originalValue: z.unknown().optional(),
+  originalUnit: z.string().max(80).optional(),
+  originalScale: z.string().max(80).optional(),
+  originalPeriod: z.string().max(80).optional(),
+  derivedValue: z.unknown().optional(),
+  derivedUnit: z.string().max(80).optional(),
+  derivedScale: z.string().max(80).optional(),
+  derivedPeriod: z.string().max(80).optional(),
+  conversionFormula: z.string().max(600).optional(),
+  evidence: z.array(SourceRefSchema).max(50).optional(),
+});
+export type SourceMeasurement = z.infer<typeof SourceMeasurementSchema>;
+
+export const ResourcePreflightCheckSchema = z.object({
+  field: z.string().min(1).max(160),
+  status: z.enum(['PASS', 'FAIL', 'UNRESOLVED', 'EXCLUDED']),
+  expected: z.unknown().optional(),
+  actual: z.unknown().optional(),
+  source: z.enum(['workbook', 'user', 'user-approved-inference', 'system_default', 'mcp']).optional(),
+  evidence: z.array(SourceRefSchema).max(50).optional(),
+  message: z.string().max(1000).optional(),
+  measurement: SourceMeasurementSchema.optional(),
+});
+export type ResourcePreflightCheck = z.infer<typeof ResourcePreflightCheckSchema>;
+
+export const ResourcePreflightSchema = z.object({
+  resourceId: z.string().min(1).max(240),
+  label: z.string().min(1).max(300),
+  service: z.string().max(120).optional(),
+  scenario: z.string().max(120).optional(),
+  environment: z.string().max(120).optional(),
+  region: z.string().max(120).optional(),
+  readiness: ResourceReadinessStatusSchema,
+  checks: z.array(ResourcePreflightCheckSchema).max(100),
+  blockers: z.array(z.string().max(1000)).default([]),
+  sourceEvidence: z.array(SourceRefSchema).max(100).default([]),
+});
+export type ResourcePreflight = z.infer<typeof ResourcePreflightSchema>;
+
 export const EstimatePlanRevisionSchema = z.object({
   revisionId: z.string().min(1),
   planId: z.string().min(1),
@@ -248,12 +298,14 @@ export const ExecutionManifestSchema = z.object({
   scenarioId: z.string(),
   planRevisionId: z.string(),
   inputHash: z.string(),
+  preflight: z.array(ResourcePreflightSchema).default([]),
   expectedResources: z.array(z.object({
     id: z.string(),
     serviceCode: z.string(),
     calculatorService: z.string(),
     group: z.string(),
     description: z.string(),
+    semanticIntent: z.record(z.string(), z.unknown()).optional(),
     criticalFields: z.record(z.string(), z.unknown()),
   })),
   constraints: z.array(RequirementConstraintSchema),

@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 
 import type {
   ExecutionManifest,
+  ResourcePreflight,
   RequirementCheck,
   RequirementConstraint,
 } from '../../schema/estimate-plan';
@@ -14,6 +15,7 @@ export interface ManifestServiceInput {
   group: string;
   description: string;
   config?: Record<string, unknown>;
+  semanticIntent?: Record<string, unknown>;
   fingerprintFields?: string[];
   requestedPricing: string;
   resolvedPricing: string;
@@ -47,18 +49,21 @@ export function createExecutionManifest(input: {
   planRevisionId: string;
   inputHash: string;
   constraints: RequirementConstraint[];
+  preflight?: ResourcePreflight[];
   services: ManifestServiceInput[];
 }): ExecutionManifest {
   const base = {
     scenarioId: input.scenarioId,
     planRevisionId: input.planRevisionId,
     inputHash: input.inputHash,
+    preflight: input.preflight || [],
     expectedResources: input.services.map((service) => ({
       id: service.resourceIds.join(','),
       serviceCode: service.serviceCode,
       calculatorService: service.calculatorService || '',
       group: service.group,
       description: service.description,
+      ...(service.semanticIntent ? { semanticIntent: service.semanticIntent } : {}),
       criticalFields: criticalFields(service.config || {}, service.fingerprintFields),
     })),
     constraints: input.constraints,
@@ -259,10 +264,10 @@ function actualField(
         .map(() => true),
     ];
   }
-  if (field === 'fargate.task_frequency_per_day') return values('tasksPerDay');
+  if (field === 'fargate.task_frequency_per_day') return values('numberOfTasks');
   const fingerprintValidatedFields = new Set([
     'database.engine', 'api_gateway.api_type', 'sns.delivery_type', 'ses.send_source',
-    'cognito.tier', 'bedrock.model', 'bedrock.tokens_per_call',
+    'cognito.tier', 'lambda.execution_profile', 'bedrock.model', 'bedrock.tokens_per_call',
     'sagemaker.inference_configuration', 'quicksight.subscription_profile',
     'load_balancer.capacity_profile', 'waf.traffic_profile', 'memorydb.data_profile',
     'nat_gateway.configuration',

@@ -98,6 +98,8 @@ function statedNumber(group: ResourceGroup, label: RegExp): number {
 }
 
 function structuredDetail(group: ResourceGroup, label: string): Record<string, unknown> | undefined {
+  const direct = group.configuration?.[label];
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct as Record<string, unknown>;
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const detail of group.details || []) {
     const match = new RegExp(`${escaped}\\s*:\\s*(\\{[^|]+\\})`, 'i').exec(detail);
@@ -113,6 +115,8 @@ function structuredDetail(group: ResourceGroup, label: string): Record<string, u
 }
 
 function detailText(group: ResourceGroup, label: string): string | undefined {
+  const direct = group.configuration?.[label];
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
   const marker = `${label.toLowerCase()}:`;
   for (const detail of group.details || []) {
     const at = detail.toLowerCase().indexOf(marker);
@@ -138,16 +142,28 @@ function objectField(value: Record<string, unknown> | undefined, key: string): R
     : undefined;
 }
 
-function nearestLambdaShape(gbSeconds: number, requests: number): { memoryMb: number; durationMs: number; errorPct: number } {
-  const targetGbMs = (gbSeconds / requests) * 1000;
-  let best = { memoryMb: 128, durationMs: Math.max(1, Math.round(targetGbMs * 8)), errorPct: Number.POSITIVE_INFINITY };
-  for (let memoryMb = 128; memoryMb <= 10_240; memoryMb++) {
-    const durationMs = Math.max(1, Math.round(targetGbMs / (memoryMb / 1024)));
-    const actual = (memoryMb / 1024) * durationMs;
-    const errorPct = Math.abs(actual - targetGbMs) / targetGbMs * 100;
-    if (errorPct < best.errorPct) best = { memoryMb, durationMs, errorPct };
+function groupConfiguration(group: ResourceGroup, key: string): Record<string, unknown> | undefined {
+  const direct = group.configuration?.[key];
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct as Record<string, unknown>;
+  return structuredDetail(group, key);
+}
+
+function sourceNumber(value: unknown): number | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return numberField(record, 'originalValue', 'value', 'derivedValue');
   }
-  return best;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function derivedNumber(value: unknown): number | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const derived = objectField(record, 'derived');
+    return numberField(derived, 'value') ?? numberField(record, 'derivedValue', 'originalValue', 'value');
+  }
+  return sourceNumber(value);
 }
 
 function nearestBedrockSchedule(monthlyCalls: number): { requestsPerMinute: number; hoursPerDay: number; representedCalls: number } {
@@ -414,17 +430,27 @@ const fargateAdapter: CalculatorAdapter = {
   supportedCommitments: { onDemand: true, computeSavingsPlans: [1, 3] },
   matches: (group) => /\bfargate\b/.test(serviceText(group)),
   compile(group, context) {
+    const semantic = groupConfiguration(group, 'fargateTask');
     const vcpuHours = quantity(group, 'vCPU-hours/month');
     const memoryHours = quantity(group, 'GB-hours/month');
-    const vcpu = group.vcpu || (vcpuHours > 0 ? 1 : 0);
-    const memory = group.ramGb || (vcpuHours > 0 && memoryHours > 0 ? memoryHours / vcpuHours : 0);
-    if (!vcpu || !memory || !vcpuHours || !memoryHours) return {
+    const taskCountMeasure = objectField(semantic, 'taskCount');
+    const durationMeasure = objectField(semantic, 'taskDuration');
+    const vcpuMeasure = objectField(semantic, 'vcpuPerTask');
+    const memoryMeasure = objectField(semantic, 'memoryGbPerTask');
+    const taskCount = sourceNumber(taskCountMeasure) ?? group.count;
+    const taskFrequency = String(semantic?.taskFrequency || '').trim() || 'perMonth';
+    const durationHours = derivedNumber(durationMeasure) ?? group.hoursPerMonth ?? (group.hoursPerDay / 24) * 730;
+    const durationUnit = String((durationMeasure as any)?.derived?.unit || (durationMeasure as any)?.derivedUnit || 'hours');
+    const vcpu = sourceNumber(vcpuMeasure) ?? group.vcpu;
+    const memory = sourceNumber(memoryMeasure) ?? group.ramGb;
+    if (!taskCount || !vcpu || !memory || !durationHours) return {
       serviceCode: 'AmazonECS', filters: {} as Record<string, string>, basis: 'Fargate was detected but its vCPU-hours and GB-hours are incomplete.',
-      calculatorUnsupported: 'Fargate requires vCPU-hours and GB-hours (or task vCPU, memory, count and duration) before Calculator compilation.',
+      calculatorUnsupported: 'Fargate requires task count, task frequency, task duration, task duration unit, vCPU per task, memory per task and region before Calculator compilation.',
       storageOwner: 'service-native',
     };
-    const tasks = Math.max(1, group.count);
-    const durationHours = vcpuHours / (tasks * vcpu);
+    const tasks = Math.max(1, taskCount);
+    const expectedVcpuHours = tasks * (/perday/i.test(taskFrequency) ? 730 / 24 : 1) * durationHours * vcpu;
+    const expectedMemoryHours = tasks * (/perday/i.test(taskFrequency) ? 730 / 24 : 1) * durationHours * memory;
     return {
       serviceCode: 'AmazonECS',
       filters: { usagetype: '*Fargate-vCPU-Hours:perCPU' },
@@ -433,8 +459,8 @@ const fargateAdapter: CalculatorAdapter = {
         region: group.region || context.defaultRegion,
         operatingSystem: /win/i.test(group.os || '') ? 'windows' : 'linux',
         selectArchitecture: /arm|graviton/i.test(serviceText(group)) ? 'arm' : 'x86',
-        numberOfTasks: frequency(tasks),
-        taskDuration: { value: String(durationHours), unit: 'hr' },
+        numberOfTasks: frequency(tasks, taskFrequency),
+        taskDuration: { value: String(durationHours), unit: /^min/i.test(durationUnit) ? 'minutes' : 'hr' },
         vcpuPerTask: String(vcpu),
         ...(vcpu <= 0.5 ? { smallMemory: String(memory) }
           : vcpu <= 4 ? { memoryStandardFargateOnDemand: fileSize(memory, 'gb|NA') }
@@ -442,7 +468,7 @@ const fargateAdapter: CalculatorAdapter = {
         storageAmountECS: fileSize(20, 'gb|NA'),
         description: description(group, `${tasks} Fargate task(s)`),
       },
-      basis: `Fargate task shape compiled from ${vcpuHours} vCPU-hours and ${memoryHours} GB-hours per month.`,
+      basis: `Fargate compiled from source task semantics: ${tasks} task(s) ${taskFrequency}, ${durationHours} hour duration, ${vcpu} vCPU and ${memory} GB per task${vcpuHours || memoryHours ? `; derived monthly cross-check ${vcpuHours}/${expectedVcpuHours.toFixed(2)} vCPU-hours and ${memoryHours}/${expectedMemoryHours.toFixed(2)} GB-hours` : ''}.`,
       storageOwner: 'service-native',
       fingerprintFields: ['operatingSystem', 'selectArchitecture', 'numberOfTasks', 'taskDuration', 'vcpuPerTask', 'smallMemory', 'memoryStandardFargateOnDemand', 'smallMemory_8', 'smallMemory_16', 'storageAmountECS'],
     };
@@ -490,13 +516,21 @@ const lambdaAdapter: CalculatorAdapter = {
   compile(group, context) {
     const requests = quantity(group, 'invocations/month') || quantity(group, 'requests/month');
     const gbSeconds = quantity(group, 'GB-seconds/month');
-    if (!requests || !gbSeconds) return {
-      serviceCode: 'AWSLambda', filters: {} as Record<string, string>, basis: 'Lambda was detected but its request and compute dimensions are incomplete.',
-      calculatorUnsupported: 'Lambda requires both monthly invocations and GB-seconds, or an explicit memory and duration, before Calculator compilation.',
+    const profile = structuredDetail(group, 'lambda.execution_profile');
+    const memoryMb = numberField(profile, 'memoryMb', 'memory_mb', 'memoryMB', 'memory');
+    const durationMs = numberField(profile, 'durationMs', 'duration_ms', 'durationMS', 'duration');
+    if (!requests || !memoryMb || !durationMs) return {
+      serviceCode: 'AWSLambda',
+      filters: {} as Record<string, string>,
+      basis: 'Lambda was detected but its Calculator execution profile is incomplete.',
+      calculatorUnsupported: 'Lambda Calculator compilation requires explicit monthly invocations, memory MB and duration ms. Aggregate GB-seconds are preserved as evidence only; the pipeline will not manufacture a memory/duration pair.',
       storageOwner: 'none',
     };
     const calculatorRequests = Math.max(1, Math.round(requests));
-    const equivalent = nearestLambdaShape(gbSeconds, calculatorRequests);
+    const representedGbSeconds = (calculatorRequests * memoryMb / 1024 * durationMs) / 1000;
+    const computeVariance = gbSeconds
+      ? Math.abs(representedGbSeconds - gbSeconds) / Math.max(gbSeconds, 1) * 100
+      : undefined;
     return {
       serviceCode: 'AWSLambda', filters: { group: 'AWS-Lambda-Duration' },
       calculatorKey: 'aWSLambda',
@@ -504,12 +538,12 @@ const lambdaAdapter: CalculatorAdapter = {
         region: group.region || context.defaultRegion,
         selectArchitectureRequests: /arm|graviton/i.test(serviceText(group)) ? '2' : '1',
         numberOfRequests: wholeFrequency(requests),
-        durationOfEachRequest: String(equivalent.durationMs),
-        sizeOfMemoryAllocated: fileSize(equivalent.memoryMb, 'mb|NA'),
+        durationOfEachRequest: String(Math.round(durationMs)),
+        sizeOfMemoryAllocated: fileSize(Math.round(memoryMb), 'mb|NA'),
         selectArchitectureConcurrency: '1',
         description: description(group, 'Lambda aggregate workload'),
       },
-      basis: `Lambda uses the nearest Calculator-representable integer shape (${equivalent.memoryMb} MB, ${equivalent.durationMs} ms) for ${calculatorRequests} invocations and ${gbSeconds} GB-seconds/month (${equivalent.errorPct.toFixed(4)}% compute variance)${calculatorRequests !== requests ? `; fractional annual-to-month invocations were rounded from ${requests} to ${calculatorRequests} because AWS Calculator requires whole requests` : ''}.`,
+      basis: `Lambda uses the explicit execution profile (${Math.round(memoryMb)} MB, ${Math.round(durationMs)} ms) for ${calculatorRequests} invocations${gbSeconds ? `; workbook GB-seconds/month cross-check variance ${computeVariance!.toFixed(4)}%` : ''}${calculatorRequests !== requests ? `; fractional annual-to-month invocations were rounded from ${requests} to ${calculatorRequests} because AWS Calculator requires whole requests` : ''}.`,
       storageOwner: 'none',
       fingerprintFields: ['selectArchitectureRequests', 'numberOfRequests', 'durationOfEachRequest', 'sizeOfMemoryAllocated'],
     };
@@ -1105,6 +1139,10 @@ export const calculatorAdapterRegistry: readonly CalculatorAdapter[] = [
   ...simpleUsageAdapters,
   ec2Adapter,
 ];
+
+export const ADAPTER_REGISTRY_VERSION = calculatorAdapterRegistry
+  .map((adapter) => `${adapter.serviceFamily}@${adapter.version}`)
+  .join('|');
 
 export function compileWithCalculatorAdapter(
   group: ResourceGroup,

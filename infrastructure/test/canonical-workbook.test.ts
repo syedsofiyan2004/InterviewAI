@@ -377,6 +377,13 @@ describe('Converting a stated figure onto a monthly basis', () => {
     const [quantity] = book.rows[0].quantities;
 
     expect(quantity).toMatchObject({ unit: 'invocations/month', amount: 2_000_000 });
+    expect(quantity).toMatchObject({
+      originalValue: 24000000,
+      originalPeriod: 'year',
+      derivedValue: 2_000_000,
+      derivedPeriod: 'month',
+      conversionFormula: 'per-year figure divided by 12 to a monthly basis',
+    });
     expect(quantity.conversions.join(' ')).toMatch(/divided by 12/);
     // Republished at the workbook level, so a caller that never inspects a row still sees it.
     expect(book.conversions.join(' ')).toMatch(/divided by 12/);
@@ -395,10 +402,43 @@ describe('Converting a stated figure onto a monthly basis', () => {
     // 120 million a year is 10 million a month, not 10 and not 120. Expanding after dividing
     // is the same arithmetic; doing it in one step is where a factor gets dropped.
     expect(quantity).toMatchObject({ unit: 'requests/month', amount: 10_000_000 });
+    expect(quantity).toMatchObject({
+      originalValue: 120,
+      originalScale: 'millions',
+      originalPeriod: 'year',
+      derivedValue: 10_000_000,
+      derivedPeriod: 'month',
+    });
     expect(quantity.conversions).toEqual([
       'millions expanded to whole units (x 1,000,000)',
       'per-year figure divided by 12 to a monthly basis',
     ]);
+  });
+
+  test('a per-day Fargate count keeps its original daily meaning beside the monthly derivative', () => {
+    const book = canonicalise({
+      metrics: [{
+        sheet: 'Operations Input',
+        scenario: YEARS[0],
+        service: 'Amazon ECS Fargate',
+        cells: [
+          { row: 4, label: 'Container task count per day', value: '10' },
+          { row: 5, label: 'Container task duration hours', value: '2' },
+          { row: 6, label: 'Container task vCPU', value: '1' },
+          { row: 7, label: 'Container task memory GB', value: '2' },
+        ],
+      }],
+      scenarios: YEARS,
+    });
+    const row = book.rows[0];
+
+    expect(row.shape).toMatchObject({
+      countOriginalValue: 10,
+      countOriginalPeriod: 'day',
+      countDerivedValue: 304.17,
+      countDerivedPeriod: 'month',
+    });
+    expect(row.quantities[0].conversions.join(' ')).toMatch(/per-day count multiplied/);
   });
 
   test('a block size stated in the label is expanded to whole units', () => {

@@ -333,6 +333,7 @@ export function readUnit(label: string, value: number): UnitReading {
  * reader)" is not a different resource from "Aurora instance class".
  */
 const QUALIFIER_NOISE = /\b(instance|node|broker|task|pod|db|class|type|count|storage|disk|volume|size|per|each|total|capacity|vcpu|cpu|core|cores|ram|memory|gb|gib|amazon|aws)\b/g;
+const FARGATE_QUALIFIER_NOISE = /\b(ecs|fargate|number|task|tasks|pod|pods|count|frequency|runs?|duration|runtime|run|time|average|avg|minutes?|mins?|hours?|hrs?|seconds?|secs?|per|each|daily|day|days|monthly|month|months|vcpu|cpu|cpus|memory|ram|gb|gib|size|allocated)\b/g;
 
 /**
  * A vCPU/RAM aside out of a label: "(1 vCPU/2GB each)", "(2 vCPU, 4 GiB per task)".
@@ -460,7 +461,16 @@ export function readMetricMatrix(header: string[], dataRows: string[][], firstDa
   // A key built from service AND qualifier: "SageMaker VLM/OCR instance count" and "SageMaker
   // reasoning-model instance count" are two different fleets, and folding them together would
   // price one of them twice and the other never.
-  const groupKey = (metric: MetricRow) => `${metric.service ?? metric.qualifier}||${metric.qualifier}`;
+  const workloadQualifier = (metric: MetricRow): string => {
+    if (/\bfargate\b/i.test(metric.service || '')) {
+      return normalise(metric.label.replace(/\([^)]*\)/g, ' '))
+        .replace(FARGATE_QUALIFIER_NOISE, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    return metric.qualifier;
+  };
+  const groupKey = (metric: MetricRow) => `${metric.service ?? workloadQualifier(metric)}||${workloadQualifier(metric)}`;
 
   // Every metric row belonging to each key, WITHOUT the per-band emptiness filter below.
   // Grouping has to drop a blank cell -- a resource must not be invented in a band where the

@@ -750,7 +750,7 @@ describe('the rows code cannot map', () => {
     // partial link until a deterministic adapter can encode the second resource.
     expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.status).toBe('FAILED');
-    expect(outcome.result.validationErrors?.join(' ')).toMatch(/stopped before save/);
+    expect(outcome.result.validationErrors?.join(' ')).toMatch(/preflight failed/);
   });
 
   test('a classifier failure leaves that group unpriced rather than failing the run', async () => {
@@ -783,9 +783,8 @@ describe('the two scenarios', () => {
     );
 
     expect(outcome.result.scenarios.map((scenario) => scenario.key)).toEqual(['baseline', 'rightsized']);
-    // The headline total and the line items are the lift-and-shift only: pricing both
-    // scenarios into one total would double the estimate.
-    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 4, 2);
+    // The headline total is populated only when the saved Calculator estimate validates.
+    expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.result.lineItems).toHaveLength(1);
     // And only the agreed configuration is saved to the shareable link.
     expect(JSON.parse(String(mcp.calls[0].args.services))).toHaveLength(1);
@@ -892,8 +891,8 @@ describe('nothing is lost between the report and the link', () => {
     expect(warning).toBeDefined();
     // 4 x m6a.xlarge for a full month is the group that was dropped.
     expect(outcome.status).toBe('PARTIAL');
-    // The headline comes from the saved snapshot, so it cannot include the dropped group.
-    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 2, 2);
+    // A partial read-back cannot masquerade as a final client-ready total.
+    expect(outcome.result.monthlyTotal).toBeNull();
   });
 
   test('a browser validator failure does not discard a generated calculator link', async () => {
@@ -910,7 +909,7 @@ describe('nothing is lost between the report and the link', () => {
 
     expect(mcp.calls.map((call) => call.name)).toEqual(['build_estimate', 'import_estimate']);
     expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
-    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 4, 2);
+    expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.result.validationErrors?.join(' ')).toMatch(/browser validator is not configured/);
     expect(outcome.status).toBe('PARTIAL');
   });
@@ -924,7 +923,7 @@ describe('nothing is lost between the report and the link', () => {
     const outcome = await run([resource({ quantity: '4' })], {}, mcp);
 
     expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
-    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 4, 2);
+    expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.result.validationErrors?.join(' ')).toMatch(/could not be read back/);
     expect(outcome.status).toBe('PARTIAL');
   });

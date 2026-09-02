@@ -6,6 +6,7 @@ import {
   type CalculationRecord,
   type CalculationResource,
 } from '../../schema/calculator';
+import type { CanonicalWorkbook } from '../shared/canonical-workbook';
 import { appendProgress, type ProgressEvent } from '../shared/progress-eta';
 import { calculationResultKey, compactCalculationResult } from '../shared/calculator-result-storage';
 import { McpSidecarClient } from './mcp-client';
@@ -66,6 +67,17 @@ async function loadResources(record: CalculationRecord): Promise<CalculationReso
     throw new Error('PARSED_ROWS_UNREADABLE: the stored resource list is not a list of rows.');
   }
   return parsed as CalculationResource[];
+}
+
+async function loadCanonicalModel(record: CalculationRecord): Promise<CanonicalWorkbook | undefined> {
+  if (!record.canonical_model_s3_key) return undefined;
+
+  const buffer = await getFileBuffer(BUCKET_NAME, record.canonical_model_s3_key);
+  const parsed = JSON.parse(buffer.toString('utf8'));
+  if (!parsed || !Array.isArray(parsed.rows)) {
+    throw new Error('CANONICAL_MODEL_UNREADABLE: the stored canonical cost model is not readable.');
+  }
+  return parsed as CanonicalWorkbook;
 }
 
 export const handler = async (event: OrchestratorEvent): Promise<void> => {
@@ -133,7 +145,9 @@ export const handler = async (event: OrchestratorEvent): Promise<void> => {
     // Inside the try: an unreadable spilled list must surface as a FAILED row with a
     // message, not as an invocation that ends with the record stuck on PROCESSING.
     const resources = await loadResources(record);
-    console.log(`Calculation ${calculationId}: pricing ${resources.length} parsed row(s).`);
+    const canonicalModel = await loadCanonicalModel(record);
+    console.log(`Calculation ${calculationId}: pricing ${resources.length} parsed row(s)`
+      + (canonicalModel ? ` from ${canonicalModel.rows.length} canonical row(s).` : '.'));
 
     const mcp = new McpSidecarClient(SIDECAR_FUNCTION_NAME, BROWSER_VALIDATOR_FUNCTION_NAME);
     // Warmup only, and deliberately non-fatal: the sidecar does not require an
@@ -147,7 +161,7 @@ export const handler = async (event: OrchestratorEvent): Promise<void> => {
 
     const outcome = await runEstimatePipeline(record, resources, mcp, async update => {
       await recordStage(update.stage, update.message);
-    });
+    }, canonicalModel);
 
     // Parsed rather than trusted: the pipeline builds this object itself, so validation
     // here is a guard against a future edit drifting from the stored contract.

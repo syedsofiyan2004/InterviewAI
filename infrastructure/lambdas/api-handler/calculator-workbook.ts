@@ -14,7 +14,14 @@ import {
   type MetricBand,
 } from '../shared/metric-matrix';
 import { canonicalise } from '../shared/canonical-workbook';
-import type { CanonicalInput, CanonicalWorkbook, InventoryRow } from '../shared/canonical-workbook';
+import type {
+  CanonicalExclusion,
+  CanonicalInput,
+  CanonicalRow,
+  CanonicalScenario,
+  CanonicalWorkbook,
+  InventoryRow,
+} from '../shared/canonical-workbook';
 import { sqlLicenceSuffix } from '../shared/sql-licence';
 import type { CalculationResource, WorkbookInsights } from '../../schema/calculator';
 
@@ -254,6 +261,8 @@ const MAX_QUANTITY_CONVERSIONS = 8;
 
 export interface WorkbookAnalysis {
   resources: CalculationResource[];
+  legacyResources: CalculationResource[];
+  canonicalModel: CanonicalWorkbook;
   insights: WorkbookInsights;
   warnings: string[];
   workbookIR: WorkbookIR;
@@ -663,6 +672,13 @@ interface AnalysisContext {
   excerptCandidates: Array<{ sheet: string; order: number; priority: number; text: string }>;
   /** Per-sheet totals from inventory rows, cross-checked against the sheet's own footer. */
   sheetTotals: Map<string, number>;
+  canonicalRows: CanonicalRow[];
+  canonicalExclusions: CanonicalExclusion[];
+  canonicalConversions: Set<string>;
+  canonicalScenarios: Map<string, CanonicalScenario>;
+  canonicalInputRows: number;
+  canonicalMetricCells: number;
+  canonicalAccountedMetricCells: number;
 }
 
 const warn = (context: AnalysisContext, message: string) => {
@@ -679,6 +695,36 @@ const warn = (context: AnalysisContext, message: string) => {
 const warnOnce = (context: AnalysisContext, message: string) => {
   if (!context.warnings.includes(message)) warn(context, message);
 };
+
+function rememberCanonical(context: AnalysisContext, book: CanonicalWorkbook): void {
+  context.canonicalRows.push(...book.rows);
+  context.canonicalExclusions.push(...book.exclusions);
+  for (const conversion of book.conversions) context.canonicalConversions.add(conversion);
+  for (const scenario of book.scenarios) {
+    if (!context.canonicalScenarios.has(scenario.key)) context.canonicalScenarios.set(scenario.key, scenario);
+  }
+  context.canonicalInputRows += book.accounting.inputRows;
+  context.canonicalMetricCells += book.accounting.metricCells;
+  context.canonicalAccountedMetricCells += book.accounting.accountedMetricCells;
+}
+
+function canonicalModelOf(context: AnalysisContext): CanonicalWorkbook {
+  return {
+    rows: context.canonicalRows,
+    exclusions: context.canonicalExclusions,
+    conversions: [...context.canonicalConversions],
+    scenarios: [...context.canonicalScenarios.values()],
+    accounting: {
+      inputRows: context.canonicalInputRows,
+      canonicalRows: context.canonicalRows.length,
+      exclusions: context.canonicalExclusions.length,
+      metricCells: context.canonicalMetricCells,
+      accountedMetricCells: context.canonicalAccountedMetricCells,
+      balanced: context.canonicalInputRows === context.canonicalRows.length + context.canonicalExclusions.length
+        && context.canonicalMetricCells === context.canonicalAccountedMetricCells,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Declaring what a row is billed on
@@ -723,6 +769,7 @@ function serviceFromSection(section?: string): string | undefined {
 interface Declaration {
   quantities?: CalculationResource['quantities'];
   attributes?: CalculationResource['attributes'];
+  configuration?: CalculationResource['configuration'];
 }
 
 /**
@@ -785,6 +832,7 @@ function noteRefusals(context: AnalysisContext, book: CanonicalWorkbook, cite: s
  */
 function declareBilling(input: CanonicalInput, cite: string, context: AnalysisContext): Declaration {
   const book = canonicalise(input);
+  rememberCanonical(context, book);
   noteRefusals(context, book, cite);
 
   const declaration: Declaration = {};
@@ -806,6 +854,15 @@ function declareBilling(input: CanonicalInput, cite: string, context: AnalysisCo
     declaration.quantities = priced.slice(0, MAX_QUANTITIES).map((quantity) => ({
       unit: quantity.unit,
       amount: quantity.amount,
+      originalValue: quantity.originalValue,
+      originalUnit: quantity.originalUnit,
+      originalScale: quantity.originalScale,
+      originalPeriod: quantity.originalPeriod,
+      derivedValue: quantity.derivedValue,
+      derivedUnit: quantity.derivedUnit,
+      derivedScale: quantity.derivedScale,
+      derivedPeriod: quantity.derivedPeriod,
+      conversionFormula: quantity.conversionFormula,
       // Trimmed to the schema's lengths rather than trusted to be short: a basis and a
       // conversion line are both assembled out of column headings, and a heading is as long as
       // whoever typed it felt like making it.
@@ -824,6 +881,37 @@ function declareBilling(input: CanonicalInput, cite: string, context: AnalysisCo
     warnOnce(context, `Some rows state more than ${MAX_ATTRIBUTES} values with no column of their own, and only the first ${MAX_ATTRIBUTES} of them are kept per row. The full row text is stored regardless.`);
   }
   if (attributes.length) declaration.attributes = attributes.slice(0, MAX_ATTRIBUTES);
+
+  if (/fargate/i.test(row.service || '') && row.shape) {
+    declaration.configuration = {
+      ...(declaration.configuration || {}),
+      fargateTask: {
+        taskCount: {
+          originalValue: row.shape.countOriginalValue ?? row.shape.count,
+          originalUnit: row.shape.countOriginalUnit ?? 'tasks',
+          originalPeriod: row.shape.countOriginalPeriod ?? 'month',
+          derived: row.shape.countDerivedValue !== undefined ? {
+            value: row.shape.countDerivedValue,
+            unit: row.shape.countDerivedUnit ?? 'tasks',
+            formula: row.shape.countConversionFormula ?? 'no count conversion',
+          } : undefined,
+        },
+        taskFrequency: row.shape.countOriginalPeriod === 'day' ? 'perDay' : 'perMonth',
+        vcpuPerTask: { originalValue: row.shape.vcpu },
+        memoryGbPerTask: { originalValue: row.shape.ramGb },
+        taskDuration: {
+          originalValue: row.shape.durationOriginalValue ?? row.shape.hoursPerUnit,
+          originalUnit: row.shape.durationOriginalUnit ?? 'hours',
+          originalPeriod: row.shape.durationOriginalPeriod ?? 'month',
+          derived: row.shape.durationDerivedValue !== undefined ? {
+            value: row.shape.durationDerivedValue,
+            unit: row.shape.durationDerivedUnit ?? 'hours',
+            formula: row.shape.durationConversionFormula ?? 'no duration conversion',
+          } : undefined,
+        },
+      },
+    };
+  }
 
   return declaration;
 }
@@ -2038,10 +2126,23 @@ export async function analyseWorkbook(buffer: Buffer, fileName: string): Promise
     fxCandidates: [],
     excerptCandidates: [],
     sheetTotals: new Map(),
+    canonicalRows: [],
+    canonicalExclusions: [],
+    canonicalConversions: new Set(),
+    canonicalScenarios: new Map(),
+    canonicalInputRows: 0,
+    canonicalMetricCells: 0,
+    canonicalAccountedMetricCells: 0,
   };
 
   if (!sheets.length) {
-    return { ...context, workbookIR: document.ir, warnings: ['The workbook contained no readable sheets.'] };
+    context.warnings.push('The workbook contained no readable sheets.');
+    return {
+      ...context,
+      legacyResources: context.resources,
+      canonicalModel: canonicalModelOf(context),
+      workbookIR: document.ir,
+    };
   }
 
   const tables: Array<{ sheet: SheetGrid; block: SheetBlock; rows: number; kind: TableKind }> = [];
@@ -2303,7 +2404,12 @@ export async function analyseWorkbook(buffer: Buffer, fileName: string): Promise
     context.insights.reported_monthly_total = Math.round(total * 100) / 100;
   }
 
-  return { ...context, workbookIR: document.ir };
+  return {
+    ...context,
+    legacyResources: context.resources,
+    canonicalModel: canonicalModelOf(context),
+    workbookIR: document.ir,
+  };
 }
 
 /**

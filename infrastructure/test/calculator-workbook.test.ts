@@ -938,6 +938,15 @@ describe('The billing quantities on a transposed sheet', () => {
     expect(lambda?.quantities).toEqual([{
       unit: 'invocations/month',
       amount: 5_000_000,
+      originalValue: 5,
+      originalUnit: 'invocations',
+      originalScale: 'millions',
+      originalPeriod: 'month',
+      derivedValue: 5_000_000,
+      derivedUnit: 'invocations/month',
+      derivedScale: 'whole',
+      derivedPeriod: 'month',
+      conversionFormula: 'millions expanded to whole units (x 1,000,000)',
       basis: 'Lambda invocations per month (millions)',
       conversions: ['millions expanded to whole units (x 1,000,000)'],
     }]);

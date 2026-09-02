@@ -15,7 +15,7 @@ function requirement(field: string, expected: unknown): RequirementConstraint {
 function fixture(constraints: RequirementConstraint[] = []) {
   const config = {
     region: 'eu-west-1', instanceType: 'm7i.large', workload: 2,
-    utilization: '100', tasksPerDay: 10, pricingStrategy: 'ondemand', description: '2 x m7i.large',
+    utilization: '100', numberOfTasks: { value: '10', unit: 'perDay' }, pricingStrategy: 'ondemand', description: '2 x m7i.large',
   };
   const manifest = createExecutionManifest({
     scenarioId: 'baseline', planRevisionId: 'revision-1', inputHash: 'input-hash', constraints,

@@ -9,10 +9,12 @@ import type {
   EstimatePlanRevision,
   EstimateScenarioRequest,
   ExecutionManifest,
+  ResourcePreflight,
   RequirementCheck,
   RequirementConstraint,
 } from '../../schema/estimate-plan';
 import type { WorkbookInsights } from '../../schema/calculator';
+import type { CanonicalRow, CanonicalWorkbook } from '../shared/canonical-workbook';
 import type { CalculatorGateway } from './mcp-client';
 import {
   HOURS_PER_MONTH,
@@ -41,7 +43,7 @@ import {
 import { sqlLicensing } from '../shared/sql-licence';
 import { countOf, groupResources, type ResourceGroup } from './prompt';
 import { calculatorModelId, type CalculatorModelTier } from './model-router';
-import { compileWithCalculatorAdapter } from './service-adapters';
+import { ADAPTER_REGISTRY_VERSION, compileWithCalculatorAdapter } from './service-adapters';
 import { parseServiceCatalog, resolveConfigAgainstCatalog, validateConfigAgainstCatalog } from './calculator-catalog';
 import {
   createExecutionManifest,
@@ -96,6 +98,7 @@ import {
  */
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
+const MCP_PACKAGE_VERSION = 'sample-aws-pricing-calculator-mcp@1.2.9';
 
 /**
  * How many price lookups are in flight at once.
@@ -1089,6 +1092,107 @@ function billableQuantity(
   return undefined;
 }
 
+function evidenceFromCanonical(row: CanonicalRow): CalculationResource['source_evidence'] {
+  return row.provenance.slice(0, 100).map((cell) => ({
+    sheet: cell.sheet,
+    row: cell.row,
+    label: cell.label,
+    value: cell.value,
+  }));
+}
+
+function fargateConfiguration(row: CanonicalRow): CalculationResource['configuration'] | undefined {
+  if (!/fargate/i.test(row.service || '') || !row.shape) return undefined;
+  return {
+    fargateTask: {
+      taskCount: {
+        originalValue: row.shape.countOriginalValue ?? row.shape.count,
+        originalUnit: row.shape.countOriginalUnit ?? 'tasks',
+        originalPeriod: row.shape.countOriginalPeriod ?? 'month',
+        derived: row.shape.countDerivedValue !== undefined ? {
+          value: row.shape.countDerivedValue,
+          unit: row.shape.countDerivedUnit ?? 'tasks',
+          formula: row.shape.countConversionFormula ?? 'no count conversion',
+        } : undefined,
+        evidence: evidenceFromCanonical(row),
+      },
+      taskFrequency: row.shape.countOriginalPeriod === 'day' ? 'perDay' : 'perMonth',
+      vcpuPerTask: row.shape.vcpu === undefined ? undefined : {
+        originalValue: row.shape.vcpu,
+        evidence: evidenceFromCanonical(row),
+      },
+      memoryGbPerTask: row.shape.ramGb === undefined ? undefined : {
+        originalValue: row.shape.ramGb,
+        originalUnit: 'GB',
+        evidence: evidenceFromCanonical(row),
+      },
+      taskDuration: {
+        originalValue: row.shape.durationOriginalValue ?? row.shape.hoursPerUnit,
+        originalUnit: row.shape.durationOriginalUnit ?? 'hours',
+        originalPeriod: row.shape.durationOriginalPeriod ?? 'month',
+        derived: row.shape.durationDerivedValue !== undefined ? {
+          value: row.shape.durationDerivedValue,
+          unit: row.shape.durationDerivedUnit ?? 'hours',
+          formula: row.shape.durationConversionFormula ?? 'no duration conversion',
+        } : undefined,
+        evidence: evidenceFromCanonical(row),
+      },
+    },
+  };
+}
+
+export function resourcesFromCanonicalModel(model: CanonicalWorkbook): CalculationResource[] {
+  return model.rows.map((row, index) => {
+    const first = row.provenance[0];
+    const configuration = fargateConfiguration(row);
+    const role = /\b(?:dr|disaster|secondary|standby|replica|replicated)\b/i.test(row.label)
+      ? 'DR'
+      : undefined;
+    return {
+      plan_resource_id: row.id || String(index),
+      resourceId: row.id,
+      role,
+      sheet: first?.sheet,
+      row: first?.row,
+      name: row.label,
+      metric: row.label,
+      service: row.service,
+      scenario: row.scenario?.key,
+      environment: row.environment,
+      region: row.region,
+      size: row.shape?.size,
+      os: row.shape?.os,
+      purchase_model: row.shape?.purchaseModel,
+      quantity: row.shape ? String(row.shape.countOriginalValue ?? row.shape.count) : undefined,
+      vcpu: row.shape?.vcpu,
+      ram_gb: row.shape?.ramGb,
+      hoursPerMonth: row.shape?.hoursPerUnit,
+      raw: row.provenance.map((cell) => [cell.section, cell.label, cell.value].filter(Boolean).join(': ')).join(' | ').slice(0, 600),
+      quantities: row.quantities.map((quantity) => ({
+        unit: quantity.unit,
+        amount: quantity.amount,
+        originalValue: quantity.originalValue,
+        originalUnit: quantity.originalUnit,
+        originalScale: quantity.originalScale,
+        originalPeriod: quantity.originalPeriod,
+        derivedValue: quantity.derivedValue,
+        derivedUnit: quantity.derivedUnit,
+        derivedScale: quantity.derivedScale,
+        derivedPeriod: quantity.derivedPeriod,
+        conversionFormula: quantity.conversionFormula,
+        basis: quantity.basis,
+        conversions: quantity.conversions,
+      })),
+      attributes: row.attributes,
+      notes: row.notes,
+      ...(configuration ? { configuration } : {}),
+      source_evidence: evidenceFromCanonical(row),
+      unresolved_fields: row.unpriced.map((cell) => cell.provenance.label).slice(0, 80),
+      readiness: row.unpriced.length ? 'NEEDS_INPUT' : 'SEMANTICALLY_MAPPED',
+    };
+  });
+}
+
 function quantityByUnit(group: ResourceGroup, unit: CanonicalUnit) {
   return (group.quantities ?? []).find((quantity) => quantity.unit === unit);
 }
@@ -1613,7 +1717,9 @@ export function toServers(
     const groupCount = Math.max(1, group.count);
 
     for (const index of group.members) {
-      const resource = resources[index];
+      const resource = typeof index === 'number'
+        ? resources[index]
+        : resources.find((candidate) => candidate.plan_resource_id === index || candidate.resourceId === index);
       if (!resource) continue;
 
       const count = countOf(resource);
@@ -1626,7 +1732,7 @@ export function toServers(
         : round2(entry.storageMonthly * (diskGb / group.diskGb));
 
       rows.push({
-        name: resource.name || `${group.service} row ${resource.row ?? index + 1}`,
+        name: resource.name || `${group.service} row ${resource.row ?? (typeof index === 'number' ? index + 1 : index)}`,
         count,
         environment: group.environment,
         group: labelOf(group),
@@ -1732,9 +1838,11 @@ interface SaveEntry {
   resourceIds: string[];
   requestedPricing: string;
   resolvedPricing: string;
+  semanticIntent?: Record<string, unknown>;
   pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
   pricingReason?: string;
   fingerprintFields?: string[];
+  preflight: ResourcePreflight;
 }
 
 interface ValidatedSaveResult {
@@ -1745,6 +1853,127 @@ interface ValidatedSaveResult {
   validationErrors: string[];
   snapshot?: SavedEstimateSnapshot;
   manifest: ExecutionManifest;
+}
+
+function measurementNumber(value: unknown): number | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const key of ['originalValue', 'value', 'derivedValue']) {
+      const parsed = Number(record[key]);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function semanticIntentFor(group: ResourceGroup, config?: Record<string, unknown>): Record<string, unknown> | undefined {
+  const fargate = group.configuration?.fargateTask;
+  if (fargate && typeof fargate === 'object' && !Array.isArray(fargate)) {
+    const semantic = fargate as Record<string, unknown>;
+    const duration = semantic.taskDuration && typeof semantic.taskDuration === 'object' && !Array.isArray(semantic.taskDuration)
+      ? semantic.taskDuration as Record<string, unknown>
+      : undefined;
+    const derived = duration?.derived && typeof duration.derived === 'object' && !Array.isArray(duration.derived)
+      ? duration.derived as Record<string, unknown>
+      : undefined;
+    return {
+      taskCount: measurementNumber(semantic.taskCount),
+      taskFrequency: semantic.taskFrequency,
+      vcpuPerTask: measurementNumber(semantic.vcpuPerTask),
+      memoryGbPerTask: measurementNumber(semantic.memoryGbPerTask),
+      duration: measurementNumber(derived) ?? measurementNumber(duration),
+      durationUnit: String(derived?.unit || duration?.derivedUnit || 'hours'),
+      calculatorNumberOfTasks: config?.numberOfTasks,
+      calculatorTaskDuration: config?.taskDuration,
+    };
+  }
+  return undefined;
+}
+
+function preflightFor(entry: {
+  label: string;
+  group: ResourceGroup;
+  serviceCode: string;
+  calculatorService?: string;
+  config?: Record<string, unknown>;
+  fingerprintFields?: string[];
+  pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
+  pricingReason?: string;
+}): ResourcePreflight {
+  const checks: ResourcePreflight['checks'] = [];
+  const blockers: string[] = [];
+  const add = (check: ResourcePreflight['checks'][number]) => {
+    checks.push(check);
+    if (check.status === 'FAIL' || check.status === 'UNRESOLVED') {
+      blockers.push(`${check.field}: ${check.message || 'unresolved'}`);
+    }
+  };
+  add({
+    field: 'service',
+    status: entry.serviceCode ? 'PASS' : 'UNRESOLVED',
+    actual: entry.serviceCode || undefined,
+    source: 'workbook',
+    message: entry.serviceCode ? undefined : 'No AWS service family was mapped.',
+  });
+  add({
+    field: 'region',
+    status: (entry.group.region || entry.config?.region) ? 'PASS' : 'UNRESOLVED',
+    actual: entry.group.region || entry.config?.region,
+    source: entry.group.region ? 'workbook' : 'system_default',
+    message: (entry.group.region || entry.config?.region) ? undefined : 'No AWS region is available for this resource.',
+  });
+  add({
+    field: 'calculator.adapter',
+    status: entry.calculatorService && entry.config ? 'PASS' : 'UNRESOLVED',
+    actual: entry.calculatorService || undefined,
+    source: 'mcp',
+    message: entry.calculatorService && entry.config
+      ? undefined
+      : (entry.pricingReason || 'No verified Calculator configuration was produced.'),
+  });
+  for (const field of entry.fingerprintFields || []) {
+    if (entry.config?.[field] === undefined) continue;
+    checks.push({
+      field: `calculator.${field}`,
+      status: 'PASS',
+      actual: entry.config?.[field],
+      source: 'workbook',
+    });
+  }
+  for (const quantity of entry.group.quantities || []) {
+    checks.push({
+      field: `quantity.${quantity.basis}`,
+      status: 'PASS',
+      actual: quantity.amount,
+      source: 'workbook',
+      measurement: {
+        originalValue: quantity.originalValue ?? quantity.amount,
+        originalUnit: quantity.originalUnit ?? quantity.unit,
+        originalScale: quantity.originalScale,
+        originalPeriod: quantity.originalPeriod ?? 'month',
+        derivedValue: quantity.derivedValue ?? quantity.amount,
+        derivedUnit: quantity.derivedUnit ?? quantity.unit,
+        derivedScale: quantity.derivedScale,
+        derivedPeriod: quantity.derivedPeriod ?? 'month',
+        conversionFormula: quantity.conversionFormula,
+      },
+    });
+  }
+  if (entry.pricingStatus === 'UNSUPPORTED') {
+    blockers.push(`pricing: ${entry.pricingReason || 'requested pricing model is unsupported for this resource'}`);
+  }
+  return {
+    resourceId: entry.group.members.map(String).join(',') || entry.label,
+    label: entry.label,
+    service: entry.serviceCode,
+    environment: entry.group.environment,
+    region: entry.group.region || String(entry.config?.region || ''),
+    readiness: blockers.length ? 'NEEDS_INPUT' : 'COMPILED',
+    checks,
+    blockers: [...new Set(blockers)],
+    sourceEvidence: entry.group.sourceEvidence || [],
+  };
 }
 
 /**
@@ -1888,7 +2117,7 @@ async function saveEstimate(
         : intentionalOnDemandRemainder || (decision?.pricing === 'committed' && !decision.substitution)
           ? 'MIXED'
           : 'UNSUPPORTED';
-      return {
+      const saveEntry = {
         service: entry.plan.calculatorKey,
         serviceCode: entry.plan.serviceCode,
         group,
@@ -1900,10 +2129,24 @@ async function saveEstimate(
         resourceIds: entry.group.members.map(String),
         requestedPricing: context.requestedPricing,
         resolvedPricing,
+        semanticIntent: semanticIntentFor(entry.group, entry.plan.calculatorConfig),
         pricingStatus: entry.plan.calculatorUnsupported ? 'UNSUPPORTED' : pricingStatus,
         pricingReason: entry.plan.calculatorUnsupported
           || (decision?.pricing === 'committed' ? decision.substitution : decision?.pricing === 'on-demand' ? decision.reason : decision?.caveat),
         fingerprintFields: entry.plan.fingerprintFields,
+      };
+      return {
+        ...saveEntry,
+        preflight: preflightFor({
+          label: saveEntry.label,
+          group: entry.group,
+          serviceCode: saveEntry.serviceCode,
+          calculatorService: saveEntry.service,
+          config: saveEntry.config,
+          fingerprintFields: saveEntry.fingerprintFields,
+          pricingStatus: saveEntry.pricingStatus,
+          pricingReason: saveEntry.pricingReason,
+        }),
       };
     });
 
@@ -1927,6 +2170,7 @@ async function saveEstimate(
     planRevisionId: context.planRevision?.revisionId || 'legacy',
     inputHash: context.inputHash,
     constraints,
+    preflight: services.map((entry) => entry.preflight),
     services: services.map((entry) => ({
       resourceIds: entry.resourceIds,
       serviceCode: entry.serviceCode,
@@ -1934,6 +2178,7 @@ async function saveEstimate(
       group: entry.group,
       description: String(entry.config?.description ?? entry.label),
       config: entry.config,
+      semanticIntent: entry.semanticIntent,
       fingerprintFields: entry.fingerprintFields,
       requestedPricing: entry.requestedPricing,
       resolvedPricing: entry.resolvedPricing,
@@ -1942,6 +2187,21 @@ async function saveEstimate(
     })),
   });
   let manifest = buildManifest();
+  const preflightBlockers = services.flatMap((entry) => entry.preflight.blockers.map((blocker) => `${entry.label}: ${blocker}`));
+  if (preflightBlockers.length) {
+    const validationErrors = [
+      'Calculator preflight failed; no AWS Pricing Calculator estimate was created.',
+      ...preflightBlockers,
+    ];
+    return {
+      url: null,
+      status: 'FAILED',
+      warning: validationErrors.join(' '),
+      requirementChecks: [],
+      validationErrors,
+      manifest,
+    };
+  }
   if (!saveable.length) {
     const validationErrors = [
       'No resource has a supported AWS Pricing Calculator adapter; no partial link was created.',
@@ -2353,6 +2613,7 @@ export function materializePlanResources(
         case 'sns.delivery_type':
         case 'ses.send_source':
         case 'cognito.tier':
+        case 'lambda.execution_profile':
         case 'bedrock.model':
         case 'bedrock.tokens_per_call':
         case 'sagemaker.inference_configuration':
@@ -2363,6 +2624,10 @@ export function materializePlanResources(
         case 'nat_gateway.configuration':
           resource = {
             ...resource,
+            configuration: {
+              ...(resource.configuration || {}),
+              [constraint.field]: expected,
+            },
             attributes: [
               ...(resource.attributes || []).filter((entry) => entry.label !== constraint.field),
               { label: constraint.field, value: typeof expected === 'string' ? expected : JSON.stringify(expected) },
@@ -2391,6 +2656,7 @@ export async function runEstimatePipeline(
   resources: CalculationResource[],
   mcp: CalculatorGateway,
   onProgress?: PipelineProgress,
+  canonicalModel?: CanonicalWorkbook,
 ): Promise<PipelineOutcome> {
   const startedAt = Date.now();
   // Per-estimate, not per-container: a warm Lambda would otherwise reuse rates read on an
@@ -2407,7 +2673,8 @@ export async function runEstimatePipeline(
   const planRevision = record.plan_v2?.revisions.find(
     (revision) => revision.revisionId === (record.confirmed_plan_revision_id || record.plan_v2?.currentRevisionId),
   );
-  const plannedResources = materializePlanResources(resources, planRevision);
+  const semanticResources = canonicalModel?.rows?.length ? resourcesFromCanonicalModel(canonicalModel) : resources;
+  const plannedResources = materializePlanResources(semanticResources, planRevision);
 
   // --- 1. Group. Code, instant, and already covered by calculator-prompt tests. -----
   await onProgress?.({ stage: 'grouping', message: 'Folding the inventory into groups' });
@@ -2686,9 +2953,9 @@ export async function runEstimatePipeline(
       label: segment.label,
       kind: segment.kind,
       status: savedSegments[index].status,
-      monthly: savedSegments[index].snapshot?.monthly ?? (savedSegments[index].url ? round2(segment.monthly) : null),
-      upfront: savedSegments[index].snapshot?.upfront ?? null,
-      total_12_months: savedSegments[index].snapshot?.total12Months ?? (savedSegments[index].url ? round2(segment.monthly * 12) : null),
+      monthly: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.monthly ?? null : null,
+      upfront: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.upfront ?? null : null,
+      total_12_months: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.total12Months ?? null : null,
       url: savedSegments[index].url,
       requirement_checks: savedSegments[index].requirementChecks,
       validation_errors: savedSegments[index].validationErrors,
@@ -2716,7 +2983,7 @@ export async function runEstimatePipeline(
   const result: CalculationResult = {
     url: saved.url,
     currency: 'USD',
-    monthlyTotal: saved.snapshot?.monthly ?? (saved.url ? round2(baselineTotal) : null),
+    monthlyTotal: saved.status === 'COMPLETED' ? saved.snapshot?.monthly ?? null : null,
     lineItems: toLineItems(priced),
     environments: toEnvironments(priced, record),
     scenarios,
@@ -2728,6 +2995,11 @@ export async function runEstimatePipeline(
     ebsRatePerGbMonth: priced.find((entry) => entry.storageRatePerGbMonth !== undefined)
       ?.storageRatePerGbMonth,
     validationErrors: [...new Set(allValidationErrors)],
+    diagnostics: {
+      BUILD_SHA: process.env.BUILD_SHA || process.env.CODEBUILD_RESOLVED_SOURCE_VERSION || 'unknown',
+      ADAPTER_REGISTRY_VERSION,
+      MCP_PACKAGE_VERSION,
+    },
   };
 
   console.log(

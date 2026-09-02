@@ -35,6 +35,7 @@ function largeResult(): CalculationResult {
         scenarioId: `scenario-${index}`,
         planRevisionId: 'revision-1',
         inputHash: 'input-hash',
+        preflight: [],
         expectedResources: Array.from({ length: 100 }, (_, resource) => ({
           id: `resource-${resource}`,
           serviceCode: 'AmazonEC2',
