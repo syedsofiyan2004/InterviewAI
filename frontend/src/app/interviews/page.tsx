@@ -166,7 +166,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-8">
+    <div className="space-y-8 pb-8">
 
       {/* ── Page header ── */}
       <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between">

@@ -1,0 +1,598 @@
+isError=false
+{
+  "name": "UAT ONLY",
+  "services": {},
+  "groups": {
+    "UAT-4711c29e-63ae-435f-8303-c0f92b0b9a3f": {
+      "name": "UAT",
+      "services": {
+        "ec2Enhancement-e4d41fbe-dba7-4ad0-a2c7-b2e98862391f": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "9 x m6a.xlarge Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "m6a.xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "9"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 298,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (m6a.xlarge), selectedOS (windows), workload (9), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (298), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-04dbae15-9d78-438b-8141-6295ca9ccd92": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "2 x r6a.xlarge Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "r6a.xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "2"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 959,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (r6a.xlarge), selectedOS (windows), workload (2), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (959), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-0bd48e93-7069-42ae-92db-a66c82253f48": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "2 x m6a.large Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "m6a.large"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "2"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 256,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (m6a.large), selectedOS (windows), workload (2), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (256), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-75171ca6-a32d-4ed4-bea9-e1cd1981bb28": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "2 x r6a.2xlarge Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "r6a.2xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "2"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 469,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (r6a.2xlarge), selectedOS (windows), workload (2), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (469), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-f3d742f1-dff5-4689-9755-77b2683fb305": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "1 x r6a.2xlarge Linux (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "linux"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "r6a.2xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "1"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 2840,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (r6a.2xlarge), selectedOS (linux), workload (1), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (2840), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-1120e960-eaf9-4c90-a778-eb5a4f8d2c4f": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "1 x m6a.2xlarge Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "m6a.2xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "1"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 832,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (m6a.2xlarge), selectedOS (windows), workload (1), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (832), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-35f3c582-33b7-45f3-91dc-7de9acb12c7c": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "1 x c6a.2xlarge Windows (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "windows"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "c6a.2xlarge"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "1"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 255,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (c6a.2xlarge), selectedOS (windows), workload (1), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (255), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        },
+        "ec2Enhancement-49afaaca-fc30-4462-87c9-c268ba547c7b": {
+          "serviceCode": "ec2Enhancement",
+          "region": "ap-south-1",
+          "estimateFor": "template",
+          "description": "1 x m6a.large Linux (UAT)",
+          "serviceName": "Amazon EC2 ",
+          "regionName": "Asia Pacific (Mumbai)",
+          "version": "0.0.68",
+          "calculationComponents": {
+            "tenancy": {
+              "value": "shared"
+            },
+            "selectedOS": {
+              "value": "linux"
+            },
+            "workloadSelection": {
+              "value": "consistent"
+            },
+            "instanceType": {
+              "value": "m6a.large"
+            },
+            "workload": {
+              "value": {
+                "workloadType": "consistent",
+                "data": "1"
+              }
+            },
+            "pricingStrategy": {
+              "value": {
+                "selectedOption": "on-demand",
+                "term": "3 Year",
+                "utilizationValue": "36",
+                "utilizationUnit": "%Utilized/Month"
+              }
+            },
+            "ec2AdvancedPricingMetrics": {
+              "value": 1
+            },
+            "detailedMonitoringCheckbox": {
+              "value": false
+            },
+            "storageType": {
+              "value": "Storage General Purpose gp3 GB Mo"
+            },
+            "storageAmount": {
+              "value": 128,
+              "unit": "gb|NA"
+            },
+            "dataTransferForEC2": {
+              "value": [
+                {
+                  "entryType": "INBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "fromRegion": "External"
+                },
+                {
+                  "entryType": "OUTBOUND",
+                  "value": "",
+                  "unit": "tb_month",
+                  "toRegion": "External"
+                },
+                {
+                  "entryType": "INTRA_REGION",
+                  "value": "",
+                  "unit": "tb_month"
+                }
+              ]
+            }
+          },
+          "configSummary": "tenancy (shared), instanceType (m6a.large), selectedOS (linux), workload (1), utilization (36), pricingStrategy (ondemand), storageType (Storage General Purpose gp3 GB Mo), storageAmount (128), dataTransferForEC2 ([object Object],[object Object],[object Object])"
+        }
+      },
+      "groups": {}
+    }
+  },
+  "groupSubtotal": {},
+  "support": {},
+  "metaData": {
+    "locale": "en_US",
+    "currency": "USD",
+    "createdOn": "2026-08-20T05:53:57.669Z",
+    "source": "calculator-platform",
+    "estimateId": "75e0ad38c814f74cfd8ef043558e57fc789d7e01"
+  }
+}

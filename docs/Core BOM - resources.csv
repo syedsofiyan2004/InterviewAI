@@ -1,0 +1,46 @@
+Environment,AWS Service,Instance Type,vCPU,RAM GB,Storage GB,Quantity,OS,Notes
+Prod,Amazon EC2,t3.large,2,8,120,3,Amazon Linux 2023,k8s-master1/2/3 - one per AZ. 20 GB OS + 100 GB /app
+Prod,Amazon EC2,t3.xlarge,4,16,150,2,Amazon Linux 2023,foundation-node1/2 - Zone 1 and 2. 20 OS + 50 /app + 80 /app/logs
+Prod,Amazon EC2,t3.large,2,8,150,2,Amazon Linux 2023,mo-share-node and installer-node
+Prod,Amazon EC2,r6i.2xlarge,8,64,150,2,Amazon Linux 2023,gimo-node1/2 - memory-bound at 8 vCPU / 64 GB
+Prod,Amazon EC2,t3.large,2,8,150,2,Amazon Linux 2023,application-node1/2
+Prod,Amazon EC2,t3.xlarge,4,16,150,2,Amazon Linux 2023,datamo-node1/2
+Prod,Amazon RDS,db.t3.large,2,8,200,1,MySQL 8,foundation-rds - Multi-AZ - gp3 3000 IOPS
+Prod,Amazon RDS,db.t3.large,2,8,200,1,MySQL 8,gimo-rds1 - Multi-AZ - gp3 3000 IOPS
+Prod,Amazon RDS,db.t3.large,2,8,200,1,PostgreSQL 18,datamo-meta-rds - Multi-AZ - gp3 3000 IOPS
+Prod,Amazon RDS,db.m5.xlarge,4,16,400,1,PostgreSQL 18,datamo-data-rds - Multi-AZ - gp3 3000 IOPS
+Prod,Application Load Balancer,,,,,2,,alb external and internal-alb - HTTPS 443 to traefik on 30000/TCP
+Prod,Network Load Balancer,,,,,1,,nlb internal - 4 listeners (6443 master / 30000 traefik / 30090 prometheus / 30093 jaeger)
+Prod,Amazon S3,Standard,,,200,1,,application-bucket
+Prod,Amazon OpenSearch Service,r7g.large.search,2,16,200,3,OpenSearch 2.13,opensearch-busi - 3 data nodes - no dedicated master
+Prod,Amazon OpenSearch Service,r7g.large.search,2,16,200,1,OpenSearch 2.13,opensearch-log - 1 data node - no dedicated master
+Prod,Amazon ElastiCache,cache.m6g.large,,,,2,Redis 7.1,redis - primary plus 1 replica - multi-AZ - encryption in transit
+Prod,Amazon MQ,mq.m5.large,,,200,3,RabbitMQ 3.13,mq - cluster deployment. Sheet says 3-node cluster but Brokers=1; priced as 3 - CONFIRM
+Prod,Amazon MemoryDB,db.t4g.medium,,,,2,Redis,memorydb - 2 nodes
+Prod,AWS WAF,,,,,1,,1 Web ACL on the external ALB
+Sandbox,Amazon EC2,t3.large,2,8,120,1,Amazon Linux 2023,k8s-master - single AZ. 20 GB OS + 100 GB /app
+Sandbox,Amazon EC2,t3.xlarge,4,16,150,1,Amazon Linux 2023,foundation-node
+Sandbox,Amazon EC2,t3.large,2,8,150,4,Amazon Linux 2023,mo-share-node installer-node app-node datamo-node
+Sandbox,Amazon EC2,r6i.2xlarge,8,64,150,1,Amazon Linux 2023,gimo-node
+Sandbox,Amazon RDS,db.t3.large,2,8,200,1,MySQL 8,foundation-rds - Single-AZ - gp3 3000 IOPS
+Sandbox,Amazon RDS,db.t3.large,2,8,200,1,MySQL 8,gimo-rds - Single-AZ - gp3 3000 IOPS
+Sandbox,Amazon RDS,db.t3.large,2,8,200,1,PostgreSQL 18,datamo-meta-rds - Single-AZ - gp3 3000 IOPS
+Sandbox,Amazon RDS,db.m5.xlarge,4,16,400,1,PostgreSQL 18,datamo-data-rds - Single-AZ - gp3 3000 IOPS
+Sandbox,Application Load Balancer,,,,,2,,alb external and internal-alb
+Sandbox,Amazon S3,Standard,,,200,1,,application-bucket
+Sandbox,Amazon OpenSearch Service,r7g.large.search,2,16,200,1,OpenSearch 2.13,opensearch-busi - 1 data node
+Sandbox,Amazon OpenSearch Service,r7g.large.search,2,16,200,1,OpenSearch 2.13,opensearch-log - 1 data node
+Sandbox,Amazon ElastiCache,cache.t4g.medium,,,,1,Redis 7.1,redis - 0 replicas - encryption in transit
+Sandbox,Amazon MQ,mq.t3.micro,,,200,1,RabbitMQ 3.13,mq - single-instance broker
+Sandbox,Amazon MemoryDB,db.t4g.medium,,,,1,Redis,memorydb - 1 node
+Sandbox,AWS WAF,,,,,1,,1 Web ACL
+DevOps,Amazon EC2,t3.large,2,8,120,1,Amazon Linux 2023,k8s-master - single AZ
+DevOps,Amazon EC2,t3.xlarge,4,16,150,1,Amazon Linux 2023,foundation-node
+DevOps,Amazon EC2,t3.large,2,8,150,2,Amazon Linux 2023,mo-share-node and installer-node
+DevOps,Amazon EC2,t3.xlarge,4,16,270,2,Amazon Linux 2023,monitor-node and JCR-node - 200 GB log volume each
+DevOps,Amazon RDS,db.t3.large,2,8,200,1,MySQL 8,foundation-rds - Single-AZ - gp3 3000 IOPS
+DevOps,Application Load Balancer,,,,,2,,alb external and internal-alb
+DevOps,Amazon OpenSearch Service,r7g.large.search,2,16,200,1,OpenSearch 2.13,opensearch-log - 1 data node
+DevOps,Amazon ElastiCache,cache.t4g.medium,,,,1,Redis 7.1,redis - 0 replicas
+DevOps,Amazon MemoryDB,db.t4g.medium,,,,1,Redis,memorydb - 1 node
+DevOps,AWS WAF,,,,,1,,1 Web ACL

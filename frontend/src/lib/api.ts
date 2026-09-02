@@ -1,3 +1,9 @@
+// The chat's own transport lives in lib/chatApi (the streaming turn goes to a Lambda
+// Function URL, not the gateway). Reading a thread back is an ordinary gateway call, so
+// it belongs here — but the app names and the proposal union are declared there, and
+// there is no reason for a second copy of either.
+import type { ChatApp, ChatProposal } from './chatApi';
+
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
 export type BaseRole = 'MEMBER' | 'ADMIN';
@@ -781,6 +787,78 @@ export interface CognitoUser {
   email?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Context chat — reading threads back.
+//
+// These mirror ChatThreadSummarySchema / ChatThreadSchema in
+// infrastructure/schema/chat.ts. Declared here, like every other response shape in
+// this file, rather than imported: the browser bundle does not reach across the
+// infrastructure boundary. The proposal union is the one already declared in
+// lib/chatApi, so the drawer and the admin transcript render a single type instead
+// of two that can drift.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the conversations list.
+ *
+ * Carries no turn content beyond the opening question: a list that shipped whole
+ * transcripts would be a bulk export of model output about candidates, which is not
+ * what an oversight list is for. `first_turn_at`/`last_turn_at` are epoch ms.
+ */
+export interface ChatThreadSummary {
+  thread_id: string;
+  app: ChatApp;
+  entity_id: string;
+  owner_user_id: string;
+  owner_email?: string;
+  /** '(record deleted)' when the artifact discussed has since been removed. */
+  title: string;
+  /** False when the artifact is gone. The conversation still happened, so it still lists. */
+  artifact_exists: boolean;
+  turn_count: number;
+  preview: string;
+  first_turn_at: number;
+  last_turn_at: number;
+  has_proposal: boolean;
+  has_applied: boolean;
+}
+
+export interface ConversationListResponse {
+  threads: ChatThreadSummary[];
+  /** Retention window in days, so the page can say why the list stops where it does. */
+  window_days: number;
+}
+
+/** One turn as the browser reads it back. `created_at`/`applied_at` are epoch ms. */
+export interface ChatTranscriptTurn {
+  seq: number;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: number;
+  proposal?: ChatProposal;
+  applied_at?: number;
+}
+
+/**
+ * One thread in full — the response of GET /chat/history and of
+ * GET /admin/conversations/thread, deliberately the same shape for both so an owner
+ * reading their own history and a reviewer reading someone else's share a renderer.
+ */
+export interface ChatThread {
+  thread_id: string;
+  app: ChatApp;
+  entity_id: string;
+  owner_user_id: string;
+  owner_email?: string;
+  title: string;
+  artifact_exists: boolean;
+  /** Where the artifact lives in the UI. Absent once the record is gone. */
+  artifact_href?: string;
+  turns: ChatTranscriptTurn[];
+  /** What the model was told about the interview transcript, when there was one. */
+  transcript_excerpt?: string;
+}
+
 export const api = {
   async getMe(): Promise<MeResponse> {
     const res = await authFetch(`${API_URL}/me`);
@@ -937,8 +1015,14 @@ export const api = {
     return handleResponse(res);
   },
 
-  async getMomReportUrl(id: string): Promise<{ download_url: string }> {
-    const res = await authFetch(`${API_URL}/moms/${id}/report`);
+  /**
+   * Presigned download URL for the minutes.
+   *
+   * `format` is a query parameter on the existing route rather than a route of its own,
+   * because both formats render the same stored result and the API rejects any other value.
+   */
+  async getMomReportUrl(id: string, format: 'pdf' | 'docx' = 'pdf'): Promise<{ download_url: string }> {
+    const res = await authFetch(`${API_URL}/moms/${id}/report?format=${format}`);
     return handleResponse(res);
   },
 
@@ -1313,6 +1397,39 @@ export const api = {
 
   async getAdminOverview(): Promise<AdminOverview> {
     const res = await authFetch(`${API_URL}/admin/overview`);
+    return handleResponse(res);
+  },
+
+  /**
+   * The caller's own chat thread for one artifact.
+   *
+   * Owner-scoped on the server — the thread id embeds the user id, so this cannot
+   * reach anybody else's conversation and needs no tier. A thread that has never been
+   * started is a 200 with an empty `turns`, not a 404: the drawer opens on every
+   * artifact and "no history yet" is the normal case, not an error.
+   */
+  async getChatHistory(app: ChatApp, entityId: string): Promise<ChatThread> {
+    const res = await authFetch(`${API_URL}/chat/history?app=${encodeURIComponent(app)}&entity_id=${encodeURIComponent(entityId)}`);
+    return handleResponse(res);
+  },
+
+  /** Every chat thread inside the retention window, most recent activity first (REVIEWER+). */
+  async listConversations(): Promise<ConversationListResponse> {
+    const res = await authFetch(`${API_URL}/admin/conversations`);
+    return handleResponse(res);
+  },
+
+  /**
+   * One thread in full, for oversight (REVIEWER+).
+   *
+   * All three parts of the thread id travel as query params because there are no
+   * dynamic route segments in this app, and because an id containing '#' would not
+   * survive being pasted into a path.
+   */
+  async getConversationThread(app: ChatApp, entityId: string, userId: string): Promise<ChatThread> {
+    const res = await authFetch(
+      `${API_URL}/admin/conversations/thread?app=${encodeURIComponent(app)}&entity_id=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(userId)}`,
+    );
     return handleResponse(res);
   },
 

@@ -1,0 +1,28 @@
+  const pricedAll = await priceGroups(priceInput, defaultRegion, onCall);
+
+  const sumOf = (entries: PricedGroup[]) => entries.reduce(
+    (total, entry) => total + (entry.computeMonthly ?? 0) + (entry.storageMonthly ?? 0),
+    0,
+  );
+
+  // The priced array comes back in the order it was sent, so each segment reclaims its own
+  // run by the length it contributed. Walking the offsets rather than slicing at one known
+  // point is what lets there be more than two of them.
+  const pricedSegments: Array<Segment & { priced: PricedGroup[]; monthly: number }> = [];
+  let offset = 0;
+  for (const segment of segments) {
+    const slice = pricedAll.slice(offset, offset + segment.groups.length);
+    offset += segment.groups.length;
+    pricedSegments.push({ ...segment, priced: slice, monthly: sumOf(slice) });
+  }
+
+  // The first segment is the estimate: its total is the headline, its groups are the line
+  // items, and it is the one configuration the shareable link describes. For a fiscal-year
+  // sheet that is the first year, which is the only one a reader can act on today.
+  const priced = pricedSegments[0].priced;
+  const baselineTotal = pricedSegments[0].monthly;
+  // Kept for the narrative, which says something specific about a right-sized alternative
+  // and must not say it about a fiscal year.
+  const rightsized = pricedSegments.find((segment) => segment.key === 'rightsized');
+  const rightsizedTotal = rightsized ? rightsized.monthly : null;
+  const misses = priced.filter((entry) => entry.miss).length;

@@ -1,0 +1,79 @@
+  const priceable = resources.filter((row) => row.service || row.size || row.vcpu !== undefined);
+  const baselineGroups = groupResources(priceable, hoursFor, 'baseline');
+  const hasRightSizing = priceable.some((row) => row.right_sized_size);
+  const rightsizedGroups = hasRightSizing
+    ? groupResources(priceable, hoursFor, 'rightsized')
+    : [];
+
+  console.log(
+    `Pipeline: ${priceable.length} priceable row(s) -> ${baselineGroups.length} baseline group(s)`
+    + `${hasRightSizing ? `, ${rightsizedGroups.length} right-sized group(s)` : ''}.`,
+  );
+
+  if (!baselineGroups.length) {
+    throw new Error('NO_PRICEABLE_ROWS: the uploaded file produced no resources that could be priced.');
+  }
+
+  /**
+   * One named configuration to price. A segment is a contiguous run of the flat priced
+   * array, and its key is how it is found again afterwards.
+   *
+   * Replaces the hardcoded baseline/right-sized pair, which could only ever describe two
+   * configurations and told them apart by slicing the priced array at one known offset. A
+   * transposed upload states as many as it likes -- docs/Digital_Assets.xlsx states eight,
+   * five fiscal years and three lower environments -- and each one needs its own total.
+   */
+  interface Segment {
+    key: string;
+    label: string;
+    kind: 'sizing' | 'period' | 'environment';
+    detail: string;
+    groups: ResourceGroup[];
+  }
+
+  const bands = (record.workbook?.bands ?? [])
+    .filter((band) => priceable.some((row) => row.scenario === band.key));
+
+  const segments: Segment[] = [];
+  // Two or more bands is what makes them scenarios. One band is just an inventory that
+  // happened to be written sideways, and priced as a single estimate it behaves exactly
+  // as a flat sheet does -- including emitting no scenarios at all.
+  if (bands.length > 1) {
+    for (const band of bands) {
+      const groups = groupResources(
+        priceable.filter((row) => row.scenario === band.key),
+        hoursFor,
+        'baseline',
+      );
+      if (!groups.length) continue;
+      segments.push({
+        key: band.key,
+        label: band.label,
+        kind: band.kind,
+        detail: band.kind === 'period'
+          // Stated because adding consecutive years is the mistake this shape invites, and
+          // a reader who makes it overstates the estate by the number of years in the sheet.
+          ? `${band.label} as the sheet sizes it, costed from today's live rates. Consecutive with the other periods, so this total replaces theirs rather than adding to them.`
+          : `The ${band.label} environment as the sheet sizes it. Concurrent with the other environments, so these totals do add up.`,
+        groups,
+      });
+    }
+  }
+  if (!segments.length) {
+    segments.push({
+      key: 'baseline',
+      label: 'Lift and shift',
+      kind: 'sizing',
+      detail: 'Every machine at the size the uploaded file targets. This is the configuration the shareable link describes.',
+      groups: baselineGroups,
+    });
+    if (rightsizedGroups.length) {
+      segments.push({
+        key: 'rightsized',
+        label: 'Right-sized',
+        kind: 'sizing',
+        detail: 'The same machines at the sizes the file recommends, costed from the same live rates. Not saved to the shareable link, because it is not the agreed configuration.',
+        groups: rightsizedGroups,
+      });
+    }
+  }

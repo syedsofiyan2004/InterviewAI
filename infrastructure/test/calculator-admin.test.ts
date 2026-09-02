@@ -105,9 +105,12 @@ describe('Deleting an estimate', () => {
     const response = await deleteCalculation(ID, event(OWNER));
 
     expect(response.statusCode).toBe(200);
-    // Only the PDF key — an undefined input key must not become "undefined".
+    // All generated files, and an undefined input key must not become "undefined".
     const keys = s3Mock.commandCalls(DeleteObjectCommand).map((call) => call.args[0].input.Key);
-    expect(keys).toEqual([`users/${OWNER}/calculator/${ID}/estimate.pdf`]);
+    expect(keys).toEqual([
+      ...['pdf', 'xlsx', 'docx'].map((ext) => `users/${OWNER}/calculator/${ID}/estimate.${ext}`),
+      `users/${OWNER}/calculator/${ID}/result.json`,
+    ]);
   });
 
   test('an S3 object that will not delete does not block removing the row', async () => {

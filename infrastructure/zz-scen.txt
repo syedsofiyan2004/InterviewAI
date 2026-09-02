@@ -1,0 +1,16 @@
+  // --- 6. Assemble. ---------------------------------------------------------------
+  // One scenario per priced segment, but only when there is a choice to present: a single
+  // configuration is the estimate itself, and listing it as its own alternative says nothing.
+  const scenarios: CalculationResult['scenarios'] = pricedSegments.length > 1
+    ? pricedSegments.map((segment, index) => ({
+      key: segment.key,
+      label: segment.label,
+      kind: segment.kind,
+      monthly: round2(segment.monthly),
+      // Only the first segment was saved, so it is the only one that can claim the link.
+      // Handing the others the same URL would point a reviewer at a total that is not
+      // theirs; null renders as "no link was exported for this scenario", which is true.
+      url: index === 0 ? saved.url : null,
+      detail: segment.detail,
+    }))
+    : [];

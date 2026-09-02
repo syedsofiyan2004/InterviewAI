@@ -1,18 +1,24 @@
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
-import { ddbDocClient } from '../shared/aws';
-import { CalculationResultSchema, type CalculationRecord } from '../../schema/calculator';
+import { ddbDocClient, getFileBuffer, saveFileContent } from '../shared/aws';
+import {
+  CalculationResultSchema,
+  type CalculationRecord,
+  type CalculationResource,
+} from '../../schema/calculator';
+import { appendProgress, type ProgressEvent } from '../shared/progress-eta';
+import { calculationResultKey, compactCalculationResult } from '../shared/calculator-result-storage';
 import { McpSidecarClient } from './mcp-client';
-import { runEstimateLoop } from './tool-loop';
+import { runEstimatePipeline } from './pipeline';
 
 /**
  * Cost Calculator orchestrator.
  *
  * Invoked asynchronously (InvocationType 'Event') by POST /calculator. It owns the
- * whole long-running half of the feature: drive the Bedrock tool-use loop against
- * the MCP sidecar, then write the estimate — or a failure — back onto the row the
- * route already created. Nothing here is on an API Gateway request path, so the
- * 29s ceiling does not apply.
+ * whole long-running half of the feature: run the estimate pipeline against the MCP
+ * sidecar and the AWS Price List API, then write the estimate — or a failure — back
+ * onto the row the route already created. Nothing here is on an API Gateway request
+ * path, so the 29s ceiling does not apply.
  *
  * This runs as its own Lambda rather than a self-invoke of api-handler (the pattern
  * used by intelligence-analysis) because it needs a different dependency set and a
@@ -21,27 +27,12 @@ import { runEstimateLoop } from './tool-loop';
 
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const SIDECAR_FUNCTION_NAME = process.env.CALCULATOR_SIDECAR_FUNCTION_NAME!;
+const BROWSER_VALIDATOR_FUNCTION_NAME = process.env.CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME!;
+const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 interface OrchestratorEvent {
   calculationId?: string;
-}
-
-/**
- * Pulls JSON out of <calculation_json>...</calculation_json>, falling back to the
- * first balanced object in the text. Same tagged-output convention as the rest of
- * the repo (parseTaggedJson in api-handler/index.ts), reimplemented here because
- * that helper is module-local to index.ts.
- */
-function parseTaggedJson(text: string, tag: string): unknown {
-  const tagged = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text);
-  const candidate = tagged?.[1]?.trim();
-  if (candidate) return JSON.parse(candidate);
-
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
-
-  throw new Error('AI_EMPTY_RESPONSE: no estimate JSON found in the model reply.');
+  planRevisionId?: string;
 }
 
 async function patch(calculationId: string, fields: Record<string, unknown>): Promise<void> {
@@ -58,65 +49,23 @@ async function patch(calculationId: string, fields: Record<string, unknown>): Pr
 }
 
 /**
- * Assembles what the model is asked to price.
+ * Reads the parsed resource rows, from S3 when the landscape was too big for the item.
  *
- * The environment table comes first because it governs every later decision, and
- * each resource row carries its own resolved hours so the model never has to do the
- * default-vs-override lookup itself — a row's own Hours/Day wins, otherwise its
- * environment's value, otherwise 24.
- *
- * Rows are sent as a table rather than prose: the sheet's structure is the reason
- * the user uploaded it instead of typing, and flattening it to a sentence would
- * throw that away.
+ * A DynamoDB item is capped at 400KB, so a few thousand machines do not fit on one and
+ * the route writes them to S3 instead, leaving a bounded sample behind for the UI (see
+ * resources_s3_key). Pricing the sample would quietly under-count the estimate by
+ * however many rows did not fit, so a failure to read the full list fails the whole
+ * calculation rather than falling back to it.
  */
-function buildPrompt(record: CalculationRecord): string {
-  const parts: string[] = [];
-  const environments = record.environment_hours || [];
-  const hoursFor = new Map(environments.map((entry) => [entry.name.trim().toLowerCase(), entry.hoursPerDay]));
+async function loadResources(record: CalculationRecord): Promise<CalculationResource[]> {
+  if (!record.resources_s3_key) return record.resources || [];
 
-  if (environments.length) {
-    parts.push(
-      'Runtime hours per environment (apply these as the utilization for time-billed resources):',
-      ...environments.map((entry) => `- ${entry.name}: ${entry.hoursPerDay} hours/day`),
-    );
+  const buffer = await getFileBuffer(BUCKET_NAME, record.resources_s3_key);
+  const parsed = JSON.parse(buffer.toString('utf8'));
+  if (!Array.isArray(parsed)) {
+    throw new Error('PARSED_ROWS_UNREADABLE: the stored resource list is not a list of rows.');
   }
-
-  if (record.prompt) {
-    parts.push('', 'Workload description:', record.prompt);
-  }
-
-  const resources = record.resources || [];
-  if (resources.length) {
-    parts.push('', `Resource list (${resources.length} rows, from an uploaded sheet):`);
-    resources.forEach((resource, index) => {
-      // A row that never matched any known column arrives with raw only; pass it
-      // through verbatim so the model can still interpret it.
-      if (!resource.service) {
-        parts.push(`${index + 1}. ${resource.raw}`);
-        return;
-      }
-      const hours = resource.hoursPerDay
-        ?? hoursFor.get(String(resource.environment || '').trim().toLowerCase())
-        ?? 24;
-      const fields = [
-        `environment=${resource.environment || 'unspecified'}`,
-        `service=${resource.service}`,
-        resource.size ? `size=${resource.size}` : '',
-        resource.quantity ? `quantity=${resource.quantity}` : '',
-        resource.region ? `region=${resource.region}` : '',
-        `hoursPerDay=${hours}`,
-        resource.notes ? `notes=${resource.notes}` : '',
-      ].filter(Boolean);
-      parts.push(`${index + 1}. ${fields.join('; ')}`);
-    });
-    parts.push('', 'Price every row above. Group each into a folder named after its environment, and set the utilization field to that row\'s hoursPerDay whenever it is below 24.');
-  }
-
-  if (record.region) {
-    parts.push('', `Default region where a row does not state one: ${record.region}.`);
-  }
-
-  return parts.join('\n');
+  return parsed as CalculationResource[];
 }
 
 export const handler = async (event: OrchestratorEvent): Promise<void> => {
@@ -135,51 +84,102 @@ export const handler = async (event: OrchestratorEvent): Promise<void> => {
     console.error(`Calculation ${calculationId} not found; the row may have been deleted.`);
     return;
   }
+  if (event.planRevisionId) {
+    if (record.confirmed_plan_revision_id !== event.planRevisionId
+      || record.plan_v2?.status !== 'CONFIRMED'
+      || record.plan_v2.currentRevisionId !== event.planRevisionId) {
+      await patch(calculationId, {
+        status: 'FAILED',
+        progress_stage: 'failed',
+        progress_message: 'Confirmed plan changed before execution',
+        error_message: 'PLAN_REVISION_CONFLICT: the worker was not given the currently confirmed plan revision.',
+      });
+      return;
+    }
+  }
 
-  const prompt = buildPrompt(record);
+  /**
+   * The stage trail for this run, kept in memory rather than re-read on every stage.
+   *
+   * Re-reading the row before each append would cost a GetItem per stage to reconstruct
+   * something this function already knows, and it would race: two writes deriving a new
+   * trail from the same read would each drop the other's entry. This process is the only
+   * writer of the trail for the life of the run, so holding it locally is both cheaper
+   * and the more correct of the two.
+   */
+  let trail: ProgressEvent[] = [];
+
+  /**
+   * Records a stage and its timestamp together.
+   *
+   * Always through `appendProgress`, never by patching `progress_stage` alone: the time
+   * estimate is derived from the gaps between these entries, so a stage change written
+   * without its timestamp leaves the estimate quoting the previous stage's start and
+   * reporting a run as slower than it is.
+   */
+  const recordStage = async (stage: string, message: string, extra: Record<string, unknown> = {}) => {
+    const fields = appendProgress(trail, { stage, message, at: Date.now() });
+    trail = fields.progress_history;
+    await patch(calculationId, { ...fields, ...extra });
+  };
 
   try {
-    await patch(calculationId, { progress_stage: 'connecting', progress_message: 'Loading AWS service catalogue' });
+    // `progress_started_at` is stamped here and only here — this is the instant the worker
+    // began, which is later than `created_at` by however long the async invoke queued.
+    // Charging that queue time to the first stage would make the stage a user is most
+    // likely to suspect has hung look even slower than it is.
+    await recordStage('connecting', 'Loading AWS service catalogue', { progress_started_at: Date.now() });
 
-    const mcp = new McpSidecarClient(SIDECAR_FUNCTION_NAME);
+    // Inside the try: an unreadable spilled list must surface as a FAILED row with a
+    // message, not as an invocation that ends with the record stuck on PROCESSING.
+    const resources = await loadResources(record);
+    console.log(`Calculation ${calculationId}: pricing ${resources.length} parsed row(s).`);
+
+    const mcp = new McpSidecarClient(SIDECAR_FUNCTION_NAME, BROWSER_VALIDATOR_FUNCTION_NAME);
     // Warmup only, and deliberately non-fatal: the sidecar does not require an
     // initialize handshake (see mcp-client notes), so failing the whole estimate
-    // because an unnecessary call was refused would be self-inflicted. listTools()
-    // inside the loop is the real readiness check and it is mandatory.
+    // because an unnecessary call was refused would be self-inflicted.
     try {
       await mcp.initialize();
     } catch (warmupError) {
       console.warn('MCP initialize handshake failed; continuing since dispatch does not require it:', warmupError);
     }
 
-    const outcome = await runEstimateLoop(prompt, mcp, async update => {
-      await patch(calculationId, {
-        progress_stage: update.stage,
-        progress_message: `Turn ${update.iteration}: ${update.message}`,
-      });
+    const outcome = await runEstimatePipeline(record, resources, mcp, async update => {
+      await recordStage(update.stage, update.message);
     });
 
-    const parsed = CalculationResultSchema.parse(parseTaggedJson(outcome.finalText, 'calculation_json'));
+    // Parsed rather than trusted: the pipeline builds this object itself, so validation
+    // here is a guard against a future edit drifting from the stored contract.
+    const parsed = CalculationResultSchema.parse(outcome.result);
+    const resultS3Key = calculationResultKey(record.owner_user_id, calculationId);
+    await saveFileContent(BUCKET_NAME, resultS3Key, JSON.stringify(parsed), 'application/json');
+    const inlineResult = compactCalculationResult(parsed);
 
-    await patch(calculationId, {
-      status: 'COMPLETED',
-      result: parsed,
+    // Terminal stages go on the trail too. The last entry's timestamp is what closes the
+    // final stage's duration, so omitting it would leave the slowest stage of a finished
+    // run looking open-ended to anything that later reads the trail to explain where the
+    // time went.
+    await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
+      outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
+      status: outcome.status,
+      result: inlineResult,
+      result_s3_key: resultS3Key,
       iterations: outcome.iterations,
       tool_call_count: outcome.toolCalls.length,
-      progress_stage: 'done',
-      progress_message: 'Estimate ready',
     });
-    console.log(`Calculation ${calculationId} completed in ${outcome.iterations} turns, ${outcome.toolCalls.length} tool calls.`);
+    console.log(`Calculation ${calculationId} finished as ${outcome.status} with ${outcome.iterations} model call(s), ${outcome.toolCalls.length} lookups.`);
   } catch (error) {
     const message = (error as Error).message || 'Unknown failure';
     console.error(`Calculation ${calculationId} failed:`, error);
-    await patch(calculationId, {
+    // Recorded through the same path as every other stage so a failed run still reports
+    // which stage it died in and how long it had been there — the two things needed to
+    // tell a timeout apart from a refusal after the fact.
+    await recordStage('failed', 'Estimate failed', {
       status: 'FAILED',
       // Surfaced verbatim in the UI: upstream's refusals carry actionable text, and
       // a generic message would hide why the estimate could not be built.
       error_message: message.slice(0, 1000),
-      progress_stage: 'failed',
-      progress_message: 'Estimate failed',
     });
   }
 };

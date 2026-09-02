@@ -160,3 +160,158 @@ once or twice; it usually passes. It consistently blocks destructive git and bac
 processes — use `run_in_background: true` rather than `&`, and hand destructive git to the user. On Git
 Bash, prefix AWS CLI calls that pass a path-like argument (log group names, S3 keys, `--paths "/*"`)
 with `MSYS_NO_PATHCONV=1`, or MSYS rewrites them into Windows paths and the call fails validation.
+
+---
+
+## 7. Continued — 2026-08-20: the estimate pipeline, and licence accuracy
+
+Everything below happened after §6 was written. Where it contradicts §1–§6, this section is right;
+see §7.5 for the specific lines above that are now stale.
+
+### 7.1 The agentic tool-use loop is gone. A pipeline does the work.
+
+`calculator-orchestrator/tool-loop.ts` used to drive the estimate: the model chose each price lookup,
+one turn at a time, under a turn ceiling. On the real COSEC workbook that ran out of turns before it
+ran out of servers, so the estimate was whatever it had priced when the music stopped.
+
+It is now `calculator-orchestrator/pipeline.ts`, with `calculator-orchestrator/prompt.ts` holding the
+grouping and the prompt text. Code decides the order of work; the model is asked only the questions
+that need judgement.
+
+| | tool-loop (old) | pipeline (new) |
+|---|---|---|
+| Who picks the next lookup | the model, one per turn | code, all of them up front |
+| Ceiling | a turn count | the Lambda's own time budget |
+| Price lookups | serial | in parallel, batched |
+| Service mapping | a model call per group | rule first, model only for what no rule matches |
+| `build_estimate` | the model calls it, maybe | code calls it once, with everything |
+
+On the real file: **52 groups mapped by rule, 0 by model**, one model call in the whole run, 106 price
+lookups, 44 seconds. The model call that remains is the narrative.
+
+### 7.2 Two silent data losses in `build_estimate`, both now closed
+
+The shareable calculator.aws link was quietly dropping services. Not erroring — dropping.
+
+1. **Group names.** calculator.aws rejects a group whose name contains `/`, and silently strips `&`.
+   A group named `Web / App Tier` was refused outright. `calculatorGroupName()` now sanitises:
+   `/` and `&` are removed, and `( ) _ . , : + #` plus spaces are kept, because they are safe and
+   they are what makes a name readable in the shared estimate.
+2. **Duplicate descriptions.** Two services with the same description collapsed into one. Every
+   service now carries a distinct description (`distinctDescription()`), which is what stops the
+   collapse.
+
+Neither failure announced itself, so the third change is the one that matters most: `verifySaved()`
+reads the saved estimate back and compares it, by count and by dollars, against what was sent. A run
+that loses anything now says so in the log instead of producing a smaller number in silence. The
+previous run had lost **4 of 25 services, worth $4,601.75/month**, and nothing in the output said so.
+
+### 7.3 SQL Server licensing was wrong five different ways
+
+A bundled SQL Server licence is the largest single per-machine figure a sheet can state. AWS bills it
+**per vCPU**, so Standard roughly doubles an EC2 rate and Enterprise more than trebles it. That makes
+it the one field where a wording mistake moves the total by more than any sizing decision, and there
+were five of them — four overstating, one understating.
+
+| # | What happened | Effect on the estimate |
+|---|---|---|
+| 1 | `SQL Server Standard (BYOL)` was priced with a bundled licence | machine roughly **doubled**, for a licence the client already owns |
+| 2 | SQL Express was priced as Standard | Express is free from Microsoft; the whole licence was **invented** |
+| 3 | A plain substring match on `sql` also matched **My**SQL, Postgre**SQL**, **NoSQL** | a Linux MySQL box charged a **Windows SQL Server** licence |
+| 4 | A match on `ent(erprise)` also matched Red Hat **Enterprise** Linux | Standard read as Enterprise, roughly **trebling** the rate |
+| 5 | `normaliseOs()` folded `Windows 2019 with SQL Server Standard` to `Windows` before pricing | licence **lost**; machine understated by about half |
+
+All five now live in one module, `lambdas/shared/sql-licence.ts`, imported by **both** sides:
+
+- `api-handler/calculator-workbook.ts` (the upload parser) — decides what licence wording survives
+  onto a row, via `osWithLicence()`, which appends e.g. ` + SQL Server Standard` to the folded OS
+  string. That suffix is also what keeps licensed and unlicensed machines in **separate priced
+  groups**: the grouping key includes `os`, so without it they merge and get one rate.
+- `calculator-orchestrator/pipeline.ts` (pricing) — decides what AWS is billed, via `sqlLicensing()`,
+  whose `billed` value is exactly a Price List `preInstalledSw`: `NA | SQL Std | SQL Web | SQL Ent`.
+
+One module rather than two copies, because these two halves drifting apart is a silent mispricing with
+nothing to see. There is a test that round-trips it: whatever the parser writes onto the OS string, the
+pipeline must read back as the same licence.
+
+Three rules inside it that look arbitrary and are not:
+
+- **Word boundaries on `sql` / `mssql`**, never a bare substring. Mispricing #3.
+- **The edition is read from a 60-character window that starts at the SQL mention**, not from the whole
+  cell. `Red Hat Enterprise Linux 9 + SQL Server` is Standard; `SQL Server Enterprise on Red Hat
+  Enterprise Linux` is Enterprise. Mispricing #4.
+- **Structured columns may buy a licence; free-text notes may only waive one.** The OS and service
+  cells naming SQL Server means the machine runs it. A remarks column can say BYOL and be believed,
+  but it can never add a licence — the real COSEC model carries the note
+  `SQL Server consolidation sizing (6 VMs to 4 instances)` against machines whose OS column says only
+  `Windows`, and reading that as a purchase would have put a per-vCPU licence on six servers that
+  never asked for one.
+
+When a licence is named but not billed, the report says so in its assumptions — that the rate is the
+plain operating-system one, and that a reader comparing it against a licence-inclusive quote will find
+it low. Silence there would look like an error.
+
+**None of this is fitted to one workbook.** It is wording, and the tests are wording: MySQL,
+PostgreSQL, Aurora MySQL, NoSQL, plain Windows, Red Hat Enterprise Linux, Express, eight BYOL
+phrasings (`(BYOL)`, `bring your own licence`, `customer own licence`, `licence not included`,
+`licenses excluded`, `no SQL licence`, `existing license reused`, …), an edition in the OS column, an
+edition in the service column, and no edition at all (which is read as Standard — the common licence
+and the mid price, and the report states the assumption). The one case taken from the real file is
+there as a **guard against** over-fitting, not as a special case for it.
+
+### 7.4 Verified live, on the real workbook
+
+The deployed build was re-run against the existing COSEC calculation
+(`1e82bcce-6866-451e-8958-9a5a69e0df1a`) by invoking the orchestrator directly, which re-prices a record
+in place:
+
+```powershell
+aws lambda invoke --function-name iep-dev-calculator-orchestrator-996122083346-ap-south-1 `
+  --invocation-type Event --payload '{"calculationId":"1e82bcce-6866-451e-8958-9a5a69e0df1a"}' `
+  --cli-binary-format raw-in-base64-out --region ap-south-1 out.json
+```
+
+CloudWatch, in order:
+
+```
+Pipeline: 110 priceable row(s) -> 25 baseline group(s), 27 right-sized group(s)
+52 group(s) mapped by rule, 0 by model
+priced 25/25 baseline group(s), $26772.57/mo, 658s budget left
+Pipeline: link verified, 25 service(s) saved for 25 sent.
+Pipeline complete in 44s: 1 model call(s), 106 lookup(s), url=yes
+Duration: 44814.80 ms
+```
+
+`25 service(s) saved for 25 sent` is the line that matters: the PDF and the shareable calculator.aws
+link now describe the same estimate. That was the divergence the user reported, and it is closed.
+
+One residual, cosmetic: `Narrative call failed (no JSON object in the reply); using derived notes only.`
+The designed graceful degradation fired, so the prose came from derived notes. **Figures unaffected** —
+they never come from that call.
+
+Gates: `npx tsc --noEmit` clean; `npx jest` → **29 suites / 540 tests** passed; shadow-file guard 0;
+`npx cdk deploy --require-approval never` → `IepStack-dev` in 68.25s.
+
+### 7.5 Corrections to the sections above
+
+| Where | Says | Should say |
+|---|---|---|
+| Preamble, §6 | 20 suites / 339 tests | **29 suites / 540 tests** |
+| §2 file list | `tool-loop.ts` drives the estimate | `pipeline.ts` + `prompt.ts` do; see §7.1 |
+| §2 | the model chooses each lookup in a turn loop | code plans all lookups; the model is asked only what needs judgement |
+| §4 open items | "**First real estimate** — has never run end to end in production" | **done**; see §7.4 |
+
+New files since §2 was written: `lambdas/calculator-orchestrator/pipeline.ts`,
+`lambdas/calculator-orchestrator/prompt.ts`, `lambdas/shared/sql-licence.ts`,
+`lambdas/shared/workbook.ts`, `lambdas/shared/sheet-structure.ts`,
+`lambdas/api-handler/calculator-workbook.ts`.
+
+### 7.6 Open items, as of 2026-08-20
+
+| Item | Note |
+|---|---|
+| Nothing is committed | Still true, and now larger. Branch `feature/interviewer-centric-flow`. Commit only when asked. |
+| Scratch files must go before any commit | `infrastructure/calcres.json`, `probe-out.txt`, `probe-sidecar.js`, `zz-probe.ts`, `zz-stack.py`, and every `zz-*.json` / `zz-*.txt` |
+| `tool-loop.ts` is dead code | `index.ts` no longer imports it, so esbuild does not ship it. It plus its 27 tests can be deleted — a decision for the user, not a silent one |
+| `Narrative call failed` on the live run | Prose only. Worth finding, not urgent |
+| Sidecar needs Docker | Only when the sidecar's own files change (unchanged since §6) |

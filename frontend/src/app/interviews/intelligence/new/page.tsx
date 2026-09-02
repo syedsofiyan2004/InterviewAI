@@ -313,7 +313,7 @@ function NewInterviewIntelligenceContent() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-7 pb-10">
+    <div className="space-y-7 pb-10">
       <Link href="/interviews/intelligence" className="inline-flex items-center gap-2 pt-2 text-sm font-semibold text-text-secondary hover:text-accent">
         <ArrowLeft size={16} />
         Back to Intelligence

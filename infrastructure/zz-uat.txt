@@ -1,0 +1,59 @@
+isError=false
+{
+  "estimate_id": "c6d489fa-ce1e-498e-9f5d-e4b73562e3aa",
+  "sharable_url": "https://calculator.aws/#/estimate?id=75e0ad38c814f74cfd8ef043558e57fc789d7e01",
+  "aws_estimate_id": "75e0ad38c814f74cfd8ef043558e57fc789d7e01",
+  "services": [
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT",
+      "existing_entry": {
+        "service": "ec2Enhancement",
+        "description": "2 x m6a.large Windows (UAT)",
+        "group": "UAT"
+      },
+      "warning": "An entry with service=\"ec2Enhancement\" and description=\"2 x m6a.large Windows (UAT)\" already exists in this estimate (group: \"UAT\"). add_service has appended a duplicate row — this inflates the cost. If you intended to replace the previous attempt (e.g. retrying after an error), call create_estimate to start fresh instead."
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    }
+  ]
+}

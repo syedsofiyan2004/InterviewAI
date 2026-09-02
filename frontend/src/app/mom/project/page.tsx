@@ -202,7 +202,7 @@ function MomProjectContent() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-8">
+    <div className="space-y-8 pb-8">
       <Link href="/mom" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium">
         <ArrowLeft size={16} />
         Back to projects

@@ -26,6 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const lastRenderedPointerRef = useRef({ x: 50, y: 42 });
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  const isAdminArea = pathname.startsWith('/admin');
 
   useEffect(() => {
     if (!isLoading && !user && !isPublic) {
@@ -106,7 +107,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               });
             }}
           >
-            <div className="relative z-10">
+            {/* One container defines the workspace measure for every route, so the
+                content edge never shifts between a list page and the create page
+                beside it — including while a page is still loading. Admin keeps the
+                full width because its tables need it. */}
+            <div className={`relative z-10${isAdminArea ? '' : ' page-shell'}`}>
               {children}
             </div>
           </main>

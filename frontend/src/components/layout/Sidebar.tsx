@@ -13,6 +13,7 @@ import {
   LibraryBig,
   ListChecks,
   LogOut,
+  MessagesSquare,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -75,8 +76,8 @@ const BASE_SECTIONS: NavSection[] = [
   {
     name: 'Cost Calculator',
     items: [
-      { name: 'Estimates', href: '/calculator', icon: Calculator },
-      { name: 'New Estimate', href: '/calculator/new', icon: PlusCircle },
+      { name: 'Projects', href: '/calculator', icon: Calculator },
+      { name: 'New Project', href: '/calculator/project/new', icon: FolderPlus },
     ],
   },
 ];
@@ -99,6 +100,13 @@ function buildNavSections(isAdmin: boolean, tier: AdminTier | null): NavSection[
     { name: 'Meetings', href: '/admin/moms', icon: ListChecks },
     { name: 'Cost Estimates', href: '/admin/calculator', icon: Calculator },
   ];
+
+  // REVIEWER is the first tier trusted to read records it does not own, and an assistant
+  // transcript is exactly that: what the model said about somebody else's candidate or
+  // price. Reading one is the whole of the permission — there is no way to join a thread.
+  if (rank >= TIER_RANK.REVIEWER) {
+    adminItems.push({ name: 'Conversations', href: '/admin/conversations', icon: MessagesSquare });
+  }
 
   // APPROVER is the first tier that can act on a decision, not just read.
   if (rank >= TIER_RANK.APPROVER) {

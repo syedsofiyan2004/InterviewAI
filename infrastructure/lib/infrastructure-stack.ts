@@ -13,6 +13,7 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as path from 'path';
@@ -190,6 +191,26 @@ export class IepStack extends cdk.Stack {
       timeToLiveAttribute: 'expiresAt',
     });
 
+    // Context chat transcripts. One thread per artifact per user: PK is
+    // `{app}#{entityId}#{userId}` and SK is a monotonic turn number, so a thread's
+    // history is one query and no thread can be read across accounts even if its id
+    // leaks. Threads expire after 30 days (see lambdas/chat/store.ts) — the estimate,
+    // the minutes and the evaluation are the record; a conversation about them is not,
+    // and keeping model output about candidates indefinitely has no retention story.
+    // Thirty rather than the ninety this shipped with, because these transcripts are now
+    // readable by any REVIEWER-tier admin from the conversations list, which turns the
+    // window from a housekeeping default into a deliberate choice about how long model
+    // output discussing named candidates stays legible to the org.
+    const chatTable = new dynamodb.Table(this, 'ChatTable', {
+      tableName: getUniqueName('chat-threads'),
+      partitionKey: { name: 'thread_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'seq', type: dynamodb.AttributeType.NUMBER },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      timeToLiveAttribute: 'expires_at',
+      pointInTimeRecovery: true,
+    });
+
 
     // 3. SQS Queue and DLQ for evaluation
     const evaluationDlq = new sqs.Queue(this, 'EvaluationDlq', {
@@ -266,6 +287,9 @@ export class IepStack extends cdk.Stack {
         KEKA_SYNC_LOOKAHEAD_DAYS: process.env.KEKA_SYNC_LOOKAHEAD_DAYS || '',
         // Standardized Model Sync (Sonnet 5 + legacy fallbacks + Nova)
         BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+        CALCULATOR_FAST_MODEL_ID: process.env.CALCULATOR_FAST_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+        CALCULATOR_REASONING_MODEL_ID: process.env.CALCULATOR_REASONING_MODEL_ID || 'global.anthropic.claude-sonnet-4-6',
+        CALCULATOR_MODEL_ROUTING_MODE: process.env.CALCULATOR_MODEL_ROUTING_MODE || 'hybrid',
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
         BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
@@ -354,6 +378,8 @@ export class IepStack extends cdk.Stack {
         BUCKET_NAME: filesBucket.bucketName,
         // Standardized Worker Sync (Sonnet 5 + legacy fallbacks + Nova)
         BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+        CALCULATOR_FAST_MODEL_ID: process.env.CALCULATOR_FAST_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+        CALCULATOR_REASONING_MODEL_ID: process.env.CALCULATOR_REASONING_MODEL_ID || 'global.anthropic.claude-sonnet-4-6',
         BEDROCK_SONNET_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.anthropic.claude-3-7-sonnet-20250219-v1:0',
         BEDROCK_SONNET_46_PROFILE_ARN: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'arn:aws:bedrock:ap-south-1::inference-profile/global.anthropic.claude-sonnet-4-6',
         BEDROCK_NOVA_PROFILE_ARN: 'arn:aws:bedrock:ap-south-1::inference-profile/apac.amazon.nova-pro-v1:0',
@@ -432,6 +458,17 @@ export class IepStack extends cdk.Stack {
     });
     calculatorEstimatesTable.grantReadWriteData(calculatorSidecar);
 
+    const calculatorBrowserValidator = new lambda.DockerImageFunction(this, 'CalculatorBrowserValidator', {
+      functionName: getUniqueName('calculator-browser-validator'),
+      code: lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../lambdas/calculator-browser-validator'),
+      ),
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 2048,
+      ephemeralStorageSize: cdk.Size.gibibytes(1),
+    });
+
     // The tool-use loop: N sequential Bedrock round-trips driving the sidecar's
     // tools. Its own budget is 8 minutes, so 15 leaves room for the final write
     // rather than being killed mid-loop.
@@ -445,6 +482,10 @@ export class IepStack extends cdk.Stack {
       environment: {
         CALCULATOR_TABLE_NAME: calculatorTable.tableName,
         CALCULATOR_SIDECAR_FUNCTION_NAME: calculatorSidecar.functionName,
+        CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME: calculatorBrowserValidator.functionName,
+        // A landscape too large for a 400KB DynamoDB item has its parsed rows written
+        // to S3 by the route; the orchestrator reads them back from here.
+        BUCKET_NAME: filesBucket.bucketName,
         BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
         PLATFORM_VERSION: `v1.0.0-calculator-${Date.now()}`,
       },
@@ -456,6 +497,14 @@ export class IepStack extends cdk.Stack {
 
     calculatorTable.grantReadWriteData(calculatorOrchestrator);
     calculatorSidecar.grantInvoke(calculatorOrchestrator);
+    calculatorBrowserValidator.grantInvoke(calculatorOrchestrator);
+    // Read only: the orchestrator consumes the parsed-row spill, it never writes to the
+    // bucket. The route owns both writing that object and deleting it.
+    filesBucket.grantRead(calculatorOrchestrator);
+    calculatorOrchestrator.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject'],
+      resources: [`${filesBucket.bucketArn}/users/*/calculator/*/result.json`],
+    }));
     calculatorOrchestrator.addToRolePolicy(bedrockPolicy);
     // The saved calculator.aws estimate carries no money — pricing runs in the
     // browser when a person opens the link. So the orchestrator reads published
@@ -476,11 +525,61 @@ export class IepStack extends cdk.Stack {
     calculatorOrchestrator.grantInvoke(apiHandler);
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
+    //
+    // Email delivery. Leaving COGNITO_SES_FROM_ADDRESS unset keeps Cognito's
+    // built-in provider, which sends from the shared no-reply@verificationemail.com.
+    // That address cannot be SPF/DKIM-aligned with the recipient's domain and its
+    // reputation is pooled across every AWS account using the default, so corporate
+    // security gateways treat it with suspicion. minfytech.com resolves MX to Barracuda
+    // ESS at priority 0/1 ahead of Microsoft 365 at 100, so every inbound message is
+    // filtered there first. Delivery is fragile rather than impossible -- as of
+    // 2026-08-18, 12 of 13 @minfytech.com users had confirmed successfully -- which is
+    // what makes it hard to diagnose: it fails for some recipients and not others.
+    // Two mechanisms drive the intermittency, and both are properties of the default
+    // provider. It is capped at 50 emails/day for the whole AWS account (not
+    // adjustable, resets 0900 UTC) shared across all three pools here, and when the cap
+    // is exhausted sends stop silently while SignUp still returns success. And a hard
+    // bounce puts that one address on an AWS-managed suppression list we can neither
+    // inspect nor clear, killing it permanently while its colleagues keep working.
+    // Gmail sits behind neither a gateway nor those failure modes, so it works every
+    // time -- hence 'personal mail always gets the code, work mail is a coin flip'.
+    //
+    // Setting COGNITO_SES_FROM_ADDRESS to an address on an SES-verified domain moves
+    // sending to our own SES account: DKIM-signed by a domain we control, acceptable
+    // to the gateway, and bounded by our SES quota rather than the 50/day cap. It
+    // also gives us an account-level suppression list we can edit -- on the default
+    // provider, hard bounces land on an AWS-managed list with no way to remove them.
+    //
+    // Ordering is load-bearing. The SES domain must be verified AND the account out
+    // of the SES sandbox BEFORE this is set. In the sandbox SES rejects every
+    // unverified recipient, so switching early breaks sign-up for everyone instead of
+    // just @minfytech.com. ap-south-1 is a 'backwards compatible' pool region, so a
+    // same-region SES identity is supported and is the default here.
+    // EmailConfiguration updates in place, so flipping this never replaces the pool
+    // or its existing users.
+    // Verifying the whole sending domain beats verifying one address: the DNS work is
+    // done once and any From address under it then works. Set COGNITO_SES_VERIFIED_DOMAIN
+    // when that is what was verified, so the SES SourceArn points at the domain
+    // identity -- derived from the From address alone it would name an address identity
+    // that does not exist on its own.
+    const cognitoSesFromAddress = (process.env.COGNITO_SES_FROM_ADDRESS || '').trim();
+    const cognitoSesReplyTo = (process.env.COGNITO_SES_REPLY_TO_ADDRESS || '').trim();
+    const cognitoSesVerifiedDomain = (process.env.COGNITO_SES_VERIFIED_DOMAIN || '').trim();
+
     const userPool = new cognito.UserPool(this, 'IepUserPool', {
       userPoolName: getUniqueName('user-pool'),
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       autoVerify: { email: true },
+      email: cognitoSesFromAddress
+        ? cognito.UserPoolEmail.withSES({
+            fromEmail: cognitoSesFromAddress,
+            fromName: (process.env.COGNITO_SES_FROM_NAME || '').trim() || 'Interview Evaluation Platform',
+            sesRegion: (process.env.COGNITO_SES_REGION || '').trim() || region,
+            ...(cognitoSesReplyTo ? { replyTo: cognitoSesReplyTo } : {}),
+            ...(cognitoSesVerifiedDomain ? { sesVerifiedDomain: cognitoSesVerifiedDomain } : {}),
+          })
+        : cognito.UserPoolEmail.withCognito(),
       standardAttributes: {
         email: { required: true, mutable: true },
       },
@@ -493,6 +592,49 @@ export class IepStack extends cdk.Stack {
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Message-delivery logging. Without it there is no record of a verification code
+    // that failed to send: SignUp returns success either way, so a user who never
+    // received a code is indistinguishable from one who ignored it. That gap is why
+    // the @minfytech.com failures could only be inferred rather than read off a log.
+    //
+    // ERROR-level `userNotification` is the only combination that reports message
+    // delivery, and CloudWatch Logs is its only permitted destination. It does not
+    // require the Plus feature plan -- ESSENTIALS, which this pool is on, is enough.
+    //
+    // What it does and does not catch matters when reading it. Send-side failures land
+    // here: the 50/day default-provider cap being exhausted, a suppressed recipient, a
+    // hard bounce. A message AWS handed off successfully that a downstream gateway then
+    // quarantined does NOT appear, because nothing failed from AWS's side. So silence
+    // in this log during a reported failure is itself informative -- it points at the
+    // recipient's mail path rather than at ours.
+    //
+    // Cognito requires the log group to be unencrypted and in this account. The
+    // /aws/vendedlogs prefix keeps it clear of the 5120-character ceiling on log-group
+    // resource policies that vended log delivery would otherwise run into.
+    const userNotificationLogGroup = new logs.LogGroup(this, 'IepUserPoolNotificationLogs', {
+      logGroupName: `/aws/vendedlogs/cognito/${getUniqueName('user-pool-notifications')}`,
+      retention: logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: isProduction ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    new cognito.CfnLogDeliveryConfiguration(this, 'IepUserPoolLogDelivery', {
+      userPoolId: userPool.userPoolId,
+      logConfigurations: [{
+        eventSource: 'userNotification',
+        logLevel: 'ERROR',
+        cloudWatchLogsConfiguration: {
+          // This API takes the bare log-group ARN; CDK's logGroupArn appends a
+          // trailing ':*' wildcard, so build it explicitly rather than reusing that.
+          logGroupArn: cdk.Stack.of(this).formatArn({
+            service: 'logs',
+            resource: 'log-group',
+            resourceName: userNotificationLogGroup.logGroupName,
+            arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+          }),
+        },
+      }],
     });
 
     const userPoolClient = new cognito.UserPoolClient(this, 'IepUserPoolClient', {
@@ -673,6 +815,18 @@ export class IepStack extends cdk.Stack {
     // Presigned PUT for a resource spreadsheet. Static segment, declared before
     // {id} so it is matched as a literal and never captured as an id.
     calculator.addResource('upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    calculator.addResource('analyze').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const calculatorPlans = calculator.addResource('plans');
+    const calculatorPlan = calculatorPlans.addResource('{id}');
+    calculatorPlan.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    calculatorPlan.addResource('proposals').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    calculatorPlan.addResource('revisions').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    calculatorPlan.addResource('confirm').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    calculatorPlan.addResource('run').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    const calculatorRuns = calculator.addResource('runs');
+    calculatorRuns.addResource('{id}').addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     const singleCalculation = calculator.addResource('{id}', {
       defaultCorsPreflightOptions: {
@@ -688,6 +842,33 @@ export class IepStack extends cdk.Stack {
     singleCalculation.addResource('result').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     // Returns a presigned download URL for the client-facing PDF.
     singleCalculation.addResource('report').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // The same estimate as a TCO workbook, with live formulas instead of printed totals.
+    singleCalculation.addResource('workbook').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // And as a Word document, which is the only one of the three that can carry a grid of
+    // estimate links: OOXML has real hyperlink relationships, where a PDF has ink.
+    singleCalculation.addResource('document').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // Apply a change the chat proposed. Deliberately on API Gateway behind the Cognito
+    // authorizer rather than on the chat's Function URL: the conversation may only ever
+    // propose, and the write path keeps the same gate as every other mutation.
+    singleCalculation.addResource('revise').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+
+    // Estimate projects, mirroring mom-projects below: an estimate belongs to at most one
+    // project and the calculator opens on the project list. A sibling of /calculator
+    // rather than /calculator/projects, because that would collide with {id} at the
+    // gateway and route the project list into getCalculation with id='projects'.
+    const calculatorProjects = api.root.addResource('calculator-projects');
+    calculatorProjects.addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    calculatorProjects.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    const singleCalculatorProject = calculatorProjects.addResource('{id}', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      }
+    });
+    singleCalculatorProject.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    singleCalculatorProject.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
 
     const momProjects = api.root.addResource('mom-projects');
     momProjects.addMethod('POST', apiHandlerIntegration, authMethodOptions);
@@ -725,9 +906,25 @@ export class IepStack extends cdk.Stack {
 
     const momResult = singleMom.addResource('result');
     momResult.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // Apply a chat-proposed edit to the stored minutes, then regenerate both documents.
+    // POST, not PUT: this API is append-only by convention and an infrastructure test
+    // asserts no PUT verb exists anywhere on it.
+    singleMom.addResource('revise').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const momReport = singleMom.addResource('report');
     momReport.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    // Hands the browser the chat Function URL at runtime. Serving it from here rather
+    // than baking a NEXT_PUBLIC_* var in at build time avoids a deploy-then-rebuild
+    // two-pass, since the URL does not exist until the stack that needs it is deployed.
+    const chat = api.root.addResource('chat');
+    chat.addResource('config').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // The caller's own thread for one artifact, so the drawer reopens on the conversation
+    // it left off. GET on API Gateway rather than on the chat Function URL: only the
+    // streaming turn needs to stream, and a history read belongs behind the same Cognito
+    // authorizer as every other read. Owner-scoped by construction — it takes no user
+    // parameter at all, see lambdas/api-handler/conversation-routes.ts.
+    chat.addResource('history').addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     // --- NEW User Preference Routes ---
     const user = api.root.addResource('user');
@@ -749,6 +946,12 @@ export class IepStack extends cdk.Stack {
     admin.addResource('intelligence-interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('candidates').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('audit-log').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    // Context-chat oversight, REVIEWER and above. `thread` is a static segment and there
+    // is deliberately no `{id}` sibling: a thread id is `{app}#{entityId}#{userId}` and a
+    // `#` cannot travel in a URL path, so the three parts arrive as query parameters.
+    const conversations = admin.addResource('conversations');
+    conversations.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    conversations.addResource('thread').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('approvals').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('cognito-users').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('keka-sync').addMethod('POST', apiHandlerIntegration, authMethodOptions);
@@ -896,6 +1099,102 @@ function handler(event) {
       comment: `Distribution for ${envName} Interview Platform`,
     });
 
+    // 8. Context chat — a streaming Lambda Function URL.
+    //
+    // Declared here, after the distribution, because its CORS allowlist names the
+    // CloudFront origin and nothing else. A Function URL cannot sit behind API Gateway's
+    // Cognito authorizer, and API Gateway would buffer the whole answer anyway, which is
+    // the one thing this feature cannot afford. So the handler verifies the Cognito ID
+    // token itself (lambdas/chat/auth.ts) and re-checks record ownership per artifact.
+    const chatFunction = new nodejs.NodejsFunction(this, 'ChatFunction', {
+      functionName: getUniqueName('chat'),
+      entry: path.join(__dirname, '../lambdas/chat/index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      // Generous next to a chat turn's real cost, but the model streams: the user sees
+      // the first token in well under a second regardless of where this sits.
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 1024,
+      environment: {
+        USER_POOL_ID: userPool.userPoolId,
+        USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
+        CHAT_TABLE_NAME: chatTable.tableName,
+        CALCULATOR_TABLE_NAME: calculatorTable.tableName,
+        MOM_TABLE_NAME: momTable.tableName,
+        TABLE_NAME: interviewsTable.tableName,
+        INTELLIGENCE_TABLE_NAME: intelligenceTable.tableName,
+        BUCKET_NAME: filesBucket.bucketName,
+        BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+        CALCULATOR_FAST_MODEL_ID: process.env.CALCULATOR_FAST_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+        CALCULATOR_REASONING_MODEL_ID: process.env.CALCULATOR_REASONING_MODEL_ID || 'global.anthropic.claude-sonnet-4-6',
+        CALCULATOR_MODEL_ROUTING_MODE: process.env.CALCULATOR_MODEL_ROUTING_MODE || 'hybrid',
+      },
+      bundling: {
+        minify: true,
+        sourceMap: true,
+      },
+    });
+
+    // Read-only on every artifact table: the chat proposes changes, it never writes one.
+    // Applying a proposal goes through the API Gateway routes above, which keeps the
+    // authorizer, the ownership gate and the revision history on the write path.
+    chatTable.grantReadWriteData(chatFunction);
+    calculatorTable.grantReadData(chatFunction);
+    momTable.grantReadData(chatFunction);
+    interviewsTable.grantReadData(chatFunction);
+    intelligenceTable.grantReadData(chatFunction);
+    filesBucket.grantRead(chatFunction);
+    chatFunction.addToRolePolicy(bedrockPolicy);
+
+    // ConverseStream maps to bedrock:InvokeModelWithResponseStream, which is a distinct
+    // action from bedrock:InvokeModel in the shared policy above — without it every chat
+    // turn fails with AccessDeniedException. Granted only here, because the chat is the
+    // only caller that streams; the other three Lambdas use the buffered Converse API.
+    chatFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModelWithResponseStream'],
+      resources: ['*'],
+    }));
+
+    // RESPONSE_STREAM is the whole point: buffered, a 20-second answer arrives 20
+    // seconds late as one block. AuthType NONE because Cognito ID tokens are not SigV4 —
+    // the gate is verifyCaller() in the handler, which runs before Bedrock or DynamoDB
+    // is touched. Origins are the CloudFront distribution plus an opt-in local origin,
+    // never a wildcard.
+    const chatAllowedOrigins = [
+      `https://${distribution.distributionDomainName}`,
+      ...(process.env.CHAT_DEV_ORIGIN ? [process.env.CHAT_DEV_ORIGIN] : []),
+    ];
+    const chatFunctionUrl = chatFunction.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: chatAllowedOrigins,
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: ['Content-Type', 'Authorization'],
+        maxAge: cdk.Duration.hours(1),
+      },
+    });
+
+    // Handed to the browser at runtime by GET /chat/config. addEnvironment rather than
+    // an entry in the environment block above, because the URL does not exist until the
+    // function is declared, and the function is declared after the API handler.
+    apiHandler.addEnvironment('CHAT_FUNCTION_URL', chatFunctionUrl.url);
+
+    // The API handler reads threads back out for GET /chat/history and the two
+    // /admin/conversations routes. The write is narrower than the grant can express: the
+    // two apply routes set `applied_at` on one already-stored turn — the marker saying the
+    // proposal in it was actually applied — under a condition that the turn exists, so a
+    // wrong seq is a no-op rather than a new row. Turn authorship remains the chat
+    // function's alone; nothing here writes content, and a route that could edit what was
+    // said would make the transcript unciteable. Kept here beside the rest of the chat
+    // wiring rather than up with the handler's other grants, so the whole feature's
+    // plumbing reads in one place.
+    chatTable.grantReadWriteData(apiHandler);
+    apiHandler.addEnvironment('CHAT_TABLE_NAME', chatTable.tableName);
+
+    new cdk.CfnOutput(this, 'ChatFunctionUrl', { value: chatFunctionUrl.url });
+    new cdk.CfnOutput(this, 'ChatTableName', { value: chatTable.tableName });
+
     // 8. Frontend Deployment
     new s3deploy.BucketDeployment(this, 'DeployFrontend', {
       sources: [s3deploy.Source.asset(path.join(__dirname, '../../frontend/.next-build'))],
@@ -903,6 +1202,10 @@ function handler(event) {
       distribution,
       distributionPaths: ['/*'], // Invalidate cache on deploy
       waitForDistributionInvalidation: false,
+      // The exported frontend bundle is large enough that the 128 MiB provider
+      // default can OOM while downloading and unpacking the deployment archive.
+      memoryLimit: 1024,
+      ephemeralStorageSize: cdk.Size.mebibytes(1024),
     });
 
     // Outputs

@@ -1,0 +1,4 @@
+{
+  "name": "zz storage shape probe 2",
+  "services": "[{\"service\":\"ec2Enhancement\",\"group\":\"Production\",\"config\":{\"region\":\"ap-south-1\",\"tenancy\":\"shared\",\"instanceType\":\"m6a.xlarge\",\"selectedOS\":\"linux\",\"workload\":4,\"utilization\":\"100\",\"pricingStrategy\":\"ondemand\",\"storageType\":\"Storage General Purpose gp3 GB Mo\",\"storageAmount\":{\"value\":100,\"unit\":\"gb|NA\"},\"description\":\"4 x m6a.xlarge Linux + 100GB gp3 each\"}},{\"service\":\"ec2Enhancement\",\"group\":\"Staging\",\"config\":{\"region\":\"ap-south-1\",\"tenancy\":\"shared\",\"instanceType\":\"m6a.large\",\"selectedOS\":\"windows-std\",\"workload\":1,\"utilization\":\"33\",\"pricingStrategy\":{\"model\":\"instanceSavings\",\"term\":\"3 Year\",\"upfrontPayment\":\"None\"},\"description\":\"1 x m6a.large Windows+SQL Std committed\"}}]"
+}

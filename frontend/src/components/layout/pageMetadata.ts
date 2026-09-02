@@ -110,7 +110,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'New estimate',
       description: 'Describe a workload and get a shareable AWS Pricing Calculator estimate.',
-      breadcrumbs: [{ label: 'Estimates', href: '/calculator' }, { label: 'New estimate' }],
+      breadcrumbs: [{ label: 'Projects', href: '/calculator' }, { label: 'New estimate' }],
     };
   }
 
@@ -118,15 +118,33 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Estimate details',
       description: 'Cost breakdown, assumptions, and the shareable calculator link.',
-      breadcrumbs: [{ label: 'Estimates', href: '/calculator' }, { label: 'Estimate' }],
+      breadcrumbs: [{ label: 'Projects', href: '/calculator' }, { label: 'Estimate' }],
+    };
+  }
+
+  // Above the bare /calculator/project test, for the same reason the comment at the
+  // top of this block gives: the shorter prefix would otherwise swallow this one.
+  if (pathname === '/calculator/project/new') {
+    return {
+      title: 'New project',
+      description: 'Group every estimate for one engagement under a single project.',
+      breadcrumbs: [{ label: 'Projects', href: '/calculator' }, { label: 'New project' }],
+    };
+  }
+
+  if (pathname.startsWith('/calculator/project')) {
+    return {
+      title: 'Project estimates',
+      description: 'Every AWS cost estimate built for this project, including revisions.',
+      breadcrumbs: [{ label: 'Projects', href: '/calculator' }, { label: 'Project' }],
     };
   }
 
   if (pathname === '/calculator') {
     return {
-      title: 'Estimates',
-      description: 'AWS cost estimates built from plain-English workload descriptions.',
-      breadcrumbs: [{ label: 'Estimates' }],
+      title: 'Projects',
+      description: 'AWS cost estimates, grouped by the engagement they were built for.',
+      breadcrumbs: [{ label: 'Projects' }],
     };
   }
 
@@ -211,6 +229,22 @@ export function getPageMetadata(pathname: string): PageMetadata {
       title: 'Question Bank',
       description: 'Manage role-specific competency overrides and questions.',
       breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Question Bank' }],
+    };
+  }
+
+  if (pathname.startsWith('/admin/conversations/view')) {
+    return {
+      title: 'Conversation',
+      description: 'Every turn of one conversation with the assistant, as it was written.',
+      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Conversations', href: '/admin/conversations' }, { label: 'Conversation' }],
+    };
+  }
+
+  if (pathname === '/admin/conversations') {
+    return {
+      title: 'Conversations',
+      description: 'What people asked the assistant about their records, and what it answered.',
+      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Conversations' }],
     };
   }
 

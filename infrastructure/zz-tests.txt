@@ -1,0 +1,168 @@
+});
+
+/**
+ * A sheet written sideways: one metric per row, one scenario per column.
+ *
+ * The shape a real customer uploaded (docs/Digital_Assets.xlsx) and the shape that broke.
+ * Nothing in it looks like a column name -- "26-27" is a fiscal year, not a field -- so
+ * column matching claimed nothing, every row came back carrying only its raw text, and the
+ * pipeline's own filter (a row needs a service, a size or a vCPU count to be priceable)
+ * discarded all of them and threw NO_PRICEABLE_ROWS. The user saw "column missing".
+ *
+ * Read correctly it is not one inventory but several: each column is a whole configuration
+ * of the same estate, and the difference between "consecutive years" and "concurrent
+ * environments" decides whether adding two of them together is a total or a fiction.
+ */
+describe('Reading a sheet written sideways', () => {
+  const YEARS = ['Metric', '26-27', '27-28', '28-29'];
+  const ENVIRONMENTS = ['Metric', 'Dev', 'Testing (QA)', 'UAT'];
+
+  test('each column becomes its own scenario', async () => {
+    const { resources, insights } = await analyseWorkbook(await xlsxBuffer([
+      YEARS,
+      ['Aurora instance class', 'db.r6g.large', 'db.r6g.large', 'db.r6g.xlarge'],
+      ['Aurora instance count', '2', '2', '4'],
+    ]), 'sideways.xlsx');
+
+    expect(insights.bands?.map((band) => band.key)).toEqual(['26-27', '27-28', '28-29']);
+    // Three configurations of one database, not one database and two spare columns.
+    expect(resources).toHaveLength(3);
+    expect(resources.map((row) => row.scenario)).toEqual(['26-27', '27-28', '28-29']);
+    expect(resources[2]).toMatchObject({ service: 'Amazon Aurora', size: 'db.r6g.xlarge', quantity: '4' });
+  });
+
+  test('every row of the sideways sheet is priceable by the pipeline filter', async () => {
+    // The assertion the bug report reduces to. Before the transposed reader existed each
+    // of these rows carried a raw string and nothing else, so this count was zero and the
+    // run died before it priced anything.
+    const { resources } = await analyseWorkbook(await xlsxBuffer([
+      YEARS,
+      ['ElastiCache node class', 'cache.t4g.micro', 'cache.t4g.small', 'cache.t4g.small'],
+      ['ElastiCache node count', '1', '2', '2'],
+      ['S3 storage (GB)', '50', '100', '150'],
+    ]), 'sideways.xlsx');
+
+    const priceable = resources.filter((row) => row.service || row.size || row.vcpu !== undefined);
+    expect(priceable).toHaveLength(resources.length);
+    expect(priceable.length).toBeGreaterThan(0);
+  });
+
+  test('a triplet of metric rows assembles into one resource, not three', async () => {
+    // "class", "count" and "storage (GB)" describe one cluster. Read as three rows they
+    // become three line items, two of which cannot be priced at all.
+    const { resources } = await analyseWorkbook(await xlsxBuffer([
+      ['Metric', 'Dev', 'UAT'],
+      ['OpenSearch node class', 't3.small.search', 'r6g.large.search'],
+      ['OpenSearch node count', '1', '2'],
+      ['OpenSearch storage (GB)', '20', '100'],
+    ]), 'sideways.xlsx');
+
+    expect(resources).toHaveLength(2);
+    expect(resources[0]).toMatchObject({
+      service: 'Amazon OpenSearch Service', size: 't3.small.search', quantity: '1', disk_gb: 20,
+    });
+  });
+
+  test('fiscal years are marked consecutive and environments concurrent', async () => {
+    // The one distinction that changes the arithmetic. Five fiscal years added together
+    // overstate the estate fivefold; three environments added together are the estate.
+    const years = await analyseWorkbook(await xlsxBuffer([
+      YEARS,
+      ['Aurora instance class', 'db.t4g.medium', 'db.t4g.medium', 'db.r6g.large'],
+      ['Aurora instance count', '1', '1', '2'],
+    ]), 'years.xlsx');
+    const environments = await analyseWorkbook(await xlsxBuffer([
+      ENVIRONMENTS,
+      ['Aurora instance class', 'db.t4g.medium', 'db.t4g.medium', 'db.r6g.large'],
+      ['Aurora instance count', '1', '1', '2'],
+    ]), 'environments.xlsx');
+
+    expect(years.insights.bands?.every((band) => band.kind === 'period')).toBe(true);
+    expect(environments.insights.bands?.every((band) => band.kind === 'environment')).toBe(true);
+    // Stated in words too, because the scenario table alone does not stop a reader adding
+    // two columns together.
+    expect(years.warnings.join(' ')).toMatch(/must never be added together/);
+    expect(environments.warnings.join(' ')).toMatch(/do add up/);
+  });
+
+  test('a per-year figure is converted onto a monthly basis and the conversion is stated', async () => {
+    // The silent 12x. The unit lives in the label, not in a column, so a row labelled
+    // "/yr" priced as a monthly figure overstates by twelve with nothing to show for it.
+    const { resources, insights } = await analyseWorkbook(await xlsxBuffer([
+      ['Metric', 'Dev'],
+      ['Lambda invocations/yr', '24000000'],
+    ]), 'units.xlsx');
+
+    expect(resources[0]).toMatchObject({ service: 'AWS Lambda', usage_amount: 2_000_000 });
+    expect(insights.conversions?.join(' ')).toMatch(/divided by 12/);
+  });
+
+  test('a millions-of-requests row is expanded before it is divided', async () => {
+    const { resources } = await analyseWorkbook(await xlsxBuffer([
+      ['Metric', 'Dev'],
+      ['API Gateway requests (millions/yr)', '120'],
+    ]), 'units.xlsx');
+
+    // 120 million a year is 10 million a month, not 10.
+    expect(resources[0].usage_amount).toBe(10_000_000);
+  });
+
+  test('a non-AWS vendor is excluded by name, never silently dropped', async () => {
+    // Pinecone is five rows of the real sheet. Dropping them quietly leaves a reviewer
+    // unable to tell whether the vector database was costed elsewhere or forgotten.
+    const { resources, insights } = await analyseWorkbook(await xlsxBuffer([
+      ['Metric', 'Dev', 'UAT'],
+      ['Aurora instance class', 'db.t4g.medium', 'db.t4g.medium'],
+      ['Aurora instance count', '1', '1'],
+      ['Pinecone: vectors', '1000000', '2000000'],
+      ['Pinecone: storage (GB)', '20', '40'],
+    ]), 'vendors.xlsx');
+
+    expect(resources.some((row) => /pinecone/i.test(row.raw ?? ''))).toBe(false);
+    const excluded = (insights.exclusions ?? []).filter((entry) => /pinecone/i.test(entry.metric));
+    expect(excluded).toHaveLength(1);
+    expect(excluded[0].reason).toMatch(/not an AWS service/);
+  });
+
+  test('a count the author set to zero is excluded for that scenario only', async () => {
+    // "MSK broker count (Optional -- excluded from baseline)" is 0 in the real sheet while
+    // the class and storage rows beside it still say what that cluster WOULD be. Pricing
+    // them anyway put a Kafka cluster the author had ruled out into every scenario.
+    const { resources, insights } = await analyseWorkbook(await xlsxBuffer([
+      ['Metric', 'Dev', 'UAT'],
+      ['MSK broker class', 'kafka.m5.large', 'kafka.m5.large'],
+      ['MSK broker count', '0', '3'],
+      ['MSK storage per broker (GB)', '100', '100'],
+    ]), 'zero.xlsx');
+
+    expect(resources.map((row) => row.scenario)).toEqual(['uat']);
+    expect((insights.exclusions ?? []).some((entry) => entry.scenario === 'dev' && /count is 0/.test(entry.reason)))
+      .toBe(true);
+  });
+
+  test('the machine count describes one scenario, not all of them added up', async () => {
+    // Eight columns of the same estate are eight ways to describe it. Summing them
+    // reports an eightfold landscape, which is the kind of figure that reaches a client.
+    const { insights } = await analyseWorkbook(await xlsxBuffer([
+      YEARS,
+      ['ElastiCache node class', 'cache.t4g.micro', 'cache.t4g.micro', 'cache.t4g.micro'],
+      ['ElastiCache node count', '2', '2', '2'],
+    ]), 'counts.xlsx');
+
+    expect(insights.server_count).toBe(2);
+    expect(insights.bands).toHaveLength(3);
+  });
+
+  test('a cost summary with money headings is still read as costs, not capacity', async () => {
+    // The trap the transposed reader has to avoid: a label column beside numeric columns
+    // has the same silhouette as a capacity matrix. Claiming it would turn a summary of
+    // money into a fleet of resources.
+    const { resources } = await analyseWorkbook(await xlsxBuffer([
+      ['Item', 'Monthly Cost', 'Annual Cost'],
+      ['Compute', '1200', '14400'],
+      ['Storage', '300', '3600'],
+    ]), 'costs.xlsx');
+
+    expect(resources.filter((row) => row.service)).toHaveLength(0);
+  });
+});

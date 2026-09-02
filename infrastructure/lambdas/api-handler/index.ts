@@ -103,14 +103,32 @@ import {
   unlinkRecordFromWorkspaces,
 } from './workspace-routes.js';
 import {
+  analyzeCalculation,
   createCalculation,
   listCalculations,
   getCalculation,
   getCalculationResult,
   getCalculationUploadUrl,
   getCalculationReport,
+  getCalculationWorkbook,
+  getCalculationDocument,
+  reviseCalculation,
   deleteCalculation,
+  createCalculationProject,
+  listCalculationProjects,
+  getCalculationProject,
+  deleteCalculationProject,
+  getCalculationPlan,
+  proposeCalculationPlan,
+  createCalculationPlanRevision,
+  confirmCalculationPlan,
+  runCalculationPlan,
 } from './calculator-routes.js';
+import {
+  adminListConversations,
+  adminGetConversationThread,
+  getChatHistory,
+} from './conversation-routes.js';
 import { getCallerContext, requireAdminTier, CallerContext } from './authz.js';
 import { writeAuditLog } from './audit.js';
 import type { AdminTier, AuditAction } from '../../schema/admin.js';
@@ -128,7 +146,10 @@ import {
   MomResultSchema,
   MomUploadUrlSchema
 } from '../../schema/mom.js';
+import { markProposalApplied } from '../chat/store.js';
+import { ApplyMomEditSchema, chatThreadId, type ApplyMomEdit } from '../../schema/chat.js';
 import { generateMomPdfReport } from '../shared/mom-report.js';
+import { generateMomDocxReport } from '../shared/mom-docx';
 import { generateInterviewPdfReport } from '../processor/index.js';
 import { generateIntelligencePdfReport } from '../shared/intelligence-report.js';
 
@@ -230,11 +251,57 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await getMe(event);
     }
 
+    // --- Context chat ---
+    if (httpMethod === 'GET' && resource === '/chat/config') {
+      return await getChatConfig(event);
+    }
+    // Owner-scoped by construction — the thread id is built from the verified caller,
+    // so this route takes no user parameter and needs no tier check. See
+    // conversation-routes.ts.
+    if (httpMethod === 'GET' && resource === '/chat/history') {
+      return await getChatHistory(event);
+    }
+
     // --- AWS Cost Calculator (the hub's third app) ---
     // Kept to a handful of lines here; everything else lives in calculator-routes.ts.
+    //
+    // Projects first, and on their own top-level path rather than under /calculator/...:
+    // a nested /calculator/projects would be ambiguous with /calculator/{id} at the
+    // gateway, which would route a project list to getCalculation with id='projects'.
+    if (resource === '/calculator-projects') {
+      if (httpMethod === 'POST') return await createCalculationProject(event);
+      if (httpMethod === 'GET') return await listCalculationProjects(event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator-projects/{id}') {
+      return await getCalculationProject(pathParameters?.id, event);
+    }
+    if (httpMethod === 'DELETE' && resource === '/calculator-projects/{id}') {
+      return await deleteCalculationProject(pathParameters?.id, event);
+    }
     if (resource === '/calculator') {
       if (httpMethod === 'POST') return await createCalculation(event);
       if (httpMethod === 'GET') return await listCalculations(event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/analyze') {
+      return await analyzeCalculation(event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator/plans/{id}') {
+      return await getCalculationPlan(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/plans/{id}/proposals') {
+      return await proposeCalculationPlan(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/plans/{id}/revisions') {
+      return await createCalculationPlanRevision(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/plans/{id}/confirm') {
+      return await confirmCalculationPlan(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/plans/{id}/run') {
+      return await runCalculationPlan(pathParameters?.id, event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator/runs/{id}') {
+      return await getCalculationResult(pathParameters?.id, event);
     }
     if (httpMethod === 'POST' && resource === '/calculator/upload-url') {
       return await getCalculationUploadUrl(event);
@@ -247,6 +314,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'GET' && resource === '/calculator/{id}/report') {
       return await getCalculationReport(pathParameters?.id, event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator/{id}/workbook') {
+      return await getCalculationWorkbook(pathParameters?.id, event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator/{id}/document') {
+      return await getCalculationDocument(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/{id}/revise') {
+      return await reviseCalculation(pathParameters?.id, event);
     }
     if (httpMethod === 'DELETE' && resource === '/calculator/{id}') {
       return await deleteCalculation(pathParameters?.id, event);
@@ -276,6 +352,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'GET' && resource === '/admin/audit-log') {
       return await getAuditLog(event);
+    }
+    // Context-chat oversight. The thread route takes app/entity_id/user_id as query
+    // params rather than a path segment, because a thread id contains `#` and a URL path
+    // cannot carry one.
+    if (httpMethod === 'GET' && resource === '/admin/conversations') {
+      return await adminListConversations(event);
+    }
+    if (httpMethod === 'GET' && resource === '/admin/conversations/thread') {
+      return await adminGetConversationThread(event);
     }
     if (httpMethod === 'GET' && resource === '/admin/members') {
       return await adminListMembers(event);
@@ -532,6 +617,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'GET' && resource === '/moms/{id}/result') {
       return await getMomResult(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/moms/{id}/revise') {
+      return await applyMomEdit(pathParameters?.id, event);
     }
 
     if (httpMethod === 'GET' && resource === '/moms/{id}/report') {
@@ -2175,28 +2264,78 @@ async function runMomAnalysis(id: string | undefined, event: APIGatewayProxyEven
     return errorResponse(400, 'VALIDATION_ERROR', 'A transcript must be uploaded before MOM analysis.');
   }
 
+  if (item.status === 'PROCESSING') {
+    return acceptedResponse({ status: 'PROCESSING', already_processing: true });
+  }
+
   try {
     await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: item.transcript_s3_key }));
   } catch {
     return errorResponse(400, 'UPLOAD_ERROR', 'Transcript file is missing in storage. Please upload again.');
   }
 
-  await ddbDocClient.send(new UpdateCommand({
-    TableName: MOM_TABLE_NAME,
-    Key: { mom_id: id! },
-    UpdateExpression: 'SET #st = :status, updated_at = :now, error_message = :null',
-    ExpressionAttributeNames: { '#st': 'status' },
-    ExpressionAttributeValues: {
-      ':status': 'PROCESSING',
-      ':now': Date.now(),
-      ':null': null,
-    },
-  }));
+  const queuedAt = Date.now();
+  try {
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: id! },
+      UpdateExpression: 'SET #st = :processing, updated_at = :queuedAt, analysis_started_at = :queuedAt, progress_stage = :stage, progress_message = :message, progress_events = :events, error_message = :null',
+      ConditionExpression: '#st = :expectedStatus AND updated_at = :expectedUpdatedAt',
+      ExpressionAttributeNames: { '#st': 'status' },
+      ExpressionAttributeValues: {
+        ':processing': 'PROCESSING',
+        ':expectedStatus': item.status,
+        ':expectedUpdatedAt': item.updated_at,
+        ':queuedAt': queuedAt,
+        ':stage': 'queued',
+        ':message': 'Queued for MOM analysis...',
+        ':events': [{ at: queuedAt, stage: 'queued', message: 'Queued for MOM analysis...' }],
+        ':null': null,
+      },
+    }));
+  } catch (error: any) {
+    if (error?.name !== 'ConditionalCheckFailedException') throw error;
+    const latest = await ddbDocClient.send(new GetCommand({
+      TableName: MOM_TABLE_NAME,
+      Key: { mom_id: id! },
+      ConsistentRead: true,
+    }));
+    if (latest.Item?.status === 'PROCESSING') {
+      return acceptedResponse({ status: 'PROCESSING', already_processing: true });
+    }
+    return errorResponse(409, 'MOM_STATE_CHANGED', 'The MOM changed while analysis was starting. Refresh and try again.');
+  }
 
-  await sqsClient.send(new SendMessageCommand({
-    QueueUrl: MOM_QUEUE_URL,
-    MessageBody: JSON.stringify({ mom_id: id, owner_user_id: item.owner_user_id }),
-  }));
+  try {
+    await sqsClient.send(new SendMessageCommand({
+      QueueUrl: MOM_QUEUE_URL,
+      MessageBody: JSON.stringify({ mom_id: id, owner_user_id: item.owner_user_id }),
+    }));
+  } catch (error) {
+    console.error('Could not queue MOM analysis:', error);
+    try {
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: MOM_TABLE_NAME,
+        Key: { mom_id: id! },
+        UpdateExpression: 'SET #st = :failed, updated_at = :now, progress_stage = :stage, progress_message = :message, error_message = :message',
+        ConditionExpression: '#st = :processing AND updated_at = :queuedAt',
+        ExpressionAttributeNames: { '#st': 'status' },
+        ExpressionAttributeValues: {
+          ':failed': 'FAILED',
+          ':processing': 'PROCESSING',
+          ':queuedAt': queuedAt,
+          ':now': Date.now(),
+          ':stage': 'failed',
+          ':message': 'The MOM analysis could not be started. Please retry.',
+        },
+      }));
+    } catch (rollbackError: any) {
+      if (rollbackError?.name !== 'ConditionalCheckFailedException') {
+        console.error('Could not roll back MOM analysis queue state:', rollbackError);
+      }
+    }
+    return errorResponse(502, 'MOM_ANALYSIS_QUEUE_FAILED', 'The MOM analysis could not be started. Please retry.');
+  }
 
   return acceptedResponse({ status: 'PROCESSING' });
 }
@@ -2227,6 +2366,13 @@ async function getMomResult(id: string | undefined, event: APIGatewayProxyEvent)
 }
 
 async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent) {
+  // Rejected rather than defaulted: a caller that mistypes `?format=word` should be told, not
+  // handed a PDF it will try to open as a Word file.
+  const format = (event.queryStringParameters?.format || 'pdf').toLowerCase();
+  if (format !== 'pdf' && format !== 'docx') {
+    return errorResponse(400, 'VALIDATION_ERROR', 'format must be pdf or docx');
+  }
+
   const { item, response } = await getOwnedMomRecord(id, event, {
     minTier: 'VIEWER',
     auditAction: 'DOWNLOAD_REPORT',
@@ -2242,14 +2388,34 @@ async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent)
   const parsed = JSON.parse(jsonContent);
   const validation = MomResultSchema.safeParse(parsed);
   if (!validation.success) {
-    return errorResponse(500, 'INTERNAL_ERROR', 'Stored MOM result could not be converted to PDF');
+    return errorResponse(500, 'INTERNAL_ERROR', 'Stored MOM result could not be converted to a report');
   }
 
   const reportFolder = item.owner_email ? normalizeUserFolder(item.owner_email) : item.owner_user_id;
+  const projectTitle = item.project_title || 'General';
+
+  if (format === 'docx') {
+    // A key of its own, and `report_s3_key` is deliberately left pointing at the PDF: that
+    // column is what the rest of the app treats as "the report", and repointing it at a Word
+    // file would change what every other caller downloads.
+    const docxKey = `users/${reportFolder}/moms/${id}/processed/report.docx`;
+    const docxReport = await generateMomDocxReport(validation.data, { projectTitle });
+    await saveFileContent(
+      BUCKET_NAME,
+      docxKey,
+      docxReport,
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    const docxCommand = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: docxKey,
+      ResponseContentDisposition: `attachment; filename="${momReportFileName(item)}.docx"`,
+    });
+    return successResponse({ download_url: await getSignedUrl(s3Client, docxCommand, { expiresIn: 3600 }) });
+  }
+
   const reportKey = item.report_s3_key || `users/${reportFolder}/moms/${id}/processed/report.pdf`;
-  const pdfReport = await generateMomPdfReport(validation.data, {
-    projectTitle: item.project_title || 'General',
-  });
+  const pdfReport = await generateMomPdfReport(validation.data, { projectTitle });
   await saveFileContent(BUCKET_NAME, reportKey, pdfReport, 'application/pdf');
 
   await ddbDocClient.send(new UpdateCommand({
@@ -2262,16 +2428,158 @@ async function getMomReport(id: string | undefined, event: APIGatewayProxyEvent)
     },
   }));
 
-  const safeProject = (item.project_title || 'General').replace(/[^a-zA-Z0-9]/g, '-');
-  const safeName = (item.title || 'mom-report').replace(/[^a-zA-Z0-9]/g, '-');
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
     Key: reportKey,
-    ResponseContentDisposition: `attachment; filename="mom-report-${safeProject}-${safeName}.pdf"`,
+    ResponseContentDisposition: `attachment; filename="${momReportFileName(item)}.pdf"`,
   });
 
   const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
   return successResponse({ download_url: url });
+}
+
+/** Shared by both formats so the two downloads differ only in extension. */
+function momReportFileName(item: { project_title?: string; title?: string }): string {
+  const safeProject = (item.project_title || 'General').replace(/[^a-zA-Z0-9]/g, '-');
+  const safeName = (item.title || 'mom-report').replace(/[^a-zA-Z0-9]/g, '-');
+  return `mom-report-${safeProject}-${safeName}`;
+}
+
+/**
+ * POST /moms/{id}/revise — applies a chat-proposed edit to the stored minutes.
+ *
+ * OWNER only, and not by accident. Reading someone else's minutes is a VIEWER-tier
+ * admin action elsewhere in this file, but rewriting them is not: an admin quietly
+ * editing another person's record of a meeting is a different thing from reading it,
+ * and it is not what this feature was asked for.
+ *
+ * The body is a PARTIAL result, and each field it carries replaces the stored one
+ * whole. That is what the chat is for — "drop the two internal risks" sends a complete
+ * risks array without them. A merge at the element level would need the model to
+ * describe a deletion, which is exactly the kind of instruction it gets wrong.
+ */
+async function applyMomEdit(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response, isOwner, userId } = await getOwnedMomRecord(id, event, {
+    minTier: 'OWNER',
+    auditAction: 'UPDATE_RECORD',
+    targetType: 'mom',
+  });
+  if (response) return response;
+  if (!isOwner) {
+    return errorResponse(403, 'ACCESS_DENIED', 'Only the owner of these minutes can edit them.');
+  }
+
+  if (!item.result_s3_key) {
+    return errorResponse(404, 'NOT_FOUND', 'MOM result not found or not yet available');
+  }
+
+  let input: ApplyMomEdit;
+  try {
+    input = ApplyMomEditSchema.parse(JSON.parse(event.body || '{}'));
+  } catch (error) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', (error as Error).message);
+  }
+  const patch = input.patch as Record<string, unknown>;
+  if (!Object.keys(patch).length) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'The edit contained no changes.');
+  }
+
+  const storedJson = await getFileContent(BUCKET_NAME, item.result_s3_key);
+  const stored = MomResultSchema.safeParse(JSON.parse(storedJson));
+  if (!stored.success) {
+    return errorResponse(500, 'INTERNAL_ERROR', 'The stored minutes could not be read for editing.');
+  }
+
+  // Re-validated as a whole after merging, not field by field before it: a patch that
+  // is individually valid can still leave the document inconsistent, and the renderers
+  // downstream assume a complete, valid MomResult.
+  const merged = MomResultSchema.safeParse({ ...stored.data, ...patch });
+  if (!merged.success) {
+    return errorResponse(
+      400,
+      'VALIDATION_ERROR',
+      'That edit would leave the minutes incomplete.',
+      merged.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+    );
+  }
+
+  await saveFileContent(
+    BUCKET_NAME,
+    item.result_s3_key,
+    JSON.stringify(merged.data, null, 2),
+    'application/json',
+  );
+
+  // Both documents are regenerated now rather than on next download, so a user who
+  // applies an edit and immediately re-sends the file cannot send the old one. The
+  // Word file is written to its own key for the reason getMomReport explains.
+  const reportFolder = item.owner_email ? normalizeUserFolder(item.owner_email) : item.owner_user_id;
+  const projectTitle = item.project_title || 'General';
+  const reportKey = item.report_s3_key || `users/${reportFolder}/moms/${id}/processed/report.pdf`;
+  const docxKey = `users/${reportFolder}/moms/${id}/processed/report.docx`;
+
+  try {
+    const [pdfReport, docxReport] = await Promise.all([
+      generateMomPdfReport(merged.data, { projectTitle }),
+      generateMomDocxReport(merged.data, { projectTitle }),
+    ]);
+    await Promise.all([
+      saveFileContent(BUCKET_NAME, reportKey, pdfReport, 'application/pdf'),
+      saveFileContent(
+        BUCKET_NAME,
+        docxKey,
+        docxReport,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      ),
+    ]);
+  } catch (error) {
+    // The edit itself is saved and is the source of truth; a failed render is a stale
+    // download, not lost work, and the next download regenerates from the new result.
+    console.error('[applyMomEdit] could not regenerate reports:', error);
+  }
+
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: MOM_TABLE_NAME,
+    Key: { mom_id: id! },
+    UpdateExpression: 'SET report_s3_key = :report, updated_at = :now',
+    ExpressionAttributeValues: { ':report': reportKey, ':now': Date.now() },
+  }));
+
+  // The minutes are rewritten and the row is updated, so the proposal really was
+  // applied. Marked from here rather than from the chat, which cannot know whether the
+  // user ever pressed apply.
+  //
+  // The thread id is built from the CALLER'S own userId, which is what makes this safe
+  // without a second ownership check: the owner is part of the partition key, so a caller
+  // can only ever stamp a turn in a thread they own. (This route is OWNER-only anyway, so
+  // the caller and the record's owner are the same person here.) Awaited rather than fired
+  // and forgotten — it cannot throw, and the drawer refetches its history immediately,
+  // which would race an unawaited write.
+  if (input.chat_seq && userId) {
+    await markProposalApplied(chatThreadId('mom', id!, userId), input.chat_seq);
+  }
+
+  return successResponse({
+    mom_id: id,
+    updated_fields: Object.keys(patch),
+    result: merged.data,
+  });
+}
+
+/**
+ * GET /chat/config — hands the browser the chat Function URL.
+ *
+ * Served at runtime rather than baked in as a NEXT_PUBLIC_* var because the URL does
+ * not exist until the stack is deployed, and a build-time value would force a
+ * deploy-then-rebuild-then-deploy cycle on every fresh environment.
+ *
+ * An empty string when the variable is unset, not an error: the frontend hides the
+ * chat launcher rather than showing a button that cannot work.
+ */
+async function getChatConfig(event: APIGatewayProxyEvent) {
+  const userId = getAuthenticatedUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
+  return successResponse({ chat_url: process.env.CHAT_FUNCTION_URL || '' });
 }
 
 async function deleteMom(id: string | undefined, event: APIGatewayProxyEvent) {

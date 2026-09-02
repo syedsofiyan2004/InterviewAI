@@ -1,0 +1,141 @@
+﻿{
+    "Items": [
+        {
+            "updated_at": {
+                "N": "1787649327603"
+            },
+            "workbook": {
+                "M": {
+                    "excerpts": {
+                        "L": []
+                    },
+                    "regions": {
+                        "L": []
+                    },
+                    "facts": {
+                        "L": [
+                            {
+                                "M": {
+                                    "label": {
+                                        "S": "Note in the table at row 29"
+                                    },
+                                    "value": {
+                                        "S": "Yes"
+                                    },
+                                    "sheet": {
+                                        "S": "Sandbox"
+                                    }
+                                }
+                            },
+                            {
+                                "M": {
+                                    "value": {
+                                        "S": "Yes"
+                                    },
+                                    "sheet": {
+                                        "S": "Prod "
+                                    },
+                                    "label": {
+                                        "S": "Note in the table at row 39"
+                                    }
+                                }
+                            },
+                            {
+                                "M": {
+                                    "label": {
+                                        "S": "Note in the table at row 20"
+                                    },
+                                    "value": {
+                                        "S": "Yes"
+                                    },
+                                    "sheet": {
+                                        "S": "DevOps"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    "file_name": {
+                        "S": "956ac2c6-6186-4fd9-910e-b63a68b2452f-Core-BOM.xlsx"
+                    },
+                    "server_count": {
+                        "N": "79"
+                    },
+                    "total_disk_gb": {
+                        "N": "279746"
+                    },
+                    "dr_eligible_count": {
+                        "N": "0"
+                    },
+                    "sheets": {
+                        "L": [
+                            {
+                                "M": {
+                                    "name": {
+                                        "S": "Sandbox"
+                                    },
+                                    "detail": {
+                                        "S": "26 resource row(s) from the table at row 1"
+                                    },
+                                    "rows": {
+                                        "N": "29"
+                                    }
+                                }
+                            },
+                            {
+                                "M": {
+                                    "rows": {
+                                        "N": "39"
+                                    },
+                                    "detail": {
+                                        "S": "36 resource row(s) from the table at row 1"
+                                    },
+                                    "name": {
+                                        "S": "Prod "
+                                    }
+                                }
+                            },
+                            {
+                                "M": {
+                                    "rows": {
+                                        "N": "20"
+                                    },
+                                    "detail": {
+                                        "S": "17 resource row(s) from the table at row 1"
+                                    },
+                                    "name": {
+                                        "S": "DevOps"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    "reported": {
+                        "L": []
+                    },
+                    "rate_card": {
+                        "L": []
+                    }
+                }
+            },
+            "status": {
+                "S": "COMPLETED"
+            },
+            "prompt": {
+                "S": ""
+            },
+            "result": {
+                "M": {
+                    "warnings": {
+                        "L": [
+                            {
+                                "S": "The shareable calculator.aws link covers the EC2 resources only. 6 priced group(s) worth $3344.69/month � AmazonEC2 � have no calculator service definition, so the link's total is lower than the total in this report by that amount. The figures in this report are the complete ones."
+                            },
+                            {
+                                "S": "Not priced � 6 x ? vCPU / 443 GB | alb-traefik: 443 GB RAM with 180000 GB disk does not match any published EC2 instance type; name suggests ALB but attributes are EC2-shaped and non-standard"
+                            },
+                            {
+                                "S": "Not priced � 5 x 2 vCPU / 8 GB | MySQL 8: No AmazonRDS price found in ap-south-1 for {\"instanceType\":\"db.t3.large\",\"databaseEngine\":\"MySQL\"}. Check the attribute names and values against the Price List API."
+                            },
+                            {
+                                "S": 

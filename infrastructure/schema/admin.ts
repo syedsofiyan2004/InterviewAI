@@ -80,6 +80,9 @@ export const AuditAction = z.enum([
   // Keka schedule sync and the composite (multi-round) synthesis.
   'KEKA_SYNC',
   'COMPOSITE_ANALYSIS',
+  // Reading a chat thread somebody else owns. Oversight, not participation: the
+  // reader sees what was said and cannot post into the thread.
+  'READ_CONVERSATION',
 ]);
 export type AuditAction = z.infer<typeof AuditAction>;
 
