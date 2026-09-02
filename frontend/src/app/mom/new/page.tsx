@@ -33,7 +33,7 @@ export default function NewMomProjectPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="space-y-8">
       <Link href="/mom" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium">
         <ArrowLeft size={16} />
         Back to projects
@@ -58,9 +58,21 @@ export default function NewMomProjectPage() {
           <h2 className="text-lg font-semibold text-text-primary">Project details</h2>
           <p className="mt-1 text-sm leading-6 text-text-secondary">Use a project name your delivery team will recognise when searching meeting reports later.</p>
         </div>
-        <div>
-          <label className="block text-xs font-semibold text-text-muted mb-2">Project Title</label>
+        {/* One field on the full page measure: the guidance sits beside the control
+            rather than under it, so the card uses its width instead of leaving a
+            1100px-wide input next to nothing. */}
+        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          <div>
+            <label htmlFor="project-title" className="block text-xs font-semibold text-text-muted mb-2">
+              Project Title
+            </label>
+            <p id="project-title-help" className="text-xs leading-5 text-text-muted">
+              Meeting reports added inside this folder will stay grouped under this project.
+              Use a name your delivery team will recognise when searching later.
+            </p>
+          </div>
           <input
+            id="project-title"
             required
             className="premium-input w-full px-4 text-sm"
             value={projectTitle}
@@ -68,19 +80,18 @@ export default function NewMomProjectPage() {
             placeholder="e.g. Verbal"
             aria-describedby="project-title-help"
           />
-          <p id="project-title-help" className="mt-1.5 text-xs leading-5 text-text-muted">
-            Meeting reports added inside this folder will stay grouped under this project.
-          </p>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {loading ? <Loader2 size={18} className="animate-spin" /> : <FolderKanban size={18} />}
-          {loading ? 'Creating project...' : 'Create Project'}
-        </button>
+        <div className="flex justify-center border-t border-border pt-6">
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-primary flex w-full items-center justify-center gap-2 px-10 py-3 font-semibold disabled:opacity-50 sm:w-auto"
+          >
+            {loading ? <Loader2 size={18} className="animate-spin" /> : <FolderKanban size={18} />}
+            {loading ? 'Creating project...' : 'Create Project'}
+          </button>
+        </div>
       </form>
     </div>
   );

@@ -1,0 +1,65 @@
+{
+    "Item": {
+        "calculation_id": {
+            "S": "1e82bcce-6866-451e-8958-9a5a69e0df1a"
+        },
+        "created_at": {
+            "N": "1787203960525"
+        },
+        "environment_hours": {
+            "L": [
+                {
+                    "M": {
+                        "name": {
+                            "S": "Production"
+                        },
+                        "hoursPerDay": {
+                            "N": "24"
+                        }
+                    }
+                },
+                {
+                    "M": {
+                        "name": {
+                            "S": "Staging"
+                        },
+                        "hoursPerDay": {
+                            "N": "12"
+                        }
+                    }
+                },
+                {
+                    "M": {
+                        "name": {
+                            "S": "Dev"
+                        },
+                        "hoursPerDay": {
+                            "N": "8"
+                        }
+                    }
+                }
+            ]
+        },
+        "name": {
+            "S": "COSEC"
+        },
+        "owner_user_id": {
+            "S": "61f3cd5a-2031-7084-4466-eaa83ab5b034"
+        },
+        "prompt": {
+            "S": ""
+        },
+        "region": {
+            "S": "eu-west-1"
+        },
+        "resources_s3_key": {
+            "S": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/parsed/1e82bcce-6866-451e-8958-9a5a69e0df1a.json"
+        },
+        "resources_truncated": {
+            "BOOL": true
+        },
+        "status": {
+            "S": "COMPLETED"
+        }
+    }
+}

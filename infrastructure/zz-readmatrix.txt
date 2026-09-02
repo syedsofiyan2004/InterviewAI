@@ -1,0 +1,121 @@
+}
+
+// ---------------------------------------------------------------------------
+// Transposed inventories
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads one TRANSPOSED inventory: metrics down the first column, scenarios across it.
+ *
+ * The shape readInventory cannot see. docs/Digital_Assets.xlsx states one metric per row
+ * ("Aurora instance class", "Aurora instance count", "Aurora storage (GB)") and one
+ * scenario per column ("26-27" ... "30-31", then "Dev", "Testing (QA)", "UAT"), which
+ * reaches column matching with nothing to match -- "26-27" is not a field name -- and so
+ * produced rows carrying only raw text. The pipeline requires a service, a size or a vCPU
+ * count to price a row, so every one of them was filtered out and the run died on
+ * NO_PRICEABLE_ROWS. shared/metric-matrix.ts does the reading; this function is where its
+ * result becomes resources, warnings and stated inferences.
+ *
+ * Three things it deliberately does NOT do:
+ *
+ *  - It does not sum the bands. Eight scenarios of the same landscape are eight ways to
+ *    describe one estate, not eight estates, so server_count and total_disk_gb come from
+ *    the first band only and a warning says which one.
+ *  - It does not drop what it cannot price. A non-AWS vendor, a metric with no service and
+ *    a count the author set to zero all come back as exclusions with a reason, because
+ *    "Pinecone was not included" is a fact a reviewer must be able to see.
+ *  - It does not hide the conversions. A row labelled "/yr" priced as a monthly figure is a
+ *    silent 12x error, so every normalisation is recorded verbatim.
+ */
+function readMatrix(
+  sheet: SheetGrid,
+  header: string[],
+  dataRows: string[][],
+  firstDataRow: number,
+  context: AnalysisContext,
+): { bands: MetricBand[]; count: number } {
+  const reading = readMetricMatrix(header, dataRows, firstDataRow);
+  const insights = context.insights;
+
+  let count = 0;
+  const perBand = new Map<string, number>();
+  for (const resource of reading.resources) {
+    if (context.resources.length >= MAX_RESOURCES) {
+      context.truncated = true;
+      break;
+    }
+    context.resources.push({
+      sheet: sheet.name,
+      row: resource.rows[0],
+      name: resource.metric.slice(0, 120),
+      // The band is the environment for an environment matrix and a fiscal year otherwise.
+      // Either way it is what separates one scenario's groups from another's downstream,
+      // so it is carried on the row rather than inferred again later.
+      scenario: resource.scenario,
+      environment: reading.bands.find((band) => band.key === resource.scenario)?.kind === 'environment'
+        ? reading.bands.find((band) => band.key === resource.scenario)?.label
+        : undefined,
+      service: resource.service,
+      size: resource.size,
+      quantity: resource.quantity,
+      vcpu: resource.vcpu,
+      ram_gb: resource.ram_gb,
+      disk_gb: resource.disk_gb,
+      usage_amount: resource.usage_amount,
+      usage_unit: resource.usage_unit,
+      metric: resource.metric,
+      notes: resource.notes,
+      raw: resource.raw.slice(0, 600),
+    });
+    count++;
+    perBand.set(resource.scenario, (perBand.get(resource.scenario) ?? 0) + 1);
+  }
+
+  const bands = reading.bands.map((band) => ({
+    key: band.key,
+    label: band.label,
+    kind: band.kind,
+    sheet: sheet.name,
+    resource_count: perBand.get(band.key) ?? 0,
+  }));
+  insights.bands = [...(insights.bands ?? []), ...bands];
+  insights.exclusions = [...(insights.exclusions ?? []), ...reading.exclusions];
+  insights.conversions = [...(insights.conversions ?? []), ...reading.conversions];
+
+  // Machine and disk counts describe ONE configuration. The first band is the one the
+  // sheet leads with, and saying which it is costs a sentence and saves a reader from
+  // reading an 8x estate.
+  const first = reading.bands[0];
+  if (first) {
+    for (const resource of reading.resources.filter((entry) => entry.scenario === first.key)) {
+      const quantity = toNumber(resource.quantity ?? '') ?? 1;
+      insights.server_count += quantity;
+      if (resource.disk_gb) insights.total_disk_gb += resource.disk_gb;
+    }
+  }
+
+  if (!count) {
+    warn(context, `${sheet.name}: the table at row ${firstDataRow} states metrics down the first column, but none of them could be priced.`);
+    return { bands: reading.bands, count };
+  }
+
+  const kinds = new Set(reading.bands.map((band) => band.kind));
+  const shape = kinds.has('period')
+    ? 'consecutive periods, so their totals run one after another and must never be added together'
+    : 'concurrent environments, so their totals do add up to the estate';
+  warn(context, `${sheet.name}: read as ${reading.bands.length} scenario(s) (${reading.bands.map((band) => `${band.label}: ${perBand.get(band.key) ?? 0} row(s)`).join('; ')}) -- ${shape}.`);
+  if (first) {
+    warn(context, `${sheet.name}: the machine and storage totals describe "${first.label}" only, because the scenarios restate one estate rather than adding to it.`);
+  }
+  for (const line of reading.conversions.slice(0, 6)) {
+    warn(context, `${sheet.name}: ${line}`);
+  }
+  for (const exclusion of reading.exclusions.slice(0, 6)) {
+    warn(context, `${sheet.name}: ${exclusion.metric}${exclusion.scenario ? ` (${exclusion.scenario})` : ''} was not priced -- ${exclusion.reason}.`);
+  }
+  if (reading.exclusions.length > 6) {
+    warn(context, `${sheet.name}: ${reading.exclusions.length - 6} further metric(s) were not priced; the full list is in the estimate's exclusions.`);
+  }
+
+  return { bands: reading.bands, count };
+}

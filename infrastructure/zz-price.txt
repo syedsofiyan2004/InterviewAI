@@ -1,0 +1,4 @@
+  // --- 2. Plan. Code first; the model only sees what code could not map. -----------
+  const allGroups = segments.flatMap(
+    (segment) => segment.groups.map((group) => ({ group, scenario: segment.key })),
+  );

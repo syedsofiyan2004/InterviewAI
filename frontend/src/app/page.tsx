@@ -84,7 +84,7 @@ export default function HubPage() {
 
   return (
     <div className="hub-stage min-h-[calc(100vh-7rem)] rounded-[1.5rem] p-[clamp(22px,3.2vw,42px)]">
-      <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-10">
+      <div className="relative z-10 flex w-full flex-col gap-10">
         <header className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-end">
           <div className="max-w-3xl">
             <div className="mb-7 flex items-center gap-4">

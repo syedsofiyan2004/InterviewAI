@@ -65,6 +65,21 @@ export interface McpToolResult {
   isError: boolean;
 }
 
+export interface CalculatorGateway {
+  getServiceCatalog(serviceCode: string): Promise<McpToolResult>;
+  saveEstimate(name: string, services: Array<{ service: string; group: string; config: Record<string, unknown> }>): Promise<McpToolResult>;
+  readEstimate(savedKeyOrUrl: string): Promise<McpToolResult>;
+  validateLink(url: string): Promise<{
+    validUrl: boolean;
+    reason?: string;
+    title?: string;
+    monthly?: number;
+    upfront?: number;
+    total12Months?: number;
+    services?: Array<{ service: string; monthly: number | null; upfront: number | null; configSummary?: string }>;
+  }>;
+}
+
 const REGION = process.env.AWS_REGION || 'ap-south-1';
 
 /**
@@ -113,14 +128,16 @@ function parseSseJsonRpc(body: string): JsonRpcResponse {
   throw new Error(`MCP sidecar returned no parsable JSON-RPC frame. Body: ${body.slice(0, 400)}`);
 }
 
-export class McpSidecarClient {
+export class McpSidecarClient implements CalculatorGateway {
   private readonly lambda: LambdaClient;
   private readonly functionName: string;
+  private readonly browserValidatorFunctionName?: string;
   private nextId = 1;
 
-  constructor(functionName: string) {
+  constructor(functionName: string, browserValidatorFunctionName?: string) {
     if (!functionName) throw new Error('CALCULATOR_SIDECAR_FUNCTION_NAME is not set');
     this.functionName = functionName;
+    this.browserValidatorFunctionName = browserValidatorFunctionName;
     this.lambda = new LambdaClient({ region: REGION });
   }
 
@@ -236,5 +253,63 @@ export class McpSidecarClient {
       .map((block: any) => block.text)
       .join('\n');
     return { text: text || '(tool returned no text)', isError: Boolean(result?.isError) };
+  }
+
+  async getServiceCatalog(serviceCode: string): Promise<McpToolResult> {
+    return this.callTool('get_service_fields', { service: serviceCode });
+  }
+
+  async saveEstimate(
+    name: string,
+    services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
+  ): Promise<McpToolResult> {
+    const result = await this.callTool('build_estimate', { name, services: JSON.stringify(services) }, 180_000);
+    if (result.isError || /https:\/\/[^\s"'\\]*calculator\.aws/i.test(result.text)) return result;
+    try {
+      const parsed = JSON.parse(result.text);
+      if (parsed?.sharable_url) return result;
+      return { ...result, isError: true };
+    } catch {
+      return { ...result, isError: true };
+    }
+  }
+
+  async readEstimate(savedKeyOrUrl: string): Promise<McpToolResult> {
+    return this.callTool('import_estimate', { estimate_id: savedKeyOrUrl, format: 'json' }, 180_000);
+  }
+
+  async validateLink(url: string): Promise<{
+    validUrl: boolean;
+    reason?: string;
+    title?: string;
+    monthly?: number;
+    upfront?: number;
+    total12Months?: number;
+    services?: Array<{ service: string; monthly: number | null; upfront: number | null; configSummary?: string }>;
+  }> {
+    try {
+      const parsed = new URL(url);
+      const validUrl = parsed.protocol === 'https:' && parsed.hostname.endsWith('calculator.aws');
+      if (!validUrl) return { validUrl: false, reason: 'The URL is not an HTTPS calculator.aws link.' };
+    } catch {
+      return { validUrl: false, reason: 'The returned shareable link is not a valid URL.' };
+    }
+    if (!this.browserValidatorFunctionName) {
+      return { validUrl: false, reason: 'The isolated Calculator browser validator is not configured.' };
+    }
+    const response = await this.lambda.send(new InvokeCommand({
+      FunctionName: this.browserValidatorFunctionName,
+      InvocationType: 'RequestResponse',
+      Payload: new TextEncoder().encode(JSON.stringify({ url })),
+    }));
+    const decoded = response.Payload ? new TextDecoder().decode(response.Payload) : '';
+    if (response.FunctionError) {
+      return { validUrl: false, reason: `Calculator browser validator failed (${response.FunctionError}): ${decoded.slice(0, 300)}` };
+    }
+    try {
+      return JSON.parse(decoded);
+    } catch {
+      return { validUrl: false, reason: `Calculator browser validator returned invalid JSON: ${decoded.slice(0, 300)}` };
+    }
   }
 }

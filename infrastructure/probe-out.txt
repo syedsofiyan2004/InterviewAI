@@ -1,0 +1,803 @@
+isError=false
+[
+  {
+    "serviceCode": "ec2Enhancement",
+    "serviceName": "Amazon EC2 ",
+    "fields": [
+      {
+        "id": "tenancy",
+        "type": "dropdown",
+        "templateId": "template",
+        "label": "Tenancy",
+        "options": [
+          {
+            "id": "shared",
+            "label": "Shared Instances"
+          },
+          {
+            "id": "dedicated",
+            "label": "Dedicated Instances"
+          },
+          {
+            "id": "host",
+            "label": "Dedicated Hosts"
+          }
+        ],
+        "defaultValue": "shared"
+      },
+      {
+        "id": "selectedOS",
+        "type": "dropdown",
+        "templateId": "template",
+        "label": "Operating system",
+        "options": [
+          {
+            "id": "linux",
+            "label": "Linux"
+          },
+          {
+            "id": "windows",
+            "label": "Windows Server"
+          },
+          {
+            "id": "windows-std",
+            "label": "Windows Server with SQL Server Standard"
+          },
+          {
+            "id": "windows-web",
+            "label": "Windows Server with SQL Server Web"
+          },
+          {
+            "id": "windows-enterprise",
+            "label": "Windows Server with SQL Server Enterprise"
+          },
+          {
+            "id": "rhel",
+            "label": "Red Hat Enterprise Linux"
+          },
+          {
+            "id": "suse",
+            "label": "SUSE Linux Enterprise Server"
+          },
+          {
+            "id": "linux-std",
+            "label": "Linux with SQL Server Standard"
+          },
+          {
+            "id": "linux-web",
+            "label": "Linux with SQL Server Web"
+          },
+          {
+            "id": "linux-enterprise",
+            "label": "Linux with SQL Server Enterprise"
+          },
+          {
+            "id": "rhel-ha",
+            "label": "Red Hat Enterprise Linux with HA"
+          },
+          {
+            "id": "rhel-web",
+            "label": "Red Hat Enterprise Linux with SQL Server Web"
+          },
+          {
+            "id": "rhel-std",
+            "label": "Red Hat Enterprise Linux with SQL Server Standard"
+          },
+          {
+            "id": "rhel-enterprise",
+            "label": "Red Hat Enterprise Linux with SQL Server Enterprise"
+          },
+          {
+            "id": "rhel-ha-std",
+            "label": "Red Hat Enterprise Linux with HA and SQL Server Standard"
+          },
+          {
+            "id": "rhel-ha-enterprise",
+            "label": "Red Hat Enterprise Linux with HA and SQL Server Enterprise"
+          },
+          {
+            "id": "ubuntu-pro",
+            "label": "Ubuntu Pro"
+          }
+        ],
+        "defaultValue": "linux"
+      },
+      {
+        "id": "workloadSelection",
+        "type": "radioTiles",
+        "templateId": "template",
+        "label": "Advance workload selection"
+      },
+      {
+        "id": "workload",
+        "type": "workload",
+        "templateId": "template",
+        "label": "Advance workloads"
+      },
+      {
+        "id": "instanceType",
+        "type": "ec2InstanceSearch",
+        "templateId": "template",
+        "label": "Advance EC2 instance"
+      },
+      {
+        "id": "pricingStrategy",
+        "type": "ec2AdvPricingStrategyV2",
+        "templateId": "template",
+        "label": "Advance pricing strategy",
+        "options": [
+          {
+            "label": "Compute Savings Plans",
+            "value": "compute-savings"
+          },
+          {
+            "label": "EC2 Instance Savings Plans",
+            "value": "instance-savings"
+          },
+          {
+            "label": "On-Demand",
+            "value": "on-demand"
+          },
+          {
+            "label": "Spot Instances",
+            "value": "spot"
+          },
+          {
+            "label": "Standard Reserved Instances",
+            "value": "standard"
+          },
+          {
+            "label": "Convertible Reserved Instances",
+            "value": "convertible"
+          }
+        ]
+      },
+      {
+        "id": "storageType",
+        "type": "dropdown",
+        "templateId": "template",
+        "label": "Storage for each EC2 instance",
+        "options": [
+          {
+            "id": "Storage General Purpose gp3 GB Mo",
+            "label": "General Purpose SSD (gp3)"
+          },
+          {
+            "id": "Storage General Purpose GB Mo",
+            "label": "General Purpose SSD (gp2)"
+          },
+          {
+            "id": "Storage Provisioned IOPS GB Mo",
+            "label": "Provisioned IOPS SSD (io1)"
+          },
+          {
+            "id": "Storage Provisioned IOPS io2 GB month",
+            "label": "Provisioned IOPS SSD (io2)"
+          },
+          {
+            "id": "Storage Throughput Optimized HDD GB Mo",
+            "label": "Throughput Optimized HDD (st 1)"
+          },
+          {
+            "id": "Storage Cold HDD GB Mo",
+            "label": "Cold HDD (sc1)"
+          },
+          {
+            "id": "Storage Magnetic GB Mo",
+            "label": "Magnetic (previous generation)"
+          }
+        ]
+      },
+      {
+        "id": "iops",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "Provisioning IOPS io1",
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 64000,
+        "allowDecimals": true
+      },
+      {
+        "id": "iops2",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "Provisioning IOPS io2",
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 256000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3Iops",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "General Purpose SSD (gp3) - IOPS",
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 80000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3Throughput",
+        "type": "throughput",
+        "templateId": "template",
+        "label": "General Purpose SSD (gp3) - Throughput",
+        "options": [
+          {
+            "id": "1",
+            "label": "MBps",
+            "value": "mbps"
+          }
+        ],
+        "minValue": 0,
+        "maxValue": 2000,
+        "allowDecimals": true
+      },
+      {
+        "id": "storageAmount",
+        "type": "fileSize",
+        "templateId": "template",
+        "label": "Storage amount",
+        "minValue": 0,
+        "maxValue": 65536,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "storageAmountIo2",
+        "type": "fileSize",
+        "templateId": "template",
+        "label": "Storage amount per io2 volume",
+        "minValue": 0,
+        "maxValue": 65536,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "snapshotFrequency",
+        "type": "dropdown",
+        "templateId": "template",
+        "label": "Snapshot Frequency",
+        "options": [
+          {
+            "id": "0",
+            "label": "No snapshot storage"
+          },
+          {
+            "id": "729",
+            "label": "Hourly"
+          },
+          {
+            "id": "30",
+            "label": "Daily"
+          },
+          {
+            "id": "59.83",
+            "label": "2x Daily"
+          },
+          {
+            "id": "90.25",
+            "label": "3x Daily"
+          },
+          {
+            "id": "120.67",
+            "label": "4x Daily"
+          },
+          {
+            "id": "181.5",
+            "label": "6x Daily"
+          },
+          {
+            "id": "3",
+            "label": "Weekly"
+          },
+          {
+            "id": "1",
+            "label": "Monthly"
+          }
+        ],
+        "defaultValue": "0"
+      },
+      {
+        "id": "snapshotAmount",
+        "type": "fileSize",
+        "templateId": "template",
+        "label": "Amount changed per snapshot",
+        "minValue": 0,
+        "maxValue": 16384,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "storageTypeDH",
+        "type": "dropdown",
+        "templateId": "template",
+        "label": "Storage for each EC2 instance",
+        "options": [
+          {
+            "id": "Storage General Purpose GB Mo",
+            "label": "General Purpose SSD (gp2)"
+          },
+          {
+            "id": "Storage General Purpose gp3 GB Mo",
+            "label": "General Purpose SSD (gp3)"
+          },
+          {
+            "id": "Storage Provisioned IOPS GB Mo",
+            "label": "Provisioned IOPS SSD (io1)"
+          },
+          {
+            "id": "Storage Provisioned IOPS io2 GB month",
+            "label": "Provisioned IOPS SSD (io2)"
+          },
+          {
+            "id": "Storage Throughput Optimized HDD GB Mo",
+            "label": "Throughput Optimized HDD (st 1)"
+          },
+          {
+            "id": "Storage Cold HDD GB Mo",
+            "label": "Cold HDD (sc1)"
+          },
+          {
+            "id": "Storage Magnetic GB Mo",
+            "label": "Magnetic (previous generation)"
+          }
+        ]
+      },
+      {
+        "id": "iopsDH",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "Provisioning IOPS io1",
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 64000,
+        "allowDecimals": true
+      },
+      {
+        "id": "iops2DH",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "Provisioning IOPS io2",
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 256000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3IopsDH",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "General Purpose SSD (gp3) - IOPS",
+        "defaultValue": 3000,
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 1,
+        "maxValue": 80000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3ThroughputDH",
+        "type": "throughput",
+        "templateId": "template",
+        "label": "General Purpose SSD (gp3) - Throughput",
+        "defaultValue": 125,
+        "options": [
+          {
+            "id": "1",
+            "label": "MBps",
+            "value": "mbps"
+          }
+        ],
+        "minValue": 0,
+        "maxValue": 2000,
+        "allowDecimals": true
+      },
+      {
+        "id": "storageAmountDH",
+        "type": "fileSize",
+        "templateId": "template",
+        "label": "Storage amount",
+        "minValue": 0,
+        "maxValue": 65536,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "detailedMonitoringCheckbox",
+        "type": "checkbox",
+        "templateId": "template",
+        "label": "Enable monitoring",
+        "defaultValue": false
+      },
+      {
+        "id": "ec2AdvancedPricingMetrics",
+        "type": "ec2AdvPricingMetrics",
+        "templateId": "template",
+        "label": "EC2 number of metrics"
+      },
+      {
+        "id": "dataTransferForEC2",
+        "type": "dataTransferV2",
+        "templateId": "template",
+        "label": "Data Transfer",
+        "minValue": 0,
+        "maxValue": 1000000000
+      },
+      {
+        "id": "aditionalCost",
+        "type": "numericInput",
+        "templateId": "template",
+        "label": "Enter any placeholder cost such as Licensing to add to your estimate",
+        "minValue": 0,
+        "maxValue": 10000000000,
+        "allowDecimals": false
+      },
+      {
+        "id": "utilization",
+        "type": "numericInput",
+        "label": "Utilization (% of month, 1–100)",
+        "helpText": "Percent of the month the instance is running (1–100, default 100). Pass as a top-level string, e.g. utilization: \"80\". The transform routes it into pricingStrategy.value.utilizationValue. The PCT does not surface this field directly because it is nested inside the pricingStrategy component — pass it at the top level of your config.",
+        "default": "100",
+        "_synthetic": true
+      }
+    ],
+    "catalog": {
+      "status": "verified",
+      "templateId": "template",
+      "required": [
+        {
+          "field": "instanceType",
+          "hint": "AWS instance type (e.g. m5.large, t3.medium). Validated against EC2's instance-finder field.",
+          "example": "m5.large"
+        },
+        {
+          "field": "pricingStrategy",
+          "hint": "Pricing model. Accepts shorthand strings for simple cases OR a full object for committed pricing.\n\nShorthand (On-Demand/Spot only): \"ondemand\", \"spot\"\n\nFull object (required for any committed/discounted pricing):\n- EC2 Instance Savings Plans: {\"model\":\"instanceSavings\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"}\n- Compute Savings Plans: {\"model\":\"computeSavings\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"}\n- Standard Reserved Instances (dedicated tenancy only): {\"model\":\"standard\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"}\n- Convertible Reserved Instances (dedicated tenancy only): {\"model\":\"convertible\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"}\n\nValid term values: \"1 Year\", \"3 Year\" (case-insensitive; shorthand \"1yr\"/\"3yr\" also accepted). Term defaults to \"3 Year\" (the cheaper, deeper-commitment Savings Plan) when omitted or unrecognized — pass \"1 Year\" explicitly if you do not want the 3-year commitment.\nValid upfrontPayment values: \"None\", \"Partial\", \"All\" (exact case)\n\nCRITICAL: Do NOT use shorthand \"reserved\" or \"instanceSavings\" for committed pricing — these may silently fall back to On-Demand or produce $0 costs. Always use the full object format for any non-OnDemand, non-Spot pricing. EstimateBuilder normalizes via lib/ec2.js.",
+          "enum": [
+            "ondemand",
+            "reserved",
+            "convertible",
+            "instanceSavings",
+            "computeSavings",
+            "spot"
+          ],
+          "default": "ondemand"
+        }
+      ],
+      "traps": [
+        "Use serviceCode 'ec2Enhancement' with templateId 'template'. The legacy (eC2Next, quickEstimate) format saves cleanly but renders Read-only — the calculator cannot rehydrate it. EstimateBuilder forces this transformation automatically; do not bypass it.",
+        "Reserved Instances (standard, convertible) are HIDDEN under shared tenancy. For shared tenancy with committed pricing, ALWAYS use the full object format: {\"model\":\"instanceSavings\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"} or {\"model\":\"computeSavings\",\"term\":\"1 Year\",\"upfrontPayment\":\"None\"}. The shorthand \"reserved\" and \"instanceSavings\" strings are unreliable and may produce On-Demand pricing or $0 costs. Real Standard/Convertible RIs require tenancy:\"dedicated\" or \"host\".",
+        "pricingStrategy term accepts '1 Year' or '3 Year' (case-insensitive; shorthand '1yr'/'3yr' also works). Anything else — including an omitted term — defaults to '3 Year'. Pass '1 Year' explicitly when you do not want the 3-year commitment.",
+        "pricingStrategy upfrontPayment values: 'None', 'Partial', 'All'. EstimateBuilder accepts shorthand 'No' and converts to 'None'.",
+        "The calculator silently demands tenancy, workload, workloadSelection, dataTransferForEC2, detailedMonitoringCheckbox, and ec2AdvancedPricingMetrics — even though the PCT does not mark them validations.required. EstimateBuilder injects all of these via lib/ec2.js#transformConfig.",
+        "utilization is HIDDEN inside the pricingStrategy component and does NOT appear in get_service_fields' field list. To set utilization, pass top-level utilization: 'N' (string, 1–100); EstimateBuilder routes it into pricingStrategy.value.utilizationValue.",
+        "workload is the INSTANCE COUNT — use it for the user's quantity. For 'two instances' set workload: 2 (one entry) or save two entries with workload: 1 each. Either is fine. Do NOT save workload: 1 for 'two instances' and stash the '2' only in description (the saved estimate prices for one instance and the user reads two). Do NOT compensate for utilization with workload (e.g. workload: 0.8 to fake 80% utilization) — the total cost may match but the saved estimate structurally lies about how many instances are running. Use the explicit utilization field instead.",
+        "The dataTransferForEC2 field is a composite widget. Its value must be an array of transfer entries, each with entryType, value, unit, and a region field. Valid entryTypes: INBOUND, OUTBOUND, INTRA_REGION.",
+        "Unit must be \"tb_month\" or \"gb_month\".",
+        "OUTBOUND entries require a \"toRegion\" field — use \"External\" for internet or \"other\" for other AWS regions. INBOUND entries require a \"fromRegion\" field with the same options. INTRA_REGION requires neither.",
+        "All three entryTypes (INBOUND, OUTBOUND, INTRA_REGION) must be present in the array even if their value is \"0\".",
+        "For Dedicated Hosts (tenancy: \"host\"): instanceType must be the instance FAMILY only (e.g. \"m5\", \"c6g\"), NOT a specific size (e.g. \"m5.metal\", \"m5.xlarge\"). Do NOT set selectedOS — OS is not configured at the host level."
+      ],
+      "minimalConfig": {
+        "region": "us-east-1",
+        "description": "m5.large on-demand",
+        "instanceType": "m5.large",
+        "workload": 1,
+        "selectedOS": "linux",
+        "pricingStrategy": "ondemand"
+      },
+      "lastVerifiedAt": "2026-05-16"
+    }
+  },
+  {
+    "serviceCode": "amazonElasticBlockStore",
+    "serviceName": "Amazon Elastic Block Store (EBS)",
+    "fields": [
+      {
+        "id": "numberOfInstances",
+        "type": "numericInput",
+        "templateId": "elasticBlockStore",
+        "label": "Number of volumes",
+        "defaultValue": 1,
+        "minValue": 1,
+        "maxValue": 1000000000,
+        "allowDecimals": true
+      },
+      {
+        "id": "durationOfInstanceRuns",
+        "type": "durationInput",
+        "templateId": "elasticBlockStore",
+        "label": "Average duration of volume",
+        "defaultValue": 730,
+        "minValue": 1,
+        "maxValue": 730
+      },
+      {
+        "id": "storageType",
+        "type": "dropdown",
+        "templateId": "elasticBlockStore",
+        "label": "Storage for each EC2 instance",
+        "options": [
+          {
+            "id": "Storage General Purpose GB Mo",
+            "label": "General Purpose SSD (gp2)"
+          },
+          {
+            "id": "Storage General Purpose gp3 GB Mo",
+            "label": "General Purpose SSD (gp3)"
+          },
+          {
+            "id": "Storage Provisioned IOPS GB Mo",
+            "label": "Provisioned IOPS SSD (io1)"
+          },
+          {
+            "id": "Storage Provisioned IOPS io2 GB month",
+            "label": "Provisioned IOPS SSD (io2)"
+          },
+          {
+            "id": "Storage Throughput Optimized HDD GB Mo",
+            "label": "Throughput Optimized HDD (st 1)"
+          },
+          {
+            "id": "Storage Cold HDD GB Mo",
+            "label": "Cold HDD (sc1)"
+          },
+          {
+            "id": "Storage Magnetic GB Mo",
+            "label": "Magnetic (previous generation)"
+          }
+        ]
+      },
+      {
+        "id": "storageAmount",
+        "type": "fileSize",
+        "templateId": "elasticBlockStore",
+        "label": "Storage amount per volume",
+        "defaultValue": 30,
+        "minValue": 1,
+        "maxValue": 65536,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "iops",
+        "type": "numericInput",
+        "templateId": "elasticBlockStore",
+        "label": "Provisioning IOPS per volume (io1)",
+        "defaultValue": 3000,
+        "minValue": 100,
+        "maxValue": 64000,
+        "allowDecimals": true
+      },
+      {
+        "id": "iops2",
+        "type": "numericInput",
+        "templateId": "elasticBlockStore",
+        "label": "Provisioning IOPS per volume (io2)",
+        "defaultValue": 3000,
+        "placeholder": "Enter amount of IOPS per volume",
+        "minValue": 100,
+        "maxValue": 256000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3Iops",
+        "type": "numericInput",
+        "templateId": "elasticBlockStore",
+        "label": "Provisioning IOPS per volume (gp3)",
+        "defaultValue": 3000,
+        "minValue": 3000,
+        "maxValue": 80000,
+        "allowDecimals": true
+      },
+      {
+        "id": "gp3Throughput",
+        "type": "throughput",
+        "templateId": "elasticBlockStore",
+        "label": "General Purpose SSD (gp3) - Throughput",
+        "defaultValue": 125,
+        "options": [
+          {
+            "id": "1",
+            "label": "MBps",
+            "value": "mbps"
+          }
+        ],
+        "minValue": 125,
+        "maxValue": 2000,
+        "allowDecimals": true
+      },
+      {
+        "id": "snapshotFrequency",
+        "type": "dropdown",
+        "templateId": "elasticBlockStore",
+        "label": "Snapshot Frequency",
+        "options": [
+          {
+            "id": "0",
+            "label": "No snapshot storage"
+          },
+          {
+            "id": "729",
+            "label": "Hourly"
+          },
+          {
+            "id": "30",
+            "label": "Daily"
+          },
+          {
+            "id": "59.83",
+            "label": "2x Daily"
+          },
+          {
+            "id": "90.25",
+            "label": "3x Daily"
+          },
+          {
+            "id": "120.67",
+            "label": "4x Daily"
+          },
+          {
+            "id": "181.5",
+            "label": "6x Daily"
+          },
+          {
+            "id": "3",
+            "label": "Weekly"
+          },
+          {
+            "id": "1",
+            "label": "Monthly"
+          }
+        ],
+        "defaultValue": "59.83"
+      },
+      {
+        "id": "snapshotAmount",
+        "type": "fileSize",
+        "templateId": "elasticBlockStore",
+        "label": "Amount changed per snapshot",
+        "defaultValue": 3,
+        "minValue": 1,
+        "maxValue": 16384,
+        "allowDecimals": true,
+        "unitFormat": "{value}|{size}|{frequency} — sizes: [mb, gb, tb], default: \"gb|NA\"",
+        "validSizes": [
+          "mb",
+          "gb",
+          "tb"
+        ],
+        "defaultUnit": "gb|NA"
+      },
+      {
+        "id": "numberOfSnapshotsToRestore",
+        "type": "numericInput",
+        "templateId": "elasticBlockStore",
+        "label": "Number of snapshots to restore",
+        "minValue": 0,
+        "maxValue": 1000000,
+        "allowDecimals": true
+      },
+      {
+        "id": "numberOfGETAPIRequests",
+        "type": "frequency",
+        "templateId": "elasticBlockStore",
+        "label": "Number of GetSnapshotBlock API requests",
+        "options": [
+          {
+            "id": "perHour",
+            "label": "Thousand Snapshot API units per hour"
+          },
+          {
+            "id": "perMonth",
+            "label": "Thousand Snapshot API units per month"
+          }
+        ],
+        "minValue": 0,
+        "maxValue": 1000000000000,
+        "allowDecimals": true
+      },
+      {
+        "id": "numberOfDirectAPIListRequests",
+        "type": "frequency",
+        "templateId": "elasticBlockStore",
+        "label": "Number of LIST API requests",
+        "options": [
+          {
+            "id": "perHour",
+            "label": "thousand requests per hour"
+          },
+          {
+            "id": "perMonth",
+            "label": "thousand requests per month"
+          }
+        ],
+        "minValue": 0,
+        "maxValue": 1000000000000,
+        "allowDecimals": true
+      },
+      {
+        "id": "numberOfDirectAPIPUTRequests",
+        "type": "frequency",
+        "templateId": "elasticBlockStore",
+        "label": "Number of PutSnapshotBlock API requests",
+        "options": [
+          {
+            "id": "perHour",
+            "label": "Thousand Snapshot API units per hour"
+          },
+          {
+            "id": "perMonth",
+            "label": "Thousand Snapshot API units per month"
+          }
+        ],
+        "minValue": 0,
+        "maxValue": 1000000000000,
+        "allowDecimals": true
+      }
+    ],
+    "catalog": {
+      "status": "partial",
+      "templateId": "elasticBlockStore",
+      "traps": [
+        "gp3Throughput is a throughput-type field. The correct format is {\"value\": \"<number>\", \"unit\": \"mbps\"}. Do NOT use the options id from get_service_fields — the unit is always \"mbps\".",
+        "gp3Throughput minimum is 125 MBps (included in baseline), maximum is 2000 MBps. Only throughput above 125 MBps incurs additional cost.",
+        "gp3Iops minimum is 3000 (included in baseline), maximum is 80000. Only IOPS above 3000 incur additional cost.",
+        "storageType must be one of the full option IDs from the dropdown (e.g. \"Storage General Purpose gp3 GB Mo\"), not shorthand like \"gp3\".",
+        "snapshotFrequency uses numeric string IDs (e.g. \"0\" for no snapshots, \"30\" for daily, \"729\" for hourly) — not human-readable labels."
+      ],
+      "minimalConfig": {
+        "region": "us-east-1",
+        "description": "EBS gp3 Volume",
+        "numberOfInstances": "1",
+        "durationOfInstanceRuns": {
+          "value": "730",
+          "unit": "hours"
+        },
+        "storageType": "Storage General Purpose gp3 GB Mo",
+        "storageAmount": {
+          "value": "30",
+          "unit": "gb|NA"
+        },
+        "gp3Iops": "3000",
+        "gp3Throughput": {
+          "value": "125",
+          "unit": "mbps"
+        },
+        "snapshotFrequency": "0"
+      },
+      "lastVerifiedAt": "2026-06-17"
+    }
+  }
+]

@@ -119,7 +119,7 @@ export default function MomDashboard() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-8">
+    <div className="space-y-8 pb-8">
       <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="page-kicker mb-1">Minfy AI / MOM Analyzer</p>

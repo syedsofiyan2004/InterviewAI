@@ -98,7 +98,7 @@ export default function InterviewIntelligenceDashboard() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 pb-10">
+    <div className="space-y-8 pb-10">
       <section className="intelligence-hero intelligence-dashboard-hero">
         <div className="min-w-0">
           <p className="page-kicker">Interview Evaluator / Connected mode</p>

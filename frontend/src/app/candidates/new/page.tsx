@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function NewCandidatePage() {
   const { hasTier } = useAuth();
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="space-y-5">
       <Link href="/candidates" className="inline-flex items-center gap-2 text-sm font-semibold text-text-muted hover:text-text-primary">
         <ArrowLeft size={16} />
         Back to review workspaces

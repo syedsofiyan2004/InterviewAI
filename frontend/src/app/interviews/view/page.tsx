@@ -28,6 +28,7 @@ import { twMerge } from 'tailwind-merge';
 import { BackButton } from '@/components/ui/BackButton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast, type ToastType } from '@/components/ui/Toast';
+import { ContextChat } from '@/components/chat/ContextChat';
 import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EvidenceCard } from '@/components/ui/EvidenceCard';
@@ -348,7 +349,7 @@ function InterviewDetailsContent() {
   const hasReport = !!result && !!interview?.report_s3_key;
   
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="space-y-8">
       <div className="flex items-center justify-between">
         <BackButton defaultHref="/interviews" defaultLabel="Evaluations" />
         <div className="flex items-center gap-4">
@@ -804,10 +805,20 @@ function InterviewDetailsContent() {
       />
 
       {toast && (
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={() => setToast(null)} 
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* Read-only by design — an evaluation is evidence, so the chat explains a score
+          and has no tool to change one. See EVALUATION_RULES in the chat prompt. */}
+      {id && interview?.status === 'COMPLETED' && (
+        <ContextChat
+          app="interview"
+          entityId={id}
+          title={interview?.metadata.candidate_name}
         />
       )}
     </div>
@@ -816,7 +827,7 @@ function InterviewDetailsContent() {
 
 function InterviewDetailsSkeleton({ label }: { label: string }) {
   return (
-    <div className="mx-auto max-w-6xl space-y-8" aria-live="polite" aria-busy="true">
+    <div className="space-y-8" aria-live="polite" aria-busy="true">
       <div className="h-4 w-36 animate-pulse rounded bg-surface-elevated" />
       <div className="space-y-3">
         <div className="h-8 w-72 animate-pulse rounded bg-surface-elevated" />

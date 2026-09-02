@@ -12,6 +12,7 @@ import { HeroNumber } from '@/components/ui/HeroNumber';
 import { getIntelligenceCandidateName } from '@/lib/getIntelligenceCandidateName';
 import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 import { QuestionPlanPicker } from '@/components/interview/QuestionPlanPicker';
+import { ContextChat } from '@/components/chat/ContextChat';
 
 const workspaceTabs = ['Brief', 'Panel guide', 'Case interview', 'Transcript', 'Review'];
 const steps = workspaceTabs.map((label, index) => ({ label, anchor: `workspace-${index}` }));
@@ -196,7 +197,7 @@ export default function InterviewIntelligenceViewPage() {
 
   if (!record) {
     return (
-      <div className="mx-auto max-w-4xl p-8">
+      <div className="p-8">
         <Link href="/interviews/intelligence" className="text-sm font-semibold text-accent">Back</Link>
         <p className="mt-6 text-sm text-danger">{error || 'Record not found'}</p>
       </div>
@@ -266,7 +267,7 @@ export default function InterviewIntelligenceViewPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-10">
+    <div className="space-y-6 pb-10">
       <BackButton defaultHref="/interviews/intelligence" defaultLabel="Intelligence Interviews" />
 
       <section className="intelligence-card intelligence-workspace-header flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between md:p-7">
@@ -851,6 +852,17 @@ export default function InterviewIntelligenceViewPage() {
         onCancel={() => setDeleteOpen(false)}
         onConfirm={deleteWorkspace}
       />
+
+      {/* Gated on the evaluation existing rather than on a status, because the workspace
+          reaches several terminal states with a report and only one of them is 'approved'.
+          Read-only, like interviews/view — the chat explains a rating, never rewrites it. */}
+      {record.aiEvaluation && (
+        <ContextChat
+          app="intelligence"
+          entityId={record.intelligence_id}
+          title={getIntelligenceCandidateName(record)}
+        />
+      )}
     </div>
   );
 }
@@ -968,7 +980,7 @@ function formatJobDescription(description: string) {
 
 function IntelligenceViewSkeleton() {
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-10" aria-busy="true" aria-live="polite">
+    <div className="space-y-6 pb-10" aria-busy="true" aria-live="polite">
       <div className="h-5 w-56 animate-pulse rounded bg-surface" />
       <div className="intelligence-hero grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.55fr)]">
         <div className="space-y-4">

@@ -142,6 +142,15 @@ textarea {
     box-shadow: 0 4px 16px rgb(15 23 42 / 0.06);
   }
 
+  /* The one place the workspace measure is defined. Every route uses this so the
+     content edge and column width never shift as you navigate between a list page
+     and the create page beside it. */
+  .page-shell {
+    width: 100%;
+    max-width: 72rem;
+    margin-inline: auto;
+  }
+
   .page-kicker {
     font-size: 10px;
     font-weight: 700;

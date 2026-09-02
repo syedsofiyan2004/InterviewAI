@@ -1,0 +1,50 @@
+isError=false
+{
+  "estimate_id": "a7737b1b-6abe-49c2-9b64-2682e1513a6e",
+  "sharable_url": "https://calculator.aws/#/estimate?id=7f72b5219033e29bdc2b469dd8bff24e9c1890d8",
+  "aws_estimate_id": "7f72b5219033e29bdc2b469dd8bff24e9c1890d8",
+  "services": [
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT",
+      "existing_entry": {
+        "service": "ec2Enhancement",
+        "description": "2 x m6a.large Windows (UAT)",
+        "group": "UAT"
+      },
+      "warning": "An entry with service=\"ec2Enhancement\" and description=\"2 x m6a.large Windows (UAT)\" already exists in this estimate (group: \"UAT\"). add_service has appended a duplicate row — this inflates the cost. If you intended to replace the previous attempt (e.g. retrying after an error), call create_estimate to start fresh instead."
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "Prod"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "Prod",
+      "existing_entry": {
+        "service": "ec2Enhancement",
+        "description": "1 x m6a.large Linux (Prod)",
+        "group": "Prod"
+      },
+      "warning": "An entry with service=\"ec2Enhancement\" and description=\"1 x m6a.large Linux (Prod)\" already exists in this estimate (group: \"Prod\"). add_service has appended a duplicate row — this inflates the cost. If you intended to replace the previous attempt (e.g. retrying after an error), call create_estimate to start fresh instead."
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "Prod/UAT/Dev"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "Prod, UAT & Dev"
+    }
+  ]
+}

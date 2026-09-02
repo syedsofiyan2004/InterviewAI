@@ -7,10 +7,10 @@ import {
   saveFileContent,
   validateEnv,
 } from '../shared/aws';
-import { extractJson, extractTextFromBuffer } from '../shared/utils.js';
+import { extractTextFromBuffer } from '../shared/utils.js';
 import { generateMomPdfReport } from '../shared/mom-report.js';
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { MomResultSchema } from '../../schema/mom.js';
+import { MomOutputError, parseMomModelOutput } from './output-parser.js';
 
 validateEnv(['MOM_TABLE_NAME', 'BUCKET_NAME', 'MOM_MODEL_ID']);
 
@@ -134,7 +134,7 @@ async function setMomProgress(id: string, stage: string, message: string): Promi
   }
 }
 
-async function analyzeTranscript(title: string, transcript: string) {
+export async function analyzeTranscript(title: string, transcript: string) {
   const prompt = `
 You are a senior project manager producing a formal Minutes of Meeting document.
 Your task is to analyze the meeting transcript provided and extract structured,
@@ -220,29 +220,33 @@ The JSON must match this exact shape:
 }
 
 Field rules:
-- Use the user-provided meeting title unless the transcript clearly gives a better title.
+- Use the user-provided meeting title. Do not replace it with a model-generated title.
 - Use the date the meeting was held. Return YYYY-MM-DD if clearly stated. Return "Not specified" if the date cannot be determined from the transcript. Do not use today's date.
 - If no reference number is mentioned, generate "MOM-001".
 - Infer report_type from the meeting content, such as "Technical Working Session", "Governance Review", "Sprint Planning", "Client Review", "Architecture Discussion", "HR Review", or "Sales Call". Default to "Working Session".
 - Extract platform, duration, workstream, facilitator, and scribe only from transcript context. Use "Not specified" when unclear.
 - Use "All Attendees" for distribution unless additional recipients are explicitly mentioned.
 - Use the meeting date for issued_date unless a different issued date is explicitly mentioned.
-- Write overall_summary in exactly 3-5 executive-ready sentences covering purpose, decisions/conclusions, open risks/questions, and next steps.
+- Write a concise executive-ready overall_summary using only supported purpose, decisions, conclusions, open risks, questions, and next steps. Do not add content merely to reach a target length.
 - List every person who spoke or was explicitly present. Attendees must be objects, never plain strings.
-- For attendee role, infer from context when possible. If role is genuinely unclear, use a neutral functional label such as "Participant", "Stakeholder", or "Team Member". Never write "role not specified" or "Not specified" for role.
+- For attendee role, use an explicitly stated role when available. Otherwise, infer a broad functional meeting role only when repeated responsibilities or multiple independent transcript cues support it, such as facilitation, project coordination, technical implementation, or content ownership.
+- Do not infer seniority, HR grade, or an official job title from meeting behavior. Use "Participant" when the evidence is weak or ambiguous, and never assign a role from one isolated remark.
 - For attendee organisation, use the company/team when mentioned. If not mentioned, use the project name if clear, otherwise use "-".
-- List 3-6 agenda_items as clear topic statements.
-- Group discussion_points into 5-9 logical themes or workstream areas. Each summary must be 2-5 sentences and outcome-focused.
+- Include only agenda_items that were actually discussed or explicitly listed in the transcript. Use [] when none are supported.
+- Group only transcript-supported discussion_points into logical themes. Do not split, pad, or add themes to reach a target count. Use [] when the transcript contains no supported discussion points.
+- Keep each discussion summary concise and outcome-focused, but do not add conclusions or implications that were not expressed in the transcript.
 - Include raised_by only when the transcript supports it.
 - Decisions must be objects and must include only confirmed decisions, not opinions. Use [] when none exist.
-- Action items must be concrete, outcome-based, and prioritized. Use "Unassigned" only when no owner is clear. Use "TBD" when the task is real but no due date is stated.
-- Priority rules: High means blocking, critical path, or near deadline; Medium means important but not immediately blocking; Low means useful but deferrable.
-- Risks must be objects. Include every blocker, dependency, uncertainty, feasibility concern, approval dependency, escalation, compliance concern, and delivery risk.
+- Include an action item only when the transcript contains an explicit commitment, assignment, request for follow-up, or agreed task. Do not convert suggestions, observations, risks, or open questions into action items.
+- Action items must be concrete and outcome-based. Copy the owner and due date only when supported; otherwise use "Unassigned" and "TBD". Use [] when no actions were agreed.
+- Preserve whether work is already completed, in progress, or still planned. Do not turn completed work into a new action item; when a completed step has an explicit remaining follow-up, include only that remaining step.
+- Set action priority from explicit urgency, blocking, critical-path, or deadline language in the transcript. Do not raise priority based on assumptions.
+- Risks must be objects and must be supported by an explicitly discussed blocker, dependency, uncertainty, feasibility concern, approval dependency, escalation, compliance concern, or delivery risk. Do not invent anticipated risks. Use [] when none were discussed.
 - Every risk description must begin with a category prefix, for example "Timeline Risk: ...", "Technical Risk: ...", or "Access Risk: ...".
 - Risk category must be one of Timeline, Technical, Delivery, Dependency, Access, Compliance, Commercial, or Resource.
-- Use likelihood H/M/L and impact H/M/L based on transcript language and project consequence.
+- Use likelihood H/M/L and impact H/M/L based on transcript language, without adding unstated consequences.
 - Use "To be determined" for mitigation if no mitigation was discussed.
-- Write 4-8 next_steps as ordered, practical critical-path steps. Start each with the owner name when clear.
+- Include only next_steps that were explicitly planned, requested, assigned, or committed to in the transcript. Use [] when no explicit next steps or follow-up commitments were discussed.
 - Include next_meeting only if a follow-up meeting was explicitly discussed or scheduled. Otherwise omit the entire field.
 - previous_actions should be [] unless the transcript includes review of actions from a previous meeting.
 - Do not invent facts, deadlines, owners, attendees, costs, decisions, tools, or platforms that are not supported by the transcript.
@@ -253,60 +257,56 @@ Field rules:
 
 Meeting title provided by user: ${title}
 
-Transcript:
+<meeting_transcript>
 ${transcript.slice(0, 180000)}
+</meeting_transcript>
 `;
 
-  const body: Record<string, unknown> = {
-    anthropic_version: 'bedrock-2023-05-31',
-    // Rich MOMs can contain several structured sections. Sonnet needs
-    // enough output budget to close the JSON document cleanly.
-    max_tokens: 24000,
-    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-  };
-  if (!MOM_MODEL_ID.includes('claude-sonnet-5')) {
-    body.temperature = 0;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const retryInstruction = attempt === 1
+      ? ''
+      : `This is automatic retry ${attempt} of ${maxAttempts}. The previous response could not be parsed or validated. Return a complete JSON document matching the requested shape exactly.\n\n`;
+    const body: Record<string, unknown> = {
+      anthropic_version: 'bedrock-2023-05-31',
+      // Rich MOMs can contain several structured sections. Sonnet needs
+      // enough output budget to close the JSON document cleanly.
+      max_tokens: 24000,
+      messages: [{ role: 'user', content: [{ type: 'text', text: retryInstruction + prompt }] }],
+    };
+    if (!MOM_MODEL_ID.includes('claude-sonnet-5')) {
+      body.temperature = 0;
+    }
+
+    const response = await bedrockClient.send(new InvokeModelCommand({
+      modelId: MOM_MODEL_ID,
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify(body),
+    }));
+    const payload = JSON.parse(new TextDecoder().decode(response.body));
+
+    try {
+      const parsed = parseMomModelOutput(payload);
+      if (parsed.repaired) {
+        console.warn('MOM model JSON required deterministic repair', { attempt });
+      }
+      return parsed.value;
+    } catch (error) {
+      if (!(error instanceof MomOutputError)) throw error;
+      console.warn('MOM model output rejected', {
+        attempt,
+        maxAttempts,
+        kind: error.kind,
+        ...error.diagnostics,
+      });
+      if (attempt === maxAttempts) {
+        throw new Error('The AI response could not be validated after 3 automatic attempts. Please retry.');
+      }
+    }
   }
 
-  const response = await bedrockClient.send(new InvokeModelCommand({
-    modelId: MOM_MODEL_ID,
-    contentType: 'application/json',
-    accept: 'application/json',
-    body: JSON.stringify(body),
-  }));
-
-  const payload = JSON.parse(new TextDecoder().decode(response.body));
-  // Sonnet 4.6 may return an adaptive-thinking block before its final text.
-  // Read every text block rather than assuming the first content block is text.
-  const text = Array.isArray(payload.content)
-    ? payload.content
-      .filter((block: { type?: string; text?: unknown }) => (
-        block.type === 'text' && typeof block.text === 'string'
-      ))
-      .map((block: { text: string }) => block.text)
-      .join('\n')
-    : '';
-  const tagged = text.match(/<mom_json>([\s\S]*?)<\/mom_json>/i)?.[1]?.trim();
-  const jsonText = tagged || extractJson(text);
-  if (!jsonText) {
-    const contentTypes = Array.isArray(payload.content)
-      ? payload.content.map((block: { type?: string }) => block.type || 'unknown').join(',')
-      : 'none';
-    console.error('MOM model response did not contain JSON text', {
-      stopReason: payload.stop_reason || 'unknown',
-      contentTypes,
-    });
-    throw new Error('AI_EMPTY_RESPONSE');
-  }
-
-  const parsed = JSON.parse(jsonText);
-  const validation = MomResultSchema.safeParse(parsed);
-  if (!validation.success) {
-    const reason = validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join(', ');
-    throw new Error(`MOM_RESULT_VALIDATION_FAILED: ${reason}`);
-  }
-
-  return validation.data;
+  throw new Error('The AI response could not be validated after 3 automatic attempts. Please retry.');
 }
 
 async function updateMom(id: string, status: string, extra: Record<string, any> = {}) {

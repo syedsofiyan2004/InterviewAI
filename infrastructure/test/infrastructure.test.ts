@@ -102,6 +102,9 @@ describe('New routes are registered and authenticated', () => {
     // The hub's third app. Same exposure as above — calculator-routes.ts and the
     // dispatch block are useless without the gateway resources.
     'calculator', 'result', 'upload-url', 'report',
+    // Estimate projects. A sibling of 'calculator', not a child: 'calculator/projects'
+    // would be captured by the {id} resource and never reach listCalculationProjects.
+    'calculator-projects',
   ];
 
   test.each(EXPECTED_PATHS)('resource "%s" exists in the API', (pathPart) => {
@@ -217,7 +220,7 @@ describe('This change is additive — no existing logical ID moved', () => {
     expect(ids.filter((id) => id.startsWith(prefix))).toHaveLength(1);
   });
 
-  test('the table set is exactly the six we expect', () => {
+  test('the table set is exactly the seven we expect', () => {
     // A count alone would pass if a table were renamed, which is the case that
     // deletes live data. Naming the set makes an accidental or renamed table fail
     // here rather than at deploy time.
@@ -225,6 +228,8 @@ describe('This change is additive — no existing logical ID moved', () => {
     const prefixes = [
       'InterviewsTable', 'MomTable', 'InterviewIntelligenceTable',
       'AdminTable', 'CalculatorTable', 'CalculatorEstimatesTable',
+      // Added with the context chat: one thread per artifact per user.
+      'ChatTable',
     ];
     expect(ids).toHaveLength(prefixes.length);
     for (const prefix of prefixes) {

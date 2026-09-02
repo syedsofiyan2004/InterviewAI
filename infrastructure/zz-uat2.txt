@@ -1,0 +1,53 @@
+isError=false
+{
+  "estimate_id": "4bd2d909-e6e2-4e0c-9f8d-121547fd4bd2",
+  "sharable_url": "https://calculator.aws/#/estimate?id=2b67bd0f19620de373b6b1db4983d05a34930dad",
+  "aws_estimate_id": "2b67bd0f19620de373b6b1db4983d05a34930dad",
+  "services": [
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    },
+    {
+      "success": true,
+      "service": "ec2Enhancement",
+      "group": "UAT"
+    }
+  ]
+}

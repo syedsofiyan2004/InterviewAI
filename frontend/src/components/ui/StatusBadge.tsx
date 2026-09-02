@@ -24,8 +24,11 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     CREATED: "text-text-muted border-border bg-surface/50",
     FILES_UPLOADED: "text-accent bg-accent/10 border-accent/25",
     QUEUED: "text-warning bg-warning/10 border-warning/25",
+    ANALYZING: "text-info bg-info/10 border-info/25 animate-pulse",
+    REVIEW_REQUIRED: "text-warning bg-warning/10 border-warning/25",
     PROCESSING: "text-warning bg-warning/10 border-warning/25 animate-pulse",
     COMPLETED: "text-success bg-success/10 border-success/25",
+    PARTIAL: "text-warning bg-warning/10 border-warning/25",
     FAILED: "text-danger bg-danger/10 border-danger/25",
 
     // --- Interview Intelligence lifecycle ---
@@ -46,8 +49,11 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     CREATED: "text-text-muted",
     FILES_UPLOADED: "text-text-muted",
     QUEUED: "text-warning",
+    ANALYZING: "text-info",
+    REVIEW_REQUIRED: "text-warning",
     PROCESSING: "text-warning",
     COMPLETED: "text-success",
+    PARTIAL: "text-warning",
     FAILED: "text-danger",
 
     DRAFT: "text-text-muted",
@@ -70,6 +76,8 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     ANALYSIS_PROCESSING: 'Analyzing',
     ANALYSIS_GENERATED: 'Report ready',
     ANALYSIS_FAILED: 'Analysis failed',
+    REVIEW_REQUIRED: 'Needs review',
+    PARTIAL: 'Validation incomplete',
   };
 
   const label = LABEL_OVERRIDES[normalizedStatus] || normalizedStatus.replace(/_/g, ' ');

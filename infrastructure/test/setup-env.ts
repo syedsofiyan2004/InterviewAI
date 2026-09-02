@@ -10,6 +10,9 @@ process.env.MOM_QUEUE_URL = 'https://sqs.test/moms';
 process.env.INTELLIGENCE_TABLE_NAME = 'test-intelligence';
 process.env.ADMIN_TABLE_NAME = 'test-admin';
 process.env.CALCULATOR_TABLE_NAME = 'test-calculations';
+// The chat table is read by the api-handler as well as the chat Lambda, now that
+// conversations are listable — lambdas/chat/store.ts reads this at module load.
+process.env.CHAT_TABLE_NAME = 'test-chat';
 process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME = 'test-calculator-orchestrator';
 process.env.CALCULATOR_SIDECAR_FUNCTION_NAME = 'test-calculator-sidecar';
 process.env.USER_POOL_ID = 'ap-south-1_test';

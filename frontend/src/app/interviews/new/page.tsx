@@ -220,7 +220,7 @@ export default function NewInterview() {
     .sort((left, right) => left.title.localeCompare(right.title)), [careerJobs, selectedCareerDepartment]);
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="space-y-8">
       <Link href="/interviews" className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors text-sm font-medium">
         <ArrowLeft size={16} />
         Back to Dashboard
@@ -233,7 +233,7 @@ export default function NewInterview() {
       </div>
 
       {/* Progress Steps */}
-      <div className="flex items-center justify-center gap-4 py-8 max-w-sm mx-auto">
+      <div className="mx-auto flex max-w-md items-center justify-center gap-4 py-8">
         <ProgressStep step={1} active={step === 'CREATE'} done={!!interviewId} label="Details" />
         <div className={cn("h-px flex-1 transition-colors duration-500", !!interviewId ? "bg-success" : "bg-border")} />
         <ProgressStep step={2} active={step === 'UPLOAD'} done={uploads.jd.status === 'DONE'} label="Review & resume" />
@@ -252,16 +252,30 @@ export default function NewInterview() {
             <h2 className="text-lg font-semibold text-text-primary">Candidate and role</h2>
             <p className="mt-1 text-sm leading-6 text-text-secondary">The selected Minfy Careers description becomes the scoring context for this evaluation.</p>
           </div>
-          <div className="space-y-4">
-            <div id="tour-candidate-name">
-              <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
-              <input 
-                required
-                className="premium-input w-full px-4 text-sm"
-                value={formData.candidate_name}
-                onChange={e => setFormData({ ...formData, candidate_name: e.target.value })}
-                placeholder="e.g. Sarah Connor"
-              />
+          <div className="space-y-5">
+            {/* Two short fields share a row: on the full page measure a lone name
+                input stretched across the card reads worse than a paired one. */}
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div id="tour-candidate-name">
+                <label className="block text-xs font-semibold text-text-muted mb-2">Candidate Name</label>
+                <input
+                  required
+                  className="premium-input w-full px-4 text-sm"
+                  value={formData.candidate_name}
+                  onChange={e => setFormData({ ...formData, candidate_name: e.target.value })}
+                  placeholder="e.g. Sarah Connor"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-text-muted mb-2">Interview Date</label>
+                <input
+                  type="date"
+                  required
+                  className="premium-input w-full px-4 text-sm"
+                  value={formData.interview_date}
+                  onChange={e => setFormData({ ...formData, interview_date: e.target.value })}
+                />
+              </div>
             </div>
             <div id="tour-position">
               <div className="mb-2 flex items-center justify-between gap-3">
@@ -332,17 +346,7 @@ export default function NewInterview() {
                 </div>
               )}
             </div>
-             <div>
-              <label className="block text-xs font-semibold text-text-muted mb-2">Interview Date</label>
-              <input 
-                type="date"
-                required
-                className="premium-input w-full px-4 text-sm"
-                value={formData.interview_date}
-                onChange={e => setFormData({ ...formData, interview_date: e.target.value })}
-              />
-            </div>
-            <div id="tour-model">
+            <div id="tour-model" className="lg:max-w-lg">
               <label className="block text-xs font-semibold text-text-muted mb-2">Assessment Model</label>
               <select
                 id="model_id"
@@ -358,13 +362,15 @@ export default function NewInterview() {
               </select>
             </div>
           </div>
-          <button 
-            type="submit" 
-            disabled={loading || careerLoading || !selectedCareerJobId}
-            className="btn-primary w-full py-3 font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Create evaluation with this JD'}
-          </button>
+          <div className="flex justify-center border-t border-border pt-6">
+            <button
+              type="submit"
+              disabled={loading || careerLoading || !selectedCareerJobId}
+              className="btn-primary flex w-full items-center justify-center gap-2 px-10 py-3 font-semibold disabled:opacity-50 sm:w-auto"
+            >
+              {loading ? <Loader2 className="animate-spin" size={20} /> : 'Create evaluation with this JD'}
+            </button>
+          </div>
         </form>
       )}
 
@@ -377,7 +383,7 @@ export default function NewInterview() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             <div id="tour-jd-upload" className="card flex min-h-44 flex-col justify-between border-success/25 bg-success/5 p-5">
               <div>
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/10 text-success">
@@ -400,11 +406,11 @@ export default function NewInterview() {
           </div>
 
           <div className="pt-4">
-            <button 
+            <button
               id="tour-submit-btn"
               onClick={() => router.push(`/interviews/view?id=${interviewId}`)}
               disabled={uploads.jd.status !== 'DONE'}
-              className="btn-primary w-full py-3 font-bold disabled:opacity-30 flex items-center justify-center gap-2"
+              className="btn-primary mx-auto flex w-full items-center justify-center gap-2 px-10 py-3 font-bold disabled:opacity-30 sm:w-auto"
             >
               Continue to interview workspace
             </button>
