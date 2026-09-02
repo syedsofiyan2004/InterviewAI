@@ -166,6 +166,15 @@ function same(left: unknown, right: unknown): boolean {
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
+function matchesExpected(candidate: unknown, expected: unknown): boolean {
+  if (same(candidate, expected)) return true;
+  if (!candidate || !expected || typeof candidate !== 'object' || typeof expected !== 'object'
+    || Array.isArray(candidate) || Array.isArray(expected)) return false;
+  const candidateRecord = normalize(candidate) as Record<string, unknown>;
+  const expectedRecord = normalize(expected) as Record<string, unknown>;
+  return Object.entries(expectedRecord).every(([key, value]) => same(candidateRecord[key], value));
+}
+
 function normalizePurchaseModel(value: unknown): unknown {
   if (typeof value !== 'string') return value;
   const text = value.trim().toLowerCase();
@@ -264,6 +273,39 @@ function actualField(
         .map(() => true),
     ];
   }
+  if (field === 'database.engine') {
+    return servicesForConstraint(constraint, services, manifest)
+      .filter((service) => /aurora|rds/i.test(String(service.calculatorService || '')))
+      .map((service) => {
+        const edition = String(service.config.edition || service.config.databaseEngine || service.config.engine || '').toLowerCase();
+        if (edition.includes('aurora')) return /mysql/.test(edition) ? 'Aurora MySQL' : 'Aurora PostgreSQL';
+        return service.config.databaseEngine || service.config.engine;
+      })
+      .filter(Boolean);
+  }
+  if (field === 'sagemaker.inference_configuration') {
+    return servicesForConstraint(constraint, services, manifest)
+      .filter((service) => /sagemaker/i.test(String(service.calculatorService || '')))
+      .flatMap((service: any) => (service.config.columnFormIPM?.value || []).map((row: any) => ({
+        workloadType: 'real-time inference',
+        instanceType: row['Instance Name']?.value || row['Instance Type']?.value,
+        instancesPerEndpoint: numeric(service.config.instancesPerEndPoint),
+        modelsPerEndpoint: numeric(service.config.modelsPerEndPoint),
+        modelsDeployed: numeric(service.config.modelsDeployed),
+      })));
+  }
+  if (field === 'lambda.execution_profile') {
+    return configs.map((config: any) => ({
+      memoryMb: numeric(config.sizeOfMemoryAllocated?.value ?? config.sizeOfMemoryAllocated),
+      durationMs: numeric(config.durationOfEachRequest),
+    }));
+  }
+  if (field === 'nat_gateway.configuration') {
+    return configs.map((config: any) => ({
+      mode: 'Regional NAT Gateway',
+      availabilityZoneCount: numeric(config.numberOfNatGateways ?? config.numNatGateways ?? config.availabilityZoneCount),
+    }));
+  }
   if (field === 'fargate.task_frequency_per_day') return values('numberOfTasks');
   const fingerprintValidatedFields = new Set([
     'database.engine', 'api_gateway.api_type', 'sns.delivery_type', 'ses.send_source',
@@ -296,7 +338,7 @@ function actualField(
 }
 
 function compareConstraint(constraint: RequirementConstraint, actual: unknown): RequirementCheck {
-  if (actual === undefined) return {
+  if (actual === undefined || (Array.isArray(actual) && actual.length === 0)) return {
     constraintId: constraint.id,
     expected: constraint.expected,
     actual: null,
@@ -308,9 +350,9 @@ function compareConstraint(constraint: RequirementConstraint, actual: unknown): 
   const pass = constraint.operator === 'exists'
     ? candidates.some((value) => value !== undefined && value !== null && value !== '')
     : constraint.operator === 'eq'
-      ? candidates.some((value) => same(value, expected))
+      ? candidates.some((value) => matchesExpected(value, expected))
       : constraint.operator === 'in'
-        ? candidates.some((value) => Array.isArray(constraint.expected) && constraint.expected.some((candidate) => same(value, comparable(constraint.field, candidate))))
+        ? candidates.some((value) => Array.isArray(constraint.expected) && constraint.expected.some((candidate) => matchesExpected(value, comparable(constraint.field, candidate))))
         : constraint.operator === 'gte'
           ? candidates.some((value) => Number(value) >= Number(constraint.expected))
           : candidates.some((value) => Number(value) <= Number(constraint.expected));
@@ -326,7 +368,7 @@ function compareConstraint(constraint: RequirementConstraint, actual: unknown): 
 export function validateSavedEstimate(
   manifest: ExecutionManifest,
   snapshot: SavedEstimateSnapshot,
-): { checks: RequirementCheck[]; errors: string[] } {
+): { checks: RequirementCheck[]; errors: string[]; reviewRequired: RequirementCheck[] } {
   const errors: string[] = [];
   if (snapshot.monthly === undefined || snapshot.upfront === undefined || snapshot.total12Months === undefined) {
     errors.push('AWS Calculator rendered totals were not read back for monthly, upfront, and 12-month cost.');
@@ -367,12 +409,13 @@ export function validateSavedEstimate(
   ));
   checks.filter((check) => check.status !== 'PASS').forEach((check) => {
     const constraint = manifest.constraints.find((entry) => entry.id === check.constraintId);
-    if (constraint?.impact === 'critical') errors.push(
+    if (constraint?.impact === 'critical' && check.status !== 'UNVERIFIABLE') errors.push(
       `Critical requirement ${constraint.field} is ${check.status.toLowerCase()}.`,
     );
   });
   manifest.pricingResolution.filter((entry) => entry.status === 'UNSUPPORTED').forEach((entry) => {
     errors.push(`Requested pricing for resource ${entry.resourceId} is unsupported: ${entry.reason || entry.requested}.`);
   });
-  return { checks, errors: [...new Set(errors)] };
+  const reviewRequired = checks.filter((check) => check.status === 'UNVERIFIABLE');
+  return { checks, errors: [...new Set(errors)], reviewRequired };
 }

@@ -98,6 +98,63 @@ describe('Keka panel email resolution', () => {
     );
   });
 
+  test('hydrates a name-only Hire panel member through HRIS employee search', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/connect/token')) return tokenResponse();
+      if (url.includes('/candidate/candidate-1/interviews')) {
+        return jsonResponse({
+          data: [{
+            id: 'interview-name-only',
+            scheduledAt: '2026-08-14T10:00:00Z',
+            interviewers: [{ name: 'Rahul Bhatia' }],
+          }],
+        });
+      }
+      if (url.includes('/api/v1/hris/employees?searchKey=Rahul%20Bhatia')) {
+        return jsonResponse({ data: [{ id: 'employee-rahul', displayName: 'Rahul Bhatia', email: 'rahul.bhatia@minfytech.com' }] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const interviews = await new KekaHireIntegration().listInterviews('job-1', 'candidate-1');
+
+    expect(interviews[0].panel[0].email).toBe('rahul.bhatia@minfytech.com');
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/hris/employees?searchKey=Rahul%20Bhatia'),
+      expect.any(Object),
+    );
+  });
+
+  test('does not assign a name-search email when HRIS returns ambiguous exact matches', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/connect/token')) return tokenResponse();
+      if (url.includes('/candidate/candidate-1/interviews')) {
+        return jsonResponse({
+          data: [{
+            id: 'interview-ambiguous-name',
+            scheduledAt: '2026-08-14T10:00:00Z',
+            interviewers: [{ name: 'Panel Member' }],
+          }],
+        });
+      }
+      if (url.includes('/api/v1/hris/employees?searchKey=Panel%20Member')) {
+        return jsonResponse({
+          data: [
+            { id: 'employee-1', displayName: 'Panel Member', email: 'panel.one@minfytech.com' },
+            { id: 'employee-2', displayName: 'Panel Member', email: 'panel.two@minfytech.com' },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const interviews = await new KekaHireIntegration().listInterviews('job-1', 'candidate-1');
+
+    expect(interviews[0].panel[0].email).toBeUndefined();
+  });
+
   test('an interview whose email Hire supplied survives a denial for the others', async () => {
     // The case the hard failure used to destroy: one round is fully indexable and
     // must not be lost because a different round needed the directory.

@@ -14,7 +14,7 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
-export type CalculationStatus = 'ANALYZING' | 'REVIEW_REQUIRED' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+export type CalculationStatus = 'ANALYZING' | 'REVIEW_REQUIRED' | 'PROCESSING' | 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
 
 export interface RequirementConstraint {
   id: string;
@@ -27,6 +27,21 @@ export interface RequirementConstraint {
   sourceText?: string;
 }
 
+export interface RequirementPatch {
+  target: {
+    resourceIds?: string[];
+    serviceFamily?: string;
+    scenarioIds?: string[];
+    environment?: string;
+  };
+  field: string;
+  operation: 'set' | 'unset' | 'exclude' | 'include';
+  value?: unknown;
+  source: 'user' | 'workbook' | 'recommended';
+  reason?: string;
+  sourceInstruction?: string;
+}
+
 export interface PlanQuestion {
   id: string;
   prompt: string;
@@ -35,6 +50,13 @@ export interface PlanQuestion {
   impact: 'high' | 'medium' | 'low';
   options?: string[];
   resolved: boolean;
+}
+
+export interface CalculatorReviewCatalog {
+  supported: boolean;
+  source?: string;
+  message?: string;
+  fields: Record<string, Array<{ id: string; label: string; calculatorField: string }>>;
 }
 
 export interface PlannedScenario {
@@ -80,6 +102,18 @@ export interface PlanProposal {
   sourceText?: string;
   summary: string;
   requirements: RequirementConstraint[];
+  requirement_patches?: RequirementPatch[];
+  requirement_ledger?: Array<{
+    id: string;
+    sourceInstruction?: string;
+    target: RequirementPatch['target'];
+    field: string;
+    requestedValue?: unknown;
+    resolvedValue?: unknown;
+    status: string;
+    source?: string;
+    reason?: string;
+  }>;
   decisions: Array<{ id: string; field: string; value: unknown; scope: string[]; source: string }>;
   scenarios?: PlannedScenario[];
   unresolved: PlanQuestion[];
@@ -135,7 +169,7 @@ export interface CalculationScenario {
    */
   url?: string | null;
   detail?: string;
-  status?: 'SAVING' | 'VALIDATING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  status?: 'SAVING' | 'VALIDATING' | 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
   upfront?: number | null;
   requirement_checks?: Array<{
     constraintId: string;
@@ -417,6 +451,11 @@ export const calculatorApi = {
     return handleResponse(res);
   },
 
+  async getCalculatorReviewCatalog(): Promise<CalculatorReviewCatalog> {
+    const res = await authFetch(`${API_URL}/calculator/review-catalog`);
+    return handleResponse(res);
+  },
+
   async proposePlan(id: string, text: string): Promise<{ proposal: PlanProposal }> {
     const res = await authFetch(`${API_URL}/calculator/plans/${id}/proposals`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
@@ -434,9 +473,13 @@ export const calculatorApi = {
       impact: 'critical' | 'material' | 'informational';
       evidence?: Array<{ sheet?: string; row?: number; label?: string; value?: string }>;
     }>,
+    requirementPatches?: RequirementPatch[],
   ): Promise<{ proposal: PlanProposal }> {
     const res = await authFetch(`${API_URL}/calculator/plans/${id}/proposals`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requirements }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        requirements,
+        requirement_patches: requirementPatches,
+      }),
     });
     return handleResponse(res);
   },
@@ -531,7 +574,10 @@ export const calculatorApi = {
   },
 
   /** Removes the estimate, its uploaded sheet and its generated PDF. Owner only. */
-  async deleteCalculation(id: string): Promise<{ deleted: boolean }> {
+  async deleteCalculation(id: string): Promise<{
+    deleted: boolean;
+    remote_estimates?: { requested: number; deleted: number; supported: boolean; warnings: string[] };
+  }> {
     const res = await authFetch(`${API_URL}/calculator/${id}`, { method: 'DELETE' });
     return handleResponse(res);
   },

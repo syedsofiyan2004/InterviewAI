@@ -26,6 +26,21 @@ export interface EstimateResourceEdit {
   reason?: string;
 }
 
+export interface RequirementPatch {
+  target: {
+    resourceIds?: string[];
+    serviceFamily?: string;
+    scenarioIds?: string[];
+    environment?: string;
+  };
+  field: string;
+  operation: 'set' | 'unset' | 'exclude' | 'include';
+  value?: unknown;
+  source: 'user' | 'workbook' | 'recommended';
+  reason?: string;
+  sourceInstruction?: string;
+}
+
 /**
  * One estimate of a requested matrix, mirroring EstimateScenarioRequestSchema. The enum is
  * spelled out rather than `string` so a typo'd pricing model is a compile error here, the
@@ -47,6 +62,7 @@ export interface EstimateChangeProposal {
   kind: 'estimate_change';
   summary: string;
   instruction: string;
+  requirement_patches?: RequirementPatch[];
   resource_edits: EstimateResourceEdit[];
   scenarios?: EstimateScenario[];
   deliverables?: ('pdf' | 'xlsx' | 'docx')[];
@@ -241,6 +257,7 @@ export async function applyEstimateChange(
     headers: { 'Content-Type': 'application/json', Authorization: token },
     body: JSON.stringify({
       instruction: proposal.instruction,
+      requirement_patches: proposal.requirement_patches || [],
       resource_edits: proposal.resource_edits,
       // Forwarded only when present, because the server reads an absent matrix as
       // "inherit the parent's" and an empty one would drop the parent's bands instead.

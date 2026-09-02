@@ -114,6 +114,7 @@ import {
   getCalculationDocument,
   reviseCalculation,
   deleteCalculation,
+  getCalculatorReviewCatalog,
   createCalculationProject,
   listCalculationProjects,
   getCalculationProject,
@@ -302,6 +303,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'GET' && resource === '/calculator/runs/{id}') {
       return await getCalculationResult(pathParameters?.id, event);
+    }
+    if (httpMethod === 'GET' && resource === '/calculator/review-catalog') {
+      return await getCalculatorReviewCatalog(event);
     }
     if (httpMethod === 'POST' && resource === '/calculator/upload-url') {
       return await getCalculationUploadUrl(event);

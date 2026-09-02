@@ -1,10 +1,12 @@
 import {
+  applyRequirementPatches,
   applyPlanProposal,
   buildInitialPlan,
   confirmPlan,
   createPlanProposal,
 } from '../lambdas/shared/estimate-planning';
-import { materializePlanResources, planSegments } from '../lambdas/calculator-orchestrator/pipeline';
+import { materializePlanResources, planFromGroup, planSegments } from '../lambdas/calculator-orchestrator/pipeline';
+import { groupResources } from '../lambdas/calculator-orchestrator/prompt';
 import type { CalculationResource } from '../schema/calculator';
 
 const rows: CalculationResource[] = [
@@ -134,6 +136,96 @@ describe('Estimate Plan v2 review lifecycle', () => {
       plan_resource_id: '0', region: 'eu-west-1', hoursPerMonth: 300,
     });
     expect(confirmPlan(revised, revised.currentRevisionId).status).toBe('CONFIRMED');
+  });
+
+  test('chat requirement patches become authoritative semantic Fargate calculator state', () => {
+    const fargateRows: CalculationResource[] = [{
+      raw: 'Fargate workload',
+      service: 'AWS Fargate',
+      name: 'api tasks',
+      region: 'ap-south-1',
+      quantity: '10',
+      vcpu: 1,
+      ram_gb: 2,
+      configuration: {
+        fargateTask: {
+          taskCount: { originalValue: 10, originalPeriod: 'month' },
+          taskFrequency: 'perMonth',
+          vcpuPerTask: { originalValue: 1 },
+          memoryGbPerTask: { originalValue: 2 },
+          taskDuration: { value: 30, unit: 'minutes', originalValue: 30, originalUnit: 'minutes' },
+        },
+      },
+    }];
+    const plan = buildInitialPlan({ workbookId: 'chat-fargate', resources: fargateRows, defaultRegion: 'ap-south-1' });
+
+    const { plan: revised, proposal } = applyRequirementPatches(plan, [
+      {
+        target: { serviceFamily: 'AWS Fargate' },
+        field: 'fargate.taskFrequency',
+        operation: 'set',
+        value: 'perDay',
+        source: 'user',
+        sourceInstruction: 'change Fargate to 10 tasks per day',
+      },
+      {
+        target: { serviceFamily: 'AWS Fargate' },
+        field: 'fargate.taskDuration',
+        operation: 'set',
+        value: { value: 730, unit: 'hours' },
+        source: 'user',
+        sourceInstruction: 'change Fargate duration to 730 hours',
+      },
+    ], { createdBy: 'chat' });
+
+    expect(proposal.sourceText).toBeUndefined();
+    expect(proposal.requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'fargate.task_frequency', expected: 'perDay' }),
+      expect.objectContaining({ field: 'fargate.task_duration', expected: { value: 730, unit: 'hours' } }),
+    ]));
+    expect(revised.revisions.at(-1)?.requirementLedger).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'fargate.task_frequency', status: 'APPLIED', source: 'User Override' }),
+      expect.objectContaining({ field: 'fargate.task_duration', status: 'APPLIED', source: 'User Override' }),
+    ]));
+
+    const materialized = materializePlanResources(fargateRows, revised.revisions.at(-1));
+    expect(materialized[0].configuration?.fargateTask).toMatchObject({
+      taskFrequency: 'perDay',
+      vcpuPerTask: { originalValue: 1 },
+      memoryGbPerTask: { originalValue: 2 },
+      taskDuration: expect.objectContaining({ value: 730, unit: 'hours', originalUnit: 'hours' }),
+    });
+    const groups = groupResources(materialized, new Map(), 'baseline');
+    const compiled = planFromGroup(groups[0], 'ap-south-1');
+    expect(compiled?.calculatorConfig).toMatchObject({
+      numberOfTasks: { value: '10', unit: 'perDay' },
+      taskDuration: { value: '730', unit: 'hr' },
+    });
+  });
+
+  test('typed chat patches are not re-parsed from free text', () => {
+    const plan = buildInitialPlan({ workbookId: 'chat-db', resources: rows, defaultRegion: 'ap-south-1' });
+    const { plan: revised, proposal } = applyRequirementPatches(plan, [{
+      target: { serviceFamily: 'Amazon Aurora' },
+      field: 'database.engine',
+      operation: 'set',
+      value: 'Aurora MySQL-Compatible',
+      source: 'user',
+      sourceInstruction: 'Actually change Aurora to MySQL',
+    }], {
+      createdBy: 'chat',
+      sourceInstruction: 'make it enterprise grade',
+    });
+
+    expect(proposal.unresolved).toHaveLength(0);
+    expect(proposal.requirements).toEqual([
+      expect.objectContaining({
+        field: 'database.engine',
+        expected: 'Aurora MySQL-Compatible',
+        sourceText: 'Actually change Aurora to MySQL',
+      }),
+    ]);
+    expect(revised.status).toBe('READY');
   });
 
   test('a global region answer resolves legacy per-resource region questions', () => {

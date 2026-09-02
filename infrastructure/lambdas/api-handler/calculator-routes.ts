@@ -18,7 +18,10 @@ import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../sha
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { analyseWorkbook } from './calculator-workbook';
+import { McpSidecarClient } from '../calculator-orchestrator/mcp-client';
+import { parseServiceCatalog } from '../calculator-orchestrator/calculator-catalog';
 import {
+  applyRequirementPatches,
   applyPlanProposal,
   buildInitialPlan,
   confirmPlan,
@@ -64,6 +67,7 @@ import { chatThreadId, ReviseCalculationSchema, type ReviseCalculation } from '.
 
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const ORCHESTRATOR_FUNCTION_NAME = process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME!;
+const SIDECAR_FUNCTION_NAME = process.env.CALCULATOR_SIDECAR_FUNCTION_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 const lambdaClient = new LambdaClient({});
@@ -551,6 +555,60 @@ export async function getCalculationPlan(
   return successResponse({ calculation_id: item!.calculation_id, plan: item!.plan_v2 });
 }
 
+const REVIEW_CATALOG_SERVICES: Record<string, string> = {
+  'sagemaker.inference_configuration': 'AmazonSageMaker',
+  'lambda.execution_profile': 'AWSLambda',
+  'bedrock.model': 'AmazonBedrock',
+  'bedrock.tokens_per_call': 'AmazonBedrock',
+  'nat_gateway.configuration': 'AmazonVPC',
+  'quicksight.subscription_profile': 'AmazonQuickSight',
+  'database.engine': 'AmazonRDS',
+};
+
+export async function getCalculatorReviewCatalog(
+  event: APIGatewayProxyEvent,
+): Promise<APIGatewayProxyResult> {
+  const userId = getUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Not authenticated');
+  if (!SIDECAR_FUNCTION_NAME) {
+    return successResponse({
+      supported: false,
+      message: 'The AWS Pricing Calculator MCP sidecar is not configured for review catalogs.',
+      fields: {},
+    });
+  }
+
+  const mcp = new McpSidecarClient(SIDECAR_FUNCTION_NAME);
+  const fields: Record<string, Array<{ id: string; label: string; calculatorField: string }>> = {};
+  const serviceCache = new Map<string, ReturnType<typeof parseServiceCatalog>>();
+  await Promise.all(Object.entries(REVIEW_CATALOG_SERVICES).map(async ([requirement, serviceCode]) => {
+    try {
+      let catalog = serviceCache.get(serviceCode);
+      if (!catalog) {
+        catalog = parseServiceCatalog(await mcp.getServiceCatalog(serviceCode));
+        serviceCache.set(serviceCode, catalog);
+      }
+      fields[requirement] = catalog.fields
+        .filter((field) => field.type === 'dropdown' && field.options?.length)
+        .flatMap((field) => (field.options || []).map((option) => ({
+          id: String(option.id),
+          label: String(option.label || option.id),
+          calculatorField: field.id,
+        })))
+        .slice(0, 500);
+    } catch (catalogError) {
+      console.warn(`[calculator] review catalog lookup failed for ${serviceCode}:`, catalogError);
+      fields[requirement] = [];
+    }
+  }));
+
+  return successResponse({
+    supported: true,
+    source: 'live-mcp-get_service_fields',
+    fields,
+  });
+}
+
 export async function proposeCalculationPlan(
   id: string | undefined,
   event: APIGatewayProxyEvent,
@@ -706,6 +764,46 @@ function generatedArtifactKeys(userId: string, calculationId: string): string[] 
   ];
 }
 
+function calculatorEstimateUrls(result: CalculationResult | null | undefined): string[] {
+  const urls = [
+    result?.url,
+    ...(result?.scenarios || []).map((scenario) => scenario.url),
+  ].filter((url): url is string => !!url && /^https:\/\/[^/]*calculator\.aws\//i.test(url));
+  return [...new Set(urls)];
+}
+
+async function cleanupRemoteCalculatorEstimates(urls: string[]): Promise<{
+  requested: number;
+  deleted: number;
+  supported: boolean;
+  warnings: string[];
+}> {
+  if (!urls.length) return { requested: 0, deleted: 0, supported: true, warnings: [] };
+  if (!SIDECAR_FUNCTION_NAME) {
+    return {
+      requested: urls.length,
+      deleted: 0,
+      supported: false,
+      warnings: ['Remote AWS Pricing Calculator deletion is not configured for this environment.'],
+    };
+  }
+  const mcp = new McpSidecarClient(SIDECAR_FUNCTION_NAME);
+  let supported = true;
+  let deleted = 0;
+  const warnings: string[] = [];
+  for (const url of urls) {
+    try {
+      const outcome = await mcp.deleteEstimate(url);
+      supported = supported && outcome.supported;
+      if (outcome.deleted) deleted += 1;
+      if (!outcome.supported || !outcome.deleted) warnings.push(outcome.message || `Remote estimate was not deleted: ${url}`);
+    } catch (remoteError) {
+      warnings.push(`Remote estimate cleanup failed for ${url}: ${(remoteError as Error).message}`);
+    }
+  }
+  return { requested: urls.length, deleted, supported, warnings };
+}
+
 /**
  * Poll target. Always 200 with the current status so the frontend can drive its
  * loop off the body rather than having to treat a 404/425 as "still working".
@@ -763,6 +861,16 @@ export async function deleteCalculation(
   const { item, error } = await loadOwned(id, userId);
   if (error) return error;
 
+  let storedResult: CalculationResult | null = item!.result ?? null;
+  if (!storedResult && item!.result_s3_key) {
+    try {
+      storedResult = await loadFullCalculationResult(BUCKET_NAME, item!);
+    } catch (loadError) {
+      console.warn(`[calculator] could not load result for remote estimate cleanup ${item!.calculation_id}:`, loadError);
+    }
+  }
+  const remoteCleanup = await cleanupRemoteCalculatorEstimates(calculatorEstimateUrls(storedResult));
+
   const keys = [
     item!.input_s3_key,
     item!.resources_s3_key,
@@ -785,7 +893,7 @@ export async function deleteCalculation(
     Key: { calculation_id: item!.calculation_id },
   }));
 
-  return successResponse({ deleted: true, calculation_id: item!.calculation_id });
+  return successResponse({ deleted: true, calculation_id: item!.calculation_id, remote_estimates: remoteCleanup });
 }
 
 /**
@@ -809,7 +917,7 @@ async function loadDownloadable(
   const { item, error } = await loadOwned(id, userId);
   if (error) return { error };
 
-  if (item!.status !== 'COMPLETED' || (!item!.result && !item!.result_s3_key)) {
+  if (!['COMPLETED', 'NEEDS_REVIEW'].includes(item!.status) || (!item!.result && !item!.result_s3_key)) {
     return {
       error: errorResponse(409, 'VALIDATION_ERROR', 'This estimate has not finished yet, so there is nothing to download.'),
     };
@@ -1165,18 +1273,13 @@ function revisedPlanV2(
   input: ReviseCalculation,
 ): CalculationRecord['plan_v2'] {
   if (!parent) return parent;
-  const proposal = createPlanProposal(parent, {
-    text: input.instruction,
-    ...(input.scenarios.length ? { scenarios: input.scenarios } : {}),
+  if (!input.requirement_patches.length && !input.scenarios.length) return parent;
+  const { plan } = applyRequirementPatches(parent, input.requirement_patches, {
+    scenarios: input.scenarios,
+    createdBy: 'chat',
+    sourceInstruction: input.instruction,
   });
-  if (!proposal.requirements.length && !proposal.decisions.length && !proposal.scenarios?.length) return parent;
-
-  const unresolved = proposal.scenarios?.length
-    ? proposal.unresolved.filter((entry) => entry.field !== 'custom.requirement')
-    : proposal.unresolved;
-  if (unresolved.some((entry) => entry.impact === 'high')) return parent;
-
-  return EstimatePlanV2Schema.parse(applyPlanProposal(parent, { ...proposal, unresolved }, 'chat'));
+  return EstimatePlanV2Schema.parse(plan);
 }
 
 /**
@@ -1213,6 +1316,16 @@ export async function reviseCalculation(
   } catch (err) {
     return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', (err as Error).message);
   }
+  if (!input.requirement_patches.length
+    && !input.resource_edits.length
+    && !input.scenarios.length
+    && !input.deliverables.length) {
+    return errorResponse(
+      400,
+      'VALIDATION_ERROR',
+      'This proposal only contains audit text. Ask the assistant to prepare typed calculator changes before applying it.',
+    );
+  }
 
   // The full list, not the item's bounded sample: a row index in an edit refers to the
   // list as parsed, and a spilled upload keeps only its first rows on the item.
@@ -1235,6 +1348,16 @@ export async function reviseCalculation(
       'VALIDATION_ERROR',
       'None of the proposed row changes could be applied to this estimate. Try describing the change instead.',
     );
+  }
+
+  let planV2: CalculationRecord['plan_v2'];
+  try {
+    planV2 = revisedPlanV2(original.plan_v2, input);
+  } catch (err) {
+    const message = (err as Error).message === 'PLAN_PROPOSAL_NEEDS_INPUT'
+      ? 'The proposed calculator change needs another required value before it can be applied.'
+      : 'The proposed calculator change could not be converted into typed calculator requirements.';
+    return errorResponse(409, 'PLAN_PROPOSAL_NEEDS_INPUT', message, (err as Error).message);
   }
 
   const revisionId = randomUUID();
@@ -1281,7 +1404,7 @@ export async function reviseCalculation(
     // that to a spread makes it one carelessly-added key in this literal away from being lost.
     // See revisedPlan for why an empty request inherits rather than clears.
     requested_plan: revisedPlan(original.requested_plan, input),
-    plan_v2: revisedPlanV2(original.plan_v2, input),
+    plan_v2: planV2,
     resources: split.spilled ? split.sample : edited.resources,
     ...(resourcesS3Key ? { resources_s3_key: resourcesS3Key } : {}),
     ...(split.spilled ? { resources_truncated: true } : {}),
@@ -1578,6 +1701,21 @@ export async function deleteCalculationProject(
   }));
 
   const estimates = (owned.Items || []).filter(row => !isProjectRow(row) && row.project_id === id);
+  const remoteUrls: string[] = [];
+
+  for (const estimate of estimates) {
+    let storedResult: CalculationResult | null = estimate.result ?? null;
+    if (!storedResult && estimate.result_s3_key) {
+      try {
+        storedResult = await loadFullCalculationResult(BUCKET_NAME, estimate as CalculationRecord);
+      } catch (loadError) {
+        console.warn(`[calculator] could not load result for remote estimate cleanup ${estimate.calculation_id}:`, loadError);
+      }
+    }
+    remoteUrls.push(...calculatorEstimateUrls(storedResult));
+  }
+
+  const remoteCleanup = await cleanupRemoteCalculatorEstimates([...new Set(remoteUrls)]);
 
   for (const estimate of estimates) {
     const keys = [
@@ -1614,5 +1752,6 @@ export async function deleteCalculationProject(
     deleted: true,
     project_id: id,
     deleted_estimates: estimates.length,
+    remote_estimates: remoteCleanup,
   });
 }

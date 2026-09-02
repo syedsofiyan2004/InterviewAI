@@ -146,8 +146,43 @@ describe('saved AWS Calculator validation', () => {
       } } } }, monthly: 1, upfront: 0, total12Months: 12,
     }));
     expect(validateSavedEstimate(manifest, snapshot).checks[0].status).toBe('PASS');
-    (snapshot.services[0].config as any).instancesPerEndPoint = '3';
-    expect(validateSavedEstimate(manifest, snapshot).checks[0].status).toBe('UNVERIFIABLE');
+    (snapshot.services[0].config as any).columnFormIPM.value[0]['Instance Name'].value = 'ml.g5.2xlarge';
+    expect(validateSavedEstimate(manifest, snapshot).checks[0].status).toBe('FAIL');
+  });
+
+  test('unverifiable structured requirements require review without masquerading as partial omissions', () => {
+    const constraint = requirement('sagemaker.inference_configuration', {
+      workloadType: 'real-time inference', instanceType: 'ml.g5.xlarge',
+    });
+    const config = {
+      modelsDeployed: '2',
+      instancesPerEndPoint: '2',
+    };
+    const manifest = createExecutionManifest({
+      scenarioId: 'baseline', planRevisionId: 'revision-1', inputHash: 'hash', constraints: [constraint],
+      services: [{
+        resourceIds: ['0'], serviceCode: 'AmazonSageMaker', calculatorService: 'sageMakerRealTimeInference',
+        group: 'Models', description: 'Inference', config,
+        requestedPricing: 'on-demand', resolvedPricing: 'on-demand', pricingStatus: 'EXACT',
+      }],
+    });
+    const snapshot = parseSavedEstimateSnapshot(JSON.stringify({
+      groups: { Models: { name: 'Models', services: { parent: {
+        serviceCode: 'amazonSageMaker', subServices: [{
+          serviceCode: 'sageMakerRealTimeInference', description: 'Inference',
+          calculationComponents: config,
+        }],
+      } } } }, monthly: 1, upfront: 0, total12Months: 12,
+    }));
+
+    const validation = validateSavedEstimate(manifest, snapshot);
+
+    expect(validation.errors).toEqual([]);
+    expect(validation.reviewRequired).toHaveLength(1);
+    expect(validation.reviewRequired[0]).toEqual(expect.objectContaining({
+      constraintId: constraint.id,
+      status: 'UNVERIFIABLE',
+    }));
   });
 
   test('validates Aurora multi-AZ from the saved Aurora service contract', () => {

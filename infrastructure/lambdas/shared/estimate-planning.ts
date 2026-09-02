@@ -10,6 +10,8 @@ import type {
   PlanDecision,
   PlanProposal,
   PlanQuestion,
+  RequirementPatch,
+  RequirementLedgerEntry,
   RequirementConstraint,
   SourceRef,
   PricingModelRequest,
@@ -568,6 +570,8 @@ export function buildInitialPlan(input: InitialPlanInput): EstimatePlanV2 {
   const createdAt = (input.now || new Date()).toISOString();
   const revisionBase = {
     planId,
+    canonicalRevisionId: randomUUID(),
+    requirementRevisionId: randomUUID(),
     createdAt,
     createdBy: 'system' as const,
     scenarios,
@@ -738,6 +742,132 @@ function parseTextRequirements(text: string): {
   return { requirements, decisions, unresolved };
 }
 
+function sourceLabel(source: RequirementPatch['source']): RequirementLedgerEntry['source'] {
+  if (source === 'workbook') return 'Workbook';
+  if (source === 'recommended') return 'Recommended';
+  return 'User Override';
+}
+
+function scopesFromTarget(target: RequirementPatch['target']): string[] {
+  return [
+    ...(target.resourceIds || []).map((id) => `resource:${id}`),
+    ...(target.serviceFamily ? [`service:${target.serviceFamily}`] : []),
+    ...(target.scenarioIds || []).map((id) => `scenario:${id}`),
+    ...(target.environment ? [`environment:${target.environment}`] : []),
+  ];
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizedPatchField(patch: RequirementPatch): { field: string; expected: unknown } {
+  const value = patch.value;
+  const object = objectValue(value);
+  switch (patch.field) {
+    case 'pricing.model':
+      return { field: 'resource.purchase_model', expected: value };
+    case 'resource.exclude':
+      return { field: 'resource.exclude', expected: patch.operation === 'exclude' || value === true };
+    case 'fargate.taskFrequency':
+      return { field: 'fargate.task_frequency', expected: value };
+    case 'fargate.taskDuration':
+      return { field: 'fargate.task_duration', expected: value };
+    case 'lambda.memoryMb':
+      return { field: 'lambda.execution_profile', expected: { memoryMb: value } };
+    case 'lambda.durationMs':
+      return { field: 'lambda.execution_profile', expected: { durationMs: value } };
+    case 'sagemaker.workloadType':
+      return { field: 'sagemaker.inference_configuration', expected: { workloadType: value } };
+    case 'sagemaker.instanceType':
+      return { field: 'sagemaker.inference_configuration', expected: { instanceType: value } };
+    case 'nat.mode':
+      return { field: 'nat_gateway.configuration', expected: { mode: value } };
+    case 'nat.azCount':
+      return { field: 'nat_gateway.configuration', expected: { availabilityZoneCount: value } };
+    case 'bedrock.model':
+      if (typeof value === 'string') return { field: 'bedrock.model', expected: value };
+      return { field: 'bedrock.model', expected: object };
+    case 'bedrock.inputTokens':
+      return { field: 'bedrock.tokens_per_call', expected: { inputTokens: value } };
+    case 'bedrock.outputTokens':
+      return { field: 'bedrock.tokens_per_call', expected: { outputTokens: value } };
+    case 'database.multiAz':
+      return { field: 'database.multi_az', expected: value };
+    default:
+      return { field: patch.field, expected: value };
+  }
+}
+
+function mergeExpected(existing: unknown, incoming: unknown): unknown {
+  if (existing && incoming && typeof existing === 'object' && typeof incoming === 'object'
+    && !Array.isArray(existing) && !Array.isArray(incoming)) {
+    return { ...(existing as Record<string, unknown>), ...(incoming as Record<string, unknown>) };
+  }
+  return incoming;
+}
+
+function requirementConstraintsFromPatches(
+  patches: RequirementPatch[],
+  sourceText?: string,
+): { requirements: RequirementConstraint[]; ledger: RequirementLedgerEntry[]; unresolved: PlanQuestion[] } {
+  const requirements: RequirementConstraint[] = [];
+  const ledger: RequirementLedgerEntry[] = [];
+  const unresolved: PlanQuestion[] = [];
+
+  for (const patch of patches) {
+    const { field, expected } = normalizedPatchField(patch);
+    const scope = scopesFromTarget(patch.target);
+    const instruction = patch.sourceInstruction || sourceText;
+    const ledgerEntry: RequirementLedgerEntry = {
+      id: `ledger-${stableHash({ patch, field, expected }).slice(0, 20)}`,
+      sourceInstruction: instruction,
+      target: patch.target,
+      field,
+      requestedValue: patch.value,
+      resolvedValue: expected,
+      status: patch.operation === 'unset' ? 'FAILED' : 'PROPOSED',
+      source: sourceLabel(patch.source),
+      ...(patch.reason ? { reason: patch.reason } : {}),
+    };
+    ledger.push(ledgerEntry);
+
+    if (patch.operation === 'unset') {
+      addQuestion(unresolved, {
+        prompt: `Unset is not yet supported for ${field}. Choose a replacement value or exclude the targeted resource.`,
+        field,
+        scope,
+        impact: 'high',
+      });
+      continue;
+    }
+    addConstraint(requirements, {
+      scope: scope.length ? scope : ['all-resources'],
+      field,
+      operator: 'eq',
+      expected,
+      impact: 'critical',
+      source: patch.source === 'workbook' ? 'workbook' : patch.source === 'recommended' ? 'system_default' : 'user',
+      ...(instruction ? { sourceText: instruction.slice(0, 2000) } : {}),
+    });
+  }
+
+  const merged = new Map<string, RequirementConstraint>();
+  for (const requirement of requirements) {
+    const key = stableHash({ scope: requirement.scope, field: requirement.field }).slice(0, 32);
+    const previous = merged.get(key);
+    if (previous) {
+      merged.set(key, { ...previous, expected: mergeExpected(previous.expected, requirement.expected) });
+    } else {
+      merged.set(key, requirement);
+    }
+  }
+
+  return { requirements: [...merged.values()], ledger, unresolved };
+}
+
 export function createPlanProposal(plan: EstimatePlanV2, input: CreatePlanProposal): PlanProposal {
   const parsed = input.text ? parseTextRequirements(input.text) : { requirements: [], decisions: [], unresolved: [] };
   const parsedScenarios = input.text
@@ -785,6 +915,11 @@ export function createPlanProposal(plan: EstimatePlanV2, input: CreatePlanPropos
       sourceText: input.text,
     });
   }
+  const patchResult = input.requirement_patches?.length
+    ? requirementConstraintsFromPatches(input.requirement_patches, input.text)
+    : { requirements: [] as RequirementConstraint[], ledger: [] as RequirementLedgerEntry[], unresolved: [] as PlanQuestion[] };
+  requirements.push(...patchResult.requirements);
+  unresolved.push(...patchResult.unresolved);
   const decisions: PlanDecision[] = [...parsed.decisions];
   for (const value of input.decisions || []) decisions.push({ id: randomUUID(), ...value, source: 'user' });
   const scenarios = input.scenarios || parsedScenarios;
@@ -798,9 +933,41 @@ export function createPlanProposal(plan: EstimatePlanV2, input: CreatePlanPropos
       ? 'More information is required before this customization can be applied.'
       : `${changeCount} structured plan change${changeCount === 1 ? '' : 's'} ready for review.`,
     requirements,
+    requirement_patches: input.requirement_patches || [],
+    requirement_ledger: patchResult.ledger,
     decisions,
     ...(scenarios ? { scenarios } : {}),
     unresolved,
+  };
+}
+
+export function applyRequirementPatches(
+  plan: EstimatePlanV2,
+  patches: RequirementPatch[],
+  options: {
+    scenarios?: EstimateScenarioRequest[];
+    createdBy?: 'user' | 'chat';
+    sourceInstruction?: string;
+    now?: Date;
+  } = {},
+): { proposal: PlanProposal; plan: EstimatePlanV2 } {
+  const normalizedPatches = patches.map((patch) => ({
+    ...patch,
+    sourceInstruction: patch.sourceInstruction || options.sourceInstruction,
+  }));
+  const proposal = createPlanProposal(plan, {
+    ...(normalizedPatches.length ? { requirement_patches: normalizedPatches } : {}),
+    ...(options.scenarios?.length ? { scenarios: options.scenarios } : {}),
+  });
+  if (!proposal.requirements.length && !proposal.decisions.length && !proposal.scenarios?.length) {
+    return { proposal, plan };
+  }
+  if (proposal.unresolved.some((entry) => entry.impact === 'high')) {
+    throw new Error('PLAN_PROPOSAL_NEEDS_INPUT');
+  }
+  return {
+    proposal,
+    plan: applyPlanProposal(plan, proposal, options.createdBy || 'user', options.now),
   };
 }
 
@@ -843,11 +1010,18 @@ export function applyPlanProposal(
   const revisionBase = {
     planId: plan.planId,
     parentRevisionId: parent.revisionId,
+    parentCanonicalRevisionId: parent.canonicalRevisionId,
+    canonicalRevisionId: randomUUID(),
+    requirementRevisionId: randomUUID(),
     createdAt: now.toISOString(),
     createdBy,
     scenarios: proposal.scenarios || parent.scenarios,
     requirements,
     decisions: [...parent.decisions, ...proposal.decisions],
+    requirementLedger: [
+      ...(parent.requirementLedger || []),
+      ...(proposal.requirement_ledger || []).map((entry) => ({ ...entry, status: 'APPLIED' as const })),
+    ],
     ...(parent.deliverables ? { deliverables: parent.deliverables } : {}),
   };
   const revision: EstimatePlanRevision = {

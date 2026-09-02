@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { EstimatePlanSchema, EstimateScenarioRequestSchema } from './estimate-plan';
+import { EstimatePlanSchema, EstimateScenarioRequestSchema, RequirementPatchSchema } from './estimate-plan';
 import { MomResultSchema } from './mom';
 
 /**
@@ -71,15 +71,14 @@ export {
 /**
  * A proposed change to an estimate. Nothing here is applied by the chat itself.
  *
- * `instruction` is the part that actually re-prices: it is appended to the original
- * prompt and the estimate is re-run through the normal pipeline, so every rate still
- * comes from the AWS Price List Query API and never from this conversation. The
- * optional `resource_edits` amend the parsed inventory rows in place before that run.
+ * `instruction` is audit text only. The calculator executes typed requirement patches,
+ * scenario patches and legacy row edits; it must not re-interpret this prose on apply.
  */
 export const EstimateChangeProposalSchema = z.object({
   kind: z.literal('estimate_change'),
   summary: z.string().min(1).max(600),
   instruction: z.string().min(1).max(2000),
+  requirement_patches: z.array(RequirementPatchSchema).max(200).default([]),
   resource_edits: z.array(EstimateResourceEditSchema).max(50).default([]),
   /**
    * Scenarios to price, each becoming its own line and its own link.
@@ -216,6 +215,7 @@ const ChatSeqSchema = z.number().int().min(1).optional();
 /** POST /calculator/{id}/revise — applying an estimate proposal. */
 export const ReviseCalculationSchema = z.object({
   instruction: z.string().min(1).max(2000),
+  requirement_patches: z.array(RequirementPatchSchema).max(200).default([]),
   resource_edits: z.array(EstimateResourceEditSchema).max(50).default([]),
   /**
    * Carried flat rather than as an `EstimatePlanSchema`, deliberately.

@@ -69,6 +69,7 @@ export interface CalculatorGateway {
   getServiceCatalog(serviceCode: string): Promise<McpToolResult>;
   saveEstimate(name: string, services: Array<{ service: string; group: string; config: Record<string, unknown> }>): Promise<McpToolResult>;
   readEstimate(savedKeyOrUrl: string): Promise<McpToolResult>;
+  deleteEstimate?(savedKeyOrUrl: string): Promise<{ supported: boolean; deleted: boolean; message?: string }>;
   validateLink(url: string): Promise<{
     validUrl: boolean;
     reason?: string;
@@ -276,6 +277,29 @@ export class McpSidecarClient implements CalculatorGateway {
 
   async readEstimate(savedKeyOrUrl: string): Promise<McpToolResult> {
     return this.callTool('import_estimate', { estimate_id: savedKeyOrUrl, format: 'json' }, 180_000);
+  }
+
+  async deleteEstimate(savedKeyOrUrl: string): Promise<{ supported: boolean; deleted: boolean; message?: string }> {
+    const tools = await this.listTools();
+    const tool = tools.find((entry) => [
+      'delete_estimate',
+      'deleteEstimate',
+      'remove_estimate',
+      'removeEstimate',
+    ].includes(entry.name));
+    if (!tool) {
+      return {
+        supported: false,
+        deleted: false,
+        message: 'The installed AWS Pricing Calculator MCP does not expose a remote estimate deletion tool.',
+      };
+    }
+    const result = await this.callTool(tool.name, { estimate_id: savedKeyOrUrl, url: savedKeyOrUrl }, 60_000);
+    return {
+      supported: true,
+      deleted: !result.isError,
+      ...(result.text ? { message: result.text.slice(0, 500) } : {}),
+    };
   }
 
   async validateLink(url: string): Promise<{

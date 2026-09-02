@@ -157,7 +157,7 @@ export interface PipelineProgress {
 
 export interface PipelineOutcome {
   result: CalculationResult;
-  status: 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
   /** Bedrock calls made. Named `iterations` to match what the record already stores. */
   iterations: number;
   /** Every priced lookup and sidecar call, for the diagnostics counter. */
@@ -1847,7 +1847,7 @@ interface SaveEntry {
 
 interface ValidatedSaveResult {
   url: string | null;
-  status: 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
   warning?: string;
   requirementChecks: RequirementCheck[];
   validationErrors: string[];
@@ -2347,12 +2347,16 @@ async function saveEstimate(
         ? [linkCheck.reason || 'AWS Pricing Calculator link browser validation could not be completed.']
         : []),
     ])];
+    const reviewErrors = validation.reviewRequired.map((check) => {
+      const constraint = manifest.constraints.find((entry) => entry.id === check.constraintId);
+      return `${constraint?.field || check.constraintId}: ${check.message || check.status.toLowerCase()}`;
+    });
     return {
       url: String(url),
-      status: validationErrors.length ? 'PARTIAL' : 'COMPLETED',
-      ...(validationErrors.length ? { warning: validationErrors.join(' ') } : {}),
+      status: validationErrors.length ? 'PARTIAL' : reviewErrors.length ? 'NEEDS_REVIEW' : 'COMPLETED',
+      ...(validationErrors.length || reviewErrors.length ? { warning: [...validationErrors, ...reviewErrors].join(' ') } : {}),
       requirementChecks: validation.checks,
-      validationErrors,
+      validationErrors: [...validationErrors, ...reviewErrors],
       snapshot: renderedSnapshot,
       manifest,
     };
@@ -2562,6 +2566,57 @@ function constraintApplies(
   });
 }
 
+function mergeConfigurationValue(existing: unknown, incoming: unknown): unknown {
+  if (existing && incoming
+    && typeof existing === 'object' && typeof incoming === 'object'
+    && !Array.isArray(existing) && !Array.isArray(incoming)) {
+    return { ...(existing as Record<string, unknown>), ...(incoming as Record<string, unknown>) };
+  }
+  return incoming;
+}
+
+function objectConfig(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeFargateDuration(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    const amount = object.value ?? object.originalValue ?? object.derivedValue;
+    const unit = object.unit ?? object.originalUnit ?? object.derivedUnit ?? 'hours';
+    return {
+      ...object,
+      value: amount,
+      unit,
+      originalValue: object.originalValue ?? amount,
+      originalUnit: object.originalUnit ?? unit,
+    };
+  }
+  return {
+    value,
+    unit: 'hours',
+    originalValue: value,
+    originalUnit: 'hours',
+  };
+}
+
+function withConfiguration(resource: CalculationResource, field: string, expected: unknown): CalculationResource {
+  const value = mergeConfigurationValue(resource.configuration?.[field], expected);
+  return {
+    ...resource,
+    configuration: {
+      ...(resource.configuration || {}),
+      [field]: value,
+    },
+    attributes: [
+      ...(resource.attributes || []).filter((entry) => entry.label !== field),
+      { label: field, value: typeof value === 'string' ? value : JSON.stringify(value) },
+    ],
+  };
+}
+
 /**
  * Applies the confirmed structured constraints to a disposable working inventory.
  * The original parsed rows and WorkbookIR stay immutable in S3; every applied value is
@@ -2600,6 +2655,9 @@ export function materializePlanResources(
         case 'resource.purchase_model':
           if (typeof expected === 'string') resource = { ...resource, purchase_model: expected };
           break;
+        case 'resource.exclude':
+          resource = withConfiguration(resource, 'resource.exclude', expected === true);
+          break;
         case 'database.multi_az':
           if (expected === true) resource = {
             ...resource,
@@ -2607,7 +2665,21 @@ export function materializePlanResources(
           };
           break;
         case 'database.engine':
-          if (typeof expected === 'string') resource = { ...resource, os: expected };
+          if (typeof expected === 'string') resource = withConfiguration({ ...resource, os: expected }, 'database.engine', expected);
+          break;
+        case 'fargate.task_frequency':
+          if (typeof expected === 'string') {
+            resource = withConfiguration(resource, 'fargateTask', {
+              ...objectConfig(resource.configuration?.fargateTask),
+              taskFrequency: expected,
+            });
+          }
+          break;
+        case 'fargate.task_duration':
+          resource = withConfiguration(resource, 'fargateTask', {
+            ...objectConfig(resource.configuration?.fargateTask),
+            taskDuration: normalizeFargateDuration(expected),
+          });
           break;
         case 'api_gateway.api_type':
         case 'sns.delivery_type':
@@ -2622,17 +2694,7 @@ export function materializePlanResources(
         case 'waf.traffic_profile':
         case 'memorydb.data_profile':
         case 'nat_gateway.configuration':
-          resource = {
-            ...resource,
-            configuration: {
-              ...(resource.configuration || {}),
-              [constraint.field]: expected,
-            },
-            attributes: [
-              ...(resource.attributes || []).filter((entry) => entry.label !== constraint.field),
-              { label: constraint.field, value: typeof expected === 'string' ? expected : JSON.stringify(expected) },
-            ],
-          };
+          resource = withConfiguration(resource, constraint.field, expected);
           break;
         default:
           // Unknown fields remain requirements in the manifest and therefore make the run
@@ -2682,7 +2744,8 @@ export async function runEstimatePipeline(
   const hoursFor = new Map(
     (record.environment_hours || []).map((entry) => [entry.name.trim().toLowerCase(), entry.hoursPerDay]),
   );
-  const priceable = plannedResources.filter((row) => row.service || row.size || row.vcpu !== undefined);
+  const priceable = plannedResources.filter((row) => row.configuration?.['resource.exclude'] !== true
+    && (row.service || row.size || row.vcpu !== undefined));
   const baselineGroups = groupResources(priceable, hoursFor, 'baseline');
   const hasRightSizing = priceable.some((row) => row.right_sized_size);
   const rightsizedGroups = hasRightSizing
@@ -2953,9 +3016,9 @@ export async function runEstimatePipeline(
       label: segment.label,
       kind: segment.kind,
       status: savedSegments[index].status,
-      monthly: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.monthly ?? null : null,
-      upfront: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.upfront ?? null : null,
-      total_12_months: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.total12Months ?? null : null,
+      monthly: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.monthly ?? null : null,
+      upfront: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.upfront ?? null : null,
+      total_12_months: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.total12Months ?? null : null,
       url: savedSegments[index].url,
       requirement_checks: savedSegments[index].requirementChecks,
       validation_errors: savedSegments[index].validationErrors,
@@ -2978,12 +3041,14 @@ export async function runEstimatePipeline(
   const allValidationErrors = savedSegments.flatMap((entry) => entry.validationErrors);
   const outcomeStatus: PipelineOutcome['status'] = savedSegments.every((entry) => entry.status === 'COMPLETED')
     ? 'COMPLETED'
-    : savedSegments.every((entry) => entry.status === 'FAILED') ? 'FAILED' : 'PARTIAL';
+    : savedSegments.every((entry) => entry.status === 'FAILED') ? 'FAILED'
+      : savedSegments.every((entry) => entry.status === 'COMPLETED' || entry.status === 'NEEDS_REVIEW') ? 'NEEDS_REVIEW'
+        : 'PARTIAL';
 
   const result: CalculationResult = {
     url: saved.url,
     currency: 'USD',
-    monthlyTotal: saved.status === 'COMPLETED' ? saved.snapshot?.monthly ?? null : null,
+    monthlyTotal: ['COMPLETED', 'NEEDS_REVIEW'].includes(saved.status) ? saved.snapshot?.monthly ?? null : null,
     lineItems: toLineItems(priced),
     environments: toEnvironments(priced, record),
     scenarios,

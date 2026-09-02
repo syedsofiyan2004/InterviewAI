@@ -418,9 +418,15 @@ describe('The requested band matrix, from creation through revision', () => {
     // reading that silence as "drop the bands" would return 201 with every figure correct and
     // seventeen of the eighteen deliverables gone.
     const plan = eighteenBandPlan();
-    ddbMock.on(GetCommand).resolves({ Item: record({ requested_plan: plan }) });
+    ddbMock.on(GetCommand).resolves({ Item: record({
+      requested_plan: plan,
+      resources: [{ raw: 'web', service: 'EC2', size: 'm7i.large', quantity: '2' }],
+    }) });
 
-    const response = await revision({ instruction: 'Make the web tier smaller.' });
+    const response = await revision({
+      instruction: 'Make the web tier smaller.',
+      resource_edits: [{ row: 0, field: 'size', value: 'm7i.large' }],
+    });
 
     expect(response.statusCode).toBe(201);
     expect(written().requested_plan).toEqual(plan);
@@ -495,6 +501,47 @@ describe('The requested band matrix, from creation through revision', () => {
     }]);
   });
 
+  test('a chat-applied requirement patch updates the worker-facing plan revision', async () => {
+    const planV2 = buildInitialPlan({
+      workbookId: 'generic-workbook',
+      resources: [
+        { raw: 'Fargate', service: 'AWS Fargate', scenario: 'base', quantity: '10', vcpu: 1, ram_gb: 2 },
+      ],
+      defaultRegion: 'ap-south-1',
+    });
+    ddbMock.on(GetCommand).resolves({ Item: record({ plan_v2: planV2 }) });
+
+    const response = await revision({
+      instruction: 'Make Fargate 10 tasks per day.',
+      requirement_patches: [{
+        target: { serviceFamily: 'AWS Fargate' },
+        field: 'fargate.taskFrequency',
+        operation: 'set',
+        value: 'perDay',
+        source: 'user',
+      }],
+    });
+
+    expect(response.statusCode).toBe(201);
+    const current = written().plan_v2.revisions.find(
+      (entry: any) => entry.revisionId === written().plan_v2.currentRevisionId,
+    );
+    expect(current.requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        field: 'fargate.task_frequency',
+        expected: 'perDay',
+        sourceText: 'Make Fargate 10 tasks per day.',
+      }),
+    ]));
+    expect(current.requirementLedger).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        field: 'fargate.task_frequency',
+        status: 'APPLIED',
+        source: 'User Override',
+      }),
+    ]));
+  });
+
   test('a revision that names only formats keeps the bands it did not mention', async () => {
     ddbMock.on(GetCommand).resolves({ Item: record({ requested_plan: eighteenBandPlan() }) });
 
@@ -509,9 +556,14 @@ describe('The requested band matrix, from creation through revision', () => {
   });
 
   test('a revision of a parent that never had a plan does not invent one', async () => {
-    ddbMock.on(GetCommand).resolves({ Item: record() });
+    ddbMock.on(GetCommand).resolves({ Item: record({
+      resources: [{ raw: 'web', service: 'EC2', size: 'm7i.xlarge', quantity: '2' }],
+    }) });
 
-    const response = await revision({ instruction: 'Make the web tier smaller.' });
+    const response = await revision({
+      instruction: 'Make the web tier smaller.',
+      resource_edits: [{ row: 0, field: 'size', value: 'm7i.large' }],
+    });
 
     expect(response.statusCode).toBe(201);
     // Undefined rather than absent, exactly as `result` is on the same row: the document client
@@ -523,14 +575,29 @@ describe('The requested band matrix, from creation through revision', () => {
     // The two travel in opposite directions on purpose. The request is inherited because it is
     // still the request; the parent's numbers are not, because a revision that failed to start
     // would otherwise read as one that succeeded with the old figures.
-    ddbMock.on(GetCommand).resolves({ Item: record({ requested_plan: eighteenBandPlan() }) });
+    ddbMock.on(GetCommand).resolves({ Item: record({
+      requested_plan: eighteenBandPlan(),
+      resources: [{ raw: 'web', service: 'EC2', size: 'm7i.xlarge', quantity: '2' }],
+    }) });
 
-    const response = await revision({ instruction: 'Make the web tier smaller.' });
+    const response = await revision({
+      instruction: 'Make the web tier smaller.',
+      resource_edits: [{ row: 0, field: 'size', value: 'm7i.large' }],
+    });
 
     expect(response.statusCode).toBe(201);
     expect(written().result).toBeUndefined();
     expect(written().revision_of).toBe(ID);
     expect(written().requested_plan.scenarios).toHaveLength(18);
+  });
+
+  test('a chat revision with only audit text is rejected instead of being re-parsed', async () => {
+    ddbMock.on(GetCommand).resolves({ Item: record({ requested_plan: eighteenBandPlan() }) });
+
+    const response = await revision({ instruction: 'Make the web tier smaller.' });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body).error.message).toContain('only contains audit text');
   });
 
   test('a matrix of thirty-one bands is refused by validation rather than stored', async () => {

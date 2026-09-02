@@ -914,6 +914,54 @@ describe('nothing is lost between the report and the link', () => {
     expect(outcome.status).toBe('PARTIAL');
   });
 
+  test('saved resources plus unverifiable requirements are NEEDS_REVIEW rather than PARTIAL', async () => {
+    const planRevision = {
+      planId: 'plan-1',
+      revisionId: 'review-revision',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      createdBy: 'user' as const,
+      scenarios: [],
+      decisions: [],
+      requirements: [{
+        id: 'req-review-only',
+        scope: ['service:Amazon EC2'],
+        field: 'custom.semantic.review',
+        operator: 'eq' as const,
+        expected: 'verified separately',
+        impact: 'critical' as const,
+        source: 'user' as const,
+      }],
+      hash: 'hash',
+    };
+    const outcome = await run([resource({ quantity: '4' })], {
+      confirmed_plan_revision_id: 'review-revision',
+      plan_v2: {
+        planId: 'plan-1',
+        workbookId: 'book-1',
+        status: 'CONFIRMED',
+        currentRevisionId: 'review-revision',
+        detectedDimensions: {
+          regions: ['eu-central-1'],
+          environments: [],
+          scenarios: [],
+          serviceFamilies: ['Amazon EC2'],
+          resourceCount: 1,
+          mappedResourceCount: 1,
+          excludedCount: 0,
+          coveragePct: 100,
+        },
+        unresolved: [],
+        recommendedScenarios: [],
+        revisions: [planRevision],
+      },
+    });
+
+    expect(outcome.status).toBe('NEEDS_REVIEW');
+    expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
+    expect(outcome.result.monthlyTotal).toBeGreaterThan(0);
+    expect(outcome.result.validationErrors?.join(' ')).toMatch(/custom.semantic.review/);
+  });
+
   test('a read-back that fails leaves the estimate priced and says it is unverified', async () => {
     const mcp = fakeMcp({ text: '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123"}' });
     // A read-back returning nothing is a failure of the check, never evidence that the
