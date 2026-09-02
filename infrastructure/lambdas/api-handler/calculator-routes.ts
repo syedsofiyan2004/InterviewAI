@@ -21,6 +21,7 @@ import { analyseWorkbook } from './calculator-workbook';
 import { McpSidecarClient } from '../calculator-orchestrator/mcp-client';
 import { parseServiceCatalog } from '../calculator-orchestrator/calculator-catalog';
 import {
+  applyRequirementPatches,
   applyPlanProposal,
   buildInitialPlan,
   confirmPlan,
@@ -1272,18 +1273,13 @@ function revisedPlanV2(
   input: ReviseCalculation,
 ): CalculationRecord['plan_v2'] {
   if (!parent) return parent;
-  const proposal = createPlanProposal(parent, {
-    text: input.instruction,
-    ...(input.scenarios.length ? { scenarios: input.scenarios } : {}),
+  if (!input.requirement_patches.length && !input.scenarios.length) return parent;
+  const { plan } = applyRequirementPatches(parent, input.requirement_patches, {
+    scenarios: input.scenarios,
+    createdBy: 'chat',
+    sourceInstruction: input.instruction,
   });
-  if (!proposal.requirements.length && !proposal.decisions.length && !proposal.scenarios?.length) return parent;
-
-  const unresolved = proposal.scenarios?.length
-    ? proposal.unresolved.filter((entry) => entry.field !== 'custom.requirement')
-    : proposal.unresolved;
-  if (unresolved.some((entry) => entry.impact === 'high')) return parent;
-
-  return EstimatePlanV2Schema.parse(applyPlanProposal(parent, { ...proposal, unresolved }, 'chat'));
+  return EstimatePlanV2Schema.parse(plan);
 }
 
 /**
@@ -1320,6 +1316,16 @@ export async function reviseCalculation(
   } catch (err) {
     return errorResponse(400, 'VALIDATION_ERROR', 'Invalid request body', (err as Error).message);
   }
+  if (!input.requirement_patches.length
+    && !input.resource_edits.length
+    && !input.scenarios.length
+    && !input.deliverables.length) {
+    return errorResponse(
+      400,
+      'VALIDATION_ERROR',
+      'This proposal only contains audit text. Ask the assistant to prepare typed calculator changes before applying it.',
+    );
+  }
 
   // The full list, not the item's bounded sample: a row index in an edit refers to the
   // list as parsed, and a spilled upload keeps only its first rows on the item.
@@ -1342,6 +1348,16 @@ export async function reviseCalculation(
       'VALIDATION_ERROR',
       'None of the proposed row changes could be applied to this estimate. Try describing the change instead.',
     );
+  }
+
+  let planV2: CalculationRecord['plan_v2'];
+  try {
+    planV2 = revisedPlanV2(original.plan_v2, input);
+  } catch (err) {
+    const message = (err as Error).message === 'PLAN_PROPOSAL_NEEDS_INPUT'
+      ? 'The proposed calculator change needs another required value before it can be applied.'
+      : 'The proposed calculator change could not be converted into typed calculator requirements.';
+    return errorResponse(409, 'PLAN_PROPOSAL_NEEDS_INPUT', message, (err as Error).message);
   }
 
   const revisionId = randomUUID();
@@ -1388,7 +1404,7 @@ export async function reviseCalculation(
     // that to a spread makes it one carelessly-added key in this literal away from being lost.
     // See revisedPlan for why an empty request inherits rather than clears.
     requested_plan: revisedPlan(original.requested_plan, input),
-    plan_v2: revisedPlanV2(original.plan_v2, input),
+    plan_v2: planV2,
     resources: split.spilled ? split.sample : edited.resources,
     ...(resourcesS3Key ? { resources_s3_key: resourcesS3Key } : {}),
     ...(split.spilled ? { resources_truncated: true } : {}),

@@ -300,6 +300,33 @@ describe('chat_seq on the two apply bodies', () => {
     expect(parse().chat_seq).toBeUndefined();
   });
 
+  test('an estimate revision accepts arbitrary typed requirement patches', () => {
+    const parsed = ReviseCalculationSchema.parse({
+      instruction: 'Actually change Aurora to MySQL and make production databases Multi-AZ.',
+      requirement_patches: [
+        {
+          target: { serviceFamily: 'Amazon Aurora', environment: 'Production' },
+          field: 'database.engine',
+          operation: 'set',
+          value: 'Aurora MySQL-Compatible',
+          source: 'user',
+        },
+        {
+          target: { serviceFamily: 'Database', environment: 'Production' },
+          field: 'database.multiAz',
+          operation: 'set',
+          value: true,
+          source: 'user',
+        },
+      ],
+    });
+
+    expect(parsed.requirement_patches.map((entry) => entry.field)).toEqual([
+      'database.engine',
+      'database.multiAz',
+    ]);
+  });
+
   test.each([
     ['zero, which is below the first turn', 0],
     ['a negative', -1],

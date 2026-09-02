@@ -26,6 +26,7 @@ import {
   type EstimatePlanV2,
   type EnvironmentHours,
   type PlanProposal,
+  type RequirementPatch,
 } from '@/lib/calculatorApi';
 import {
   REVIEW_CONTROL_SPECS,
@@ -379,6 +380,23 @@ function NewCalculationForm() {
     );
   };
 
+  const targetFromQuestion = (question: EstimatePlanV2['unresolved'][number]): RequirementPatch['target'] => {
+    const resourceIds = question.scope
+      .filter((scope) => scope.startsWith('resource:'))
+      .map((scope) => scope.slice('resource:'.length));
+    const scenarioIds = question.scope
+      .filter((scope) => scope.startsWith('scenario:'))
+      .map((scope) => scope.slice('scenario:'.length));
+    const serviceFamily = question.scope.find((scope) => scope.startsWith('service:'))?.slice('service:'.length);
+    const environment = question.scope.find((scope) => scope.startsWith('environment:'))?.slice('environment:'.length);
+    return {
+      ...(resourceIds.length ? { resourceIds } : {}),
+      ...(scenarioIds.length ? { scenarioIds } : {}),
+      ...(serviceFamily ? { serviceFamily } : {}),
+      ...(environment ? { environment } : {}),
+    };
+  };
+
   const applyRequiredAnswers = async () => {
     if (!calculationId) return;
     const missing = openQuestions.filter((question) => (
@@ -393,22 +411,23 @@ function NewCalculationForm() {
       setError(optionErrors[0]);
       return;
     }
-    const answered = openQuestions
+    const answeredPatches = openQuestions
       .map((question) => ({ question, answer: answerForQuestion(question) }))
       .filter(({ answer, question }) => answerIsComplete(question.field, answer, question.options))
-      .map(({ question, answer }) => ({
-        scope: question.scope,
+      .map(({ question, answer }): RequirementPatch => ({
+        target: targetFromQuestion(question),
         field: question.field,
-        operator: 'eq' as const,
-        expected: answer,
-        impact: question.impact === 'high' ? 'critical' as const : 'material' as const,
+        operation: 'set',
+        value: answer,
+        source: 'user',
+        reason: question.prompt,
       }));
-    if (!answered.length) return;
+    if (!answeredPatches.length) return;
 
     setError(null);
     setCustomizing(true);
     try {
-      const proposed = await calculatorApi.proposeStructuredPlan(calculationId, answered);
+      const proposed = await calculatorApi.proposeStructuredPlan(calculationId, [], answeredPatches);
       if (proposed.proposal.unresolved.length) {
         setProposal(proposed.proposal);
         return;
@@ -649,7 +668,13 @@ function NewCalculationForm() {
                 <h3 className="text-sm font-semibold text-text-primary">Proposed revision</h3>
                 <p className="mt-1 text-sm leading-6 text-text-secondary">{proposal.summary}</p>
                 <div className="mt-3 divide-y divide-border border-y border-border">
-                  {proposal.requirements.map((requirement) => (
+                  {(proposal.requirement_ledger?.length ? proposal.requirement_ledger : []).map((entry) => (
+                    <div key={entry.id} className="grid gap-1 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <span className="font-semibold text-text-primary">{entry.field}</span>
+                      <span className="break-words text-text-secondary sm:text-right">{formatReviewAnswer(entry.resolvedValue)}</span>
+                    </div>
+                  ))}
+                  {!proposal.requirement_ledger?.length && proposal.requirements.map((requirement) => (
                     <div key={requirement.id} className="grid gap-1 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <span className="font-semibold text-text-primary">{requirement.field}</span>
                       <span className="break-words text-text-secondary sm:text-right">{formatReviewAnswer(requirement.expected)}</span>

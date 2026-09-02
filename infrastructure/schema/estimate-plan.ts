@@ -141,6 +141,39 @@ export const RequirementConstraintSchema = z.object({
 });
 export type RequirementConstraint = z.infer<typeof RequirementConstraintSchema>;
 
+export const RequirementPatchTargetSchema = z.object({
+  resourceIds: z.array(z.string().min(1).max(240)).max(200).optional(),
+  serviceFamily: z.string().min(1).max(120).optional(),
+  scenarioIds: z.array(z.string().min(1).max(160)).max(100).optional(),
+  environment: z.string().min(1).max(120).optional(),
+}).default({});
+export type RequirementPatchTarget = z.infer<typeof RequirementPatchTargetSchema>;
+
+export const RequirementPatchSchema = z.object({
+  target: RequirementPatchTargetSchema,
+  field: z.string().min(1).max(160),
+  operation: z.enum(['set', 'unset', 'exclude', 'include']),
+  value: z.unknown().optional(),
+  source: z.enum(['user', 'workbook', 'recommended']).default('user'),
+  reason: z.string().max(1000).optional(),
+  sourceInstruction: z.string().max(4000).optional(),
+});
+export type RequirementPatch = z.infer<typeof RequirementPatchSchema>;
+
+export const RequirementLedgerEntrySchema = z.object({
+  id: z.string().min(1).max(160),
+  sourceInstruction: z.string().max(4000).optional(),
+  target: RequirementPatchTargetSchema,
+  field: z.string().min(1).max(160),
+  requestedValue: z.unknown().optional(),
+  resolvedValue: z.unknown().optional(),
+  status: z.enum(['PROPOSED', 'APPLIED', 'PREFLIGHT_READY', 'COMPILED', 'SAVED', 'VERIFIED', 'FAILED']),
+  source: z.enum(['Workbook', 'User Override', 'Recommended']).optional(),
+  reason: z.string().max(1000).optional(),
+  evidence: z.array(SourceRefSchema).max(50).optional(),
+});
+export type RequirementLedgerEntry = z.infer<typeof RequirementLedgerEntrySchema>;
+
 export const RequirementCheckSchema = z.object({
   constraintId: z.string(),
   expected: z.unknown(),
@@ -227,11 +260,15 @@ export const EstimatePlanRevisionSchema = z.object({
   revisionId: z.string().min(1),
   planId: z.string().min(1),
   parentRevisionId: z.string().optional(),
+  parentCanonicalRevisionId: z.string().min(1).optional(),
+  canonicalRevisionId: z.string().min(1).optional(),
+  requirementRevisionId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
   createdBy: z.enum(['system', 'user', 'chat']),
   scenarios: z.array(EstimateScenarioRequestSchema).max(30),
   requirements: z.array(RequirementConstraintSchema).max(500),
   decisions: z.array(PlanDecisionSchema).max(300),
+  requirementLedger: z.array(RequirementLedgerEntrySchema).max(500).optional(),
   deliverables: EstimateDeliverablesSchema.optional(),
   hash: z.string().min(16),
 });
@@ -265,6 +302,8 @@ export const PlanProposalSchema = z.object({
   sourceText: z.string().max(4000).optional(),
   summary: z.string().min(1).max(1000),
   requirements: z.array(RequirementConstraintSchema).max(200).default([]),
+  requirement_patches: z.array(RequirementPatchSchema).max(200).default([]),
+  requirement_ledger: z.array(RequirementLedgerEntrySchema).max(200).default([]),
   decisions: z.array(PlanDecisionSchema).max(100).default([]),
   scenarios: z.array(EstimateScenarioRequestSchema).max(30).optional(),
   unresolved: z.array(PlanQuestionSchema).max(100).default([]),
@@ -273,6 +312,7 @@ export type PlanProposal = z.infer<typeof PlanProposalSchema>;
 
 export const CreatePlanProposalSchema = z.object({
   text: z.string().min(1).max(4000).optional(),
+  requirement_patches: z.array(RequirementPatchSchema).max(200).optional(),
   requirements: z.array(RequirementConstraintSchema.omit({
     id: true,
     source: true,
@@ -281,7 +321,7 @@ export const CreatePlanProposalSchema = z.object({
   decisions: z.array(PlanDecisionSchema.omit({ id: true, source: true })).max(100).optional(),
   scenarios: z.array(EstimateScenarioRequestSchema).max(30).optional(),
 }).refine(
-  (value) => Boolean(value.text || value.requirements?.length || value.decisions?.length || value.scenarios?.length),
+  (value) => Boolean(value.text || value.requirement_patches?.length || value.requirements?.length || value.decisions?.length || value.scenarios?.length),
   'Provide custom text or at least one structured change.',
 );
 export type CreatePlanProposal = z.infer<typeof CreatePlanProposalSchema>;

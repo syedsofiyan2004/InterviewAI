@@ -490,10 +490,47 @@ describe('a proposal still ends the turn, and carries its scenarios', () => {
     const spec = requests()[0].toolConfig?.tools.find(tool => tool.toolSpec.name === 'propose_estimate_change') as any;
     expect(spec.toolSpec.inputSchema.json.properties.scenarios.items.properties.pricing_model.enum)
       .toContain('compute-savings-3yr');
+    expect(spec.toolSpec.inputSchema.json.properties.requirement_patches.items.properties.field.description)
+      .toContain('fargate.taskFrequency');
     // The read-only tools are advertised alongside it, from the loaded record rather than the
     // app name.
     expect(requests()[0].toolConfig?.tools.map(tool => tool.toolSpec.name)).toContain('list_inventory_rows');
     expect(requests()[0].toolConfig?.tools.map(tool => tool.toolSpec.name)).toContain('pipeline_progress');
+  });
+
+  test('a semantic proposal carries typed requirement patches to the browser', async () => {
+    script({
+      text: 'I have prepared that change for review.',
+      tool: {
+        name: 'propose_estimate_change',
+        input: {
+          summary: 'Change Fargate to daily task frequency.',
+          instruction: 'Audit: change Fargate to 10 tasks per day.',
+          requirement_patches: [{
+            target: { serviceFamily: 'AWS Fargate' },
+            field: 'fargate.taskFrequency',
+            operation: 'set',
+            value: 'perDay',
+            source: 'user',
+            sourceInstruction: 'change Fargate to 10 tasks per day',
+          }],
+        },
+      },
+    });
+    const stream = capturingStream();
+
+    await handler(turnEvent('change Fargate to 10 tasks per day'), stream);
+
+    const proposals = events(stream).filter((event): event is Extract<ChatStreamEvent, { type: 'proposal' }> => event.type === 'proposal');
+    expect(proposals).toHaveLength(1);
+    const proposal = EstimateChangeProposalSchema.parse(proposals[0].proposal);
+    expect(proposal.requirement_patches).toEqual([
+      expect.objectContaining({
+        target: { serviceFamily: 'AWS Fargate' },
+        field: 'fargate.taskFrequency',
+        value: 'perDay',
+      }),
+    ]);
   });
 
   test('a proposal that fails validation is handed back once, then given up on in words', async () => {

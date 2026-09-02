@@ -2566,6 +2566,57 @@ function constraintApplies(
   });
 }
 
+function mergeConfigurationValue(existing: unknown, incoming: unknown): unknown {
+  if (existing && incoming
+    && typeof existing === 'object' && typeof incoming === 'object'
+    && !Array.isArray(existing) && !Array.isArray(incoming)) {
+    return { ...(existing as Record<string, unknown>), ...(incoming as Record<string, unknown>) };
+  }
+  return incoming;
+}
+
+function objectConfig(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeFargateDuration(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    const amount = object.value ?? object.originalValue ?? object.derivedValue;
+    const unit = object.unit ?? object.originalUnit ?? object.derivedUnit ?? 'hours';
+    return {
+      ...object,
+      value: amount,
+      unit,
+      originalValue: object.originalValue ?? amount,
+      originalUnit: object.originalUnit ?? unit,
+    };
+  }
+  return {
+    value,
+    unit: 'hours',
+    originalValue: value,
+    originalUnit: 'hours',
+  };
+}
+
+function withConfiguration(resource: CalculationResource, field: string, expected: unknown): CalculationResource {
+  const value = mergeConfigurationValue(resource.configuration?.[field], expected);
+  return {
+    ...resource,
+    configuration: {
+      ...(resource.configuration || {}),
+      [field]: value,
+    },
+    attributes: [
+      ...(resource.attributes || []).filter((entry) => entry.label !== field),
+      { label: field, value: typeof value === 'string' ? value : JSON.stringify(value) },
+    ],
+  };
+}
+
 /**
  * Applies the confirmed structured constraints to a disposable working inventory.
  * The original parsed rows and WorkbookIR stay immutable in S3; every applied value is
@@ -2604,6 +2655,9 @@ export function materializePlanResources(
         case 'resource.purchase_model':
           if (typeof expected === 'string') resource = { ...resource, purchase_model: expected };
           break;
+        case 'resource.exclude':
+          resource = withConfiguration(resource, 'resource.exclude', expected === true);
+          break;
         case 'database.multi_az':
           if (expected === true) resource = {
             ...resource,
@@ -2611,7 +2665,21 @@ export function materializePlanResources(
           };
           break;
         case 'database.engine':
-          if (typeof expected === 'string') resource = { ...resource, os: expected };
+          if (typeof expected === 'string') resource = withConfiguration({ ...resource, os: expected }, 'database.engine', expected);
+          break;
+        case 'fargate.task_frequency':
+          if (typeof expected === 'string') {
+            resource = withConfiguration(resource, 'fargateTask', {
+              ...objectConfig(resource.configuration?.fargateTask),
+              taskFrequency: expected,
+            });
+          }
+          break;
+        case 'fargate.task_duration':
+          resource = withConfiguration(resource, 'fargateTask', {
+            ...objectConfig(resource.configuration?.fargateTask),
+            taskDuration: normalizeFargateDuration(expected),
+          });
           break;
         case 'api_gateway.api_type':
         case 'sns.delivery_type':
@@ -2626,17 +2694,7 @@ export function materializePlanResources(
         case 'waf.traffic_profile':
         case 'memorydb.data_profile':
         case 'nat_gateway.configuration':
-          resource = {
-            ...resource,
-            configuration: {
-              ...(resource.configuration || {}),
-              [constraint.field]: expected,
-            },
-            attributes: [
-              ...(resource.attributes || []).filter((entry) => entry.label !== constraint.field),
-              { label: constraint.field, value: typeof expected === 'string' ? expected : JSON.stringify(expected) },
-            ],
-          };
+          resource = withConfiguration(resource, constraint.field, expected);
           break;
         default:
           // Unknown fields remain requirements in the manifest and therefore make the run
@@ -2686,7 +2744,8 @@ export async function runEstimatePipeline(
   const hoursFor = new Map(
     (record.environment_hours || []).map((entry) => [entry.name.trim().toLowerCase(), entry.hoursPerDay]),
   );
-  const priceable = plannedResources.filter((row) => row.service || row.size || row.vcpu !== undefined);
+  const priceable = plannedResources.filter((row) => row.configuration?.['resource.exclude'] !== true
+    && (row.service || row.size || row.vcpu !== undefined));
   const baselineGroups = groupResources(priceable, hoursFor, 'baseline');
   const hasRightSizing = priceable.some((row) => row.right_sized_size);
   const rightsizedGroups = hasRightSizing

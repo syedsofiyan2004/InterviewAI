@@ -86,6 +86,14 @@ Looking things up, which you should do freely:
   "how much" across the whole inventory.
 
 Proposing a change:
+- For semantic calculator changes, include typed requirement_patches. The instruction field
+  is audit text only and is never re-parsed when the user presses Apply.
+- Use semantic patch targets such as serviceFamily, environment, scenarioIds or resourceIds.
+  Row numbers are only for legacy resource_edits.
+- Supported semantic patch fields include fargate.taskFrequency, fargate.taskDuration,
+  database.engine, database.multiAz, lambda.memoryMb, lambda.durationMs,
+  sagemaker.workloadType, sagemaker.instanceType, nat.mode, nat.azCount, bedrock.model,
+  bedrock.inputTokens, bedrock.outputTokens, pricing.model and resource.exclude.
 - When the user asks for a change — a different instance type, a different purchase model,
   more or fewer machines, a different region, or a set of scenarios to price — first say in
   one or two sentences what you are about to propose and what you expect it to do to the
@@ -194,9 +202,49 @@ export const ESTIMATE_CHANGE_TOOL = {
           instruction: {
             type: 'string',
             description:
-              'The change as a precise instruction to the pricing pipeline, e.g. "Move the two web servers from '
-              + 'm5.xlarge on-demand to m5.large with a 3-year no-upfront reserved commitment." Be specific about '
-              + 'which resources, which attribute, and the new value. Do not include prices.',
+              'Audit text describing the user request. The pricing pipeline does not execute from this prose, so '
+              + 'semantic calculator changes must also be represented in requirement_patches.',
+          },
+          requirement_patches: {
+            type: 'array',
+            description:
+              'Typed semantic requirement changes that become authoritative calculator state. Use these for all '
+              + 'service requirements, purchase models, durations, frequencies, engines, profiles and exclusions.',
+            items: {
+              type: 'object',
+              properties: {
+                target: {
+                  type: 'object',
+                  description:
+                    'Semantic target selector. Prefer resourceIds when known; otherwise use serviceFamily, '
+                    + 'scenarioIds and/or environment. Do not use row numbers for semantic requirements.',
+                  properties: {
+                    resourceIds: { type: 'array', items: { type: 'string' } },
+                    serviceFamily: { type: 'string' },
+                    scenarioIds: { type: 'array', items: { type: 'string' } },
+                    environment: { type: 'string' },
+                  },
+                },
+                field: {
+                  type: 'string',
+                  description:
+                    'Semantic field, e.g. fargate.taskFrequency, fargate.taskDuration, database.engine, '
+                    + 'database.multiAz, lambda.memoryMb, lambda.durationMs, sagemaker.workloadType, '
+                    + 'sagemaker.instanceType, nat.mode, nat.azCount, bedrock.model, bedrock.inputTokens, '
+                    + 'bedrock.outputTokens, pricing.model or resource.exclude.',
+                },
+                operation: { type: 'string', enum: ['set', 'unset', 'exclude', 'include'] },
+                value: {
+                  description:
+                    'The typed value. For duration use an object such as {"value":730,"unit":"hours"}. '
+                    + 'For composite fields send one patch per field, not comma-separated text.',
+                },
+                source: { type: 'string', enum: ['user', 'workbook', 'recommended'] },
+                reason: { type: 'string' },
+                sourceInstruction: { type: 'string', description: 'The original user sentence this patch came from.' },
+              },
+              required: ['target', 'field', 'operation', 'source'],
+            },
           },
           resource_edits: {
             type: 'array',
