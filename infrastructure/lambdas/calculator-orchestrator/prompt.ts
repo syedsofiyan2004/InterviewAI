@@ -105,7 +105,21 @@ export interface ResourceGroup {
    * only ever machines and hours, so a Fargate task or an S3 bucket reached the pricer as
    * a count with no dimension and got hours assumed for it.
    */
-  quantities?: Array<{ unit: string; amount: number; basis: string; conversions: string[] }>;
+  quantities?: Array<{
+    unit: string;
+    amount: number;
+    originalValue?: unknown;
+    originalUnit?: string;
+    originalScale?: string;
+    originalPeriod?: string;
+    derivedValue?: unknown;
+    derivedUnit?: string;
+    derivedScale?: string;
+    derivedPeriod?: string;
+    conversionFormula?: string;
+    basis: string;
+    conversions: string[];
+  }>;
   /** Canonical evidence retained for service adapters that must distinguish billing variants. */
   details?: string[];
 }
@@ -153,6 +167,15 @@ function addQuantities(group: ResourceGroup, resource: CalculationResource): voi
       quantities.push({
         unit: quantity.unit,
         amount: quantity.amount,
+        originalValue: quantity.originalValue,
+        originalUnit: quantity.originalUnit,
+        originalScale: quantity.originalScale,
+        originalPeriod: quantity.originalPeriod,
+        derivedValue: quantity.derivedValue,
+        derivedUnit: quantity.derivedUnit,
+        derivedScale: quantity.derivedScale,
+        derivedPeriod: quantity.derivedPeriod,
+        conversionFormula: quantity.conversionFormula,
         basis: quantity.basis,
         conversions: [...(quantity.conversions ?? [])],
       });

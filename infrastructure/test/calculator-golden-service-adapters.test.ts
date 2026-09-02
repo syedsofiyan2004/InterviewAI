@@ -86,7 +86,7 @@ describe('golden-workbook Calculator adapters', () => {
     expect(plan?.calculatorConfig).toBeTruthy();
   });
 
-  test('Lambda aggregate usage compiles to integer duration with a deterministic memory equivalent', () => {
+  test('Lambda aggregate usage does not fabricate a memory and duration profile', () => {
     const plan = compile(group({
       service: 'AWS Lambda',
       quantities: [
@@ -94,10 +94,23 @@ describe('golden-workbook Calculator adapters', () => {
         { unit: 'GB-seconds/month', amount: 3_974.94, basis: 'compute', conversions: [] },
       ],
     }));
+    expect(plan?.calculatorKey).toBeUndefined();
+    expect(plan?.calculatorUnsupported).toMatch(/will not manufacture/i);
+  });
+
+  test('Lambda compiles only with an explicit execution profile', () => {
+    const plan = compile(group({
+      service: 'AWS Lambda',
+      quantities: [
+        { unit: 'invocations/month', amount: 1_258_624.58, basis: 'invocations', conversions: [] },
+        { unit: 'GB-seconds/month', amount: 3_974.94, basis: 'compute', conversions: [] },
+      ],
+      details: ['lambda.execution_profile: {"memoryMb":128,"durationMs":25}'],
+    }));
     expect(plan?.calculatorKey).toBe('aWSLambda');
     expect(plan?.calculatorConfig?.numberOfRequests).toEqual({ value: '1258625', unit: 'perMonth' });
-    expect(String(plan?.calculatorConfig?.durationOfEachRequest)).toMatch(/^\d+$/);
-    expect(plan?.calculatorConfig?.sizeOfMemoryAllocated).toMatchObject({ unit: 'mb|NA' });
+    expect(plan?.calculatorConfig?.durationOfEachRequest).toBe('25');
+    expect(plan?.calculatorConfig?.sizeOfMemoryAllocated).toEqual({ value: 128, unit: 'mb|NA' });
     expect(plan?.basis).toContain('rounded from 1258624.58 to 1258625');
   });
 

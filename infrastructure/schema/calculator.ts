@@ -5,6 +5,9 @@ import {
   EstimatePlanV2Schema,
   ExecutionManifestSchema,
   RequirementCheckSchema,
+  ResourceReadinessStatusSchema,
+  SourceMeasurementSchema,
+  SourceRefSchema,
 } from './estimate-plan';
 
 /**
@@ -229,11 +232,27 @@ export const CalculationResourceSchema = z.object({
       'units/month',
     ]),
     amount: z.number(),
+    originalValue: z.unknown().optional(),
+    originalUnit: z.string().max(80).optional(),
+    originalScale: z.string().max(80).optional(),
+    originalPeriod: z.string().max(80).optional(),
+    derivedValue: z.unknown().optional(),
+    derivedUnit: z.string().max(80).optional(),
+    derivedScale: z.string().max(80).optional(),
+    derivedPeriod: z.string().max(80).optional(),
+    conversionFormula: z.string().max(600).optional(),
+    measurement: SourceMeasurementSchema.optional(),
     /** What this dimension buys, for the report's workings line: "task vCPU", "Os Storage". */
     basis: z.string().max(120),
     /** Every conversion applied, one prose line each, in the order applied. */
     conversions: z.array(z.string().max(300)).max(8).default([]),
   })).max(12).optional(),
+  resourceId: z.string().max(240).optional(),
+  role: z.string().max(120).optional(),
+  configuration: z.record(z.string(), z.unknown()).optional(),
+  source_evidence: z.array(SourceRefSchema).max(100).optional(),
+  unresolved_fields: z.array(z.string().max(160)).max(80).optional(),
+  readiness: ResourceReadinessStatusSchema.optional(),
 });
 export type CalculationResource = z.infer<typeof CalculationResourceSchema>;
 

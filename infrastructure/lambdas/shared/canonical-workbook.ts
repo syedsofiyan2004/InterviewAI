@@ -123,6 +123,15 @@ export interface CanonicalQuantity {
   unit: CanonicalUnit;
   /** The amount, already on a monthly basis and already scaled for `count` where one applies. */
   amount: number;
+  originalValue?: number | string;
+  originalUnit?: string;
+  originalScale?: string;
+  originalPeriod?: string;
+  derivedValue?: number | string;
+  derivedUnit?: string;
+  derivedScale?: string;
+  derivedPeriod?: string;
+  conversionFormula?: string;
   /** What this dimension buys, for the report's workings line: "task vCPU", "Os Storage". */
   basis: string;
   /**
@@ -159,6 +168,13 @@ export interface CanonicalShape {
   purchaseModel?: string;
   /** Machines, nodes or task-runs this row stands for. Never 0; a stated 0 is an exclusion. */
   count: number;
+  countOriginalValue?: number | string;
+  countOriginalUnit?: string;
+  countOriginalPeriod?: string;
+  countDerivedValue?: number | string;
+  countDerivedUnit?: string;
+  countDerivedPeriod?: string;
+  countConversionFormula?: string;
   vcpu?: number;
   ramGb?: number;
   /** Runtime hours a month for ONE unit of `count`. */
@@ -369,7 +385,17 @@ export interface CanonicalInput {
 // ---------------------------------------------------------------------------
 
 export type UnitInference =
-  | { ok: true; unit: CanonicalUnit; amount: number; conversions: string[] }
+  | { ok: true; unit: CanonicalUnit; amount: number; conversions: string[]; measurement: {
+    originalValue: number;
+    originalUnit: CanonicalUnit;
+    originalScale?: string;
+    originalPeriod: 'month' | 'year' | 'day' | 'unspecified';
+    derivedValue: number;
+    derivedUnit: CanonicalUnit;
+    derivedScale: 'whole';
+    derivedPeriod: 'month';
+    conversionFormula?: string;
+  } }
   | { ok: false; reason: string };
 
 /**
@@ -461,18 +487,23 @@ export function inferUnit(label: string, value: number): UnitInference {
 
   let amount = value;
   const conversions: string[] = [];
+  const originalPeriod = perYear ? 'year' : perDay ? 'day' : perMonth ? 'month' : 'unspecified';
+  let originalScale: string | undefined;
 
   // Scale expansions first, because "(millions/yr)" has to become units before it becomes
   // units a month: 120 -> 120,000,000 -> 10,000,000. Doing it the other way round is the
   // same arithmetic, but doing it in one step is where a factor gets dropped.
   if (/\bmillions?\b|\bmn\b/.test(text)) {
     amount *= 1_000_000;
+    originalScale = 'millions';
     conversions.push('millions expanded to whole units (x 1,000,000)');
   } else if (/\bbillions?\b/.test(text)) {
     amount *= 1_000_000_000;
+    originalScale = 'billions';
     conversions.push('billions expanded to whole units (x 1,000,000,000)');
   } else if (/\bthousands?\b/.test(text)) {
     amount *= 1_000;
+    originalScale = 'thousands';
     conversions.push('thousands expanded to whole units (x 1,000)');
   }
   // "CloudFront requests (10,000-unit blocks/month)" — a block size stated in the LABEL, as
@@ -481,6 +512,7 @@ export function inferUnit(label: string, value: number): UnitInference {
   if (blocks) {
     const size = Number(blocks.slice(1).filter(Boolean).join(''));
     amount *= size;
+    originalScale = `${size}-unit blocks`;
     conversions.push(`${size.toLocaleString('en-US')}-unit blocks expanded to whole units`);
   }
 
@@ -498,7 +530,24 @@ export function inferUnit(label: string, value: number): UnitInference {
     conversions.push('minutes divided by 60 to runtime hours');
   }
 
-  return { ok: true, unit, amount: round2(amount), conversions };
+  const derived = round2(amount);
+  return {
+    ok: true,
+    unit,
+    amount: derived,
+    conversions,
+    measurement: {
+      originalValue: value,
+      originalUnit: unit,
+      ...(originalScale ? { originalScale } : {}),
+      originalPeriod,
+      derivedValue: derived,
+      derivedUnit: unit,
+      derivedScale: 'whole',
+      derivedPeriod: 'month',
+      ...(conversions.length ? { conversionFormula: conversions.join('; ') } : {}),
+    },
+  };
 }
 
 /**
@@ -830,6 +879,12 @@ function normaliseInventoryRow(
       os: row.os,
       purchaseModel: row.purchase_model,
       count,
+      countOriginalValue: count,
+      countOriginalUnit: 'units',
+      countOriginalPeriod: 'unspecified',
+      countDerivedValue: count,
+      countDerivedUnit: 'units',
+      countDerivedPeriod: 'month',
       vcpu: row.vcpu,
       ramGb: row.ram_gb,
       hoursPerUnit: runtime.hours,
@@ -853,6 +908,12 @@ function normaliseInventoryRow(
       os: row.os,
       purchaseModel: row.purchase_model,
       count,
+      countOriginalValue: count,
+      countOriginalUnit: 'units',
+      countOriginalPeriod: 'unspecified',
+      countDerivedValue: count,
+      countDerivedUnit: 'units',
+      countDerivedPeriod: 'month',
       vcpu: row.vcpu,
       ramGb: row.ram_gb,
       hoursPerUnit: runtime.hours,
@@ -883,7 +944,21 @@ function normaliseInventoryRow(
     if (inferred.ok) {
       // The label is re-read for its DIMENSION only. Re-applying its conversions would
       // divide an already-divided figure by twelve a second time.
-      emit('usage', [{ unit: inferred.unit, amount: round2(row.usage_amount), basis: label, conversions: [] }]);
+      emit('usage', [{
+        unit: inferred.unit,
+        amount: round2(row.usage_amount),
+        originalValue: inferred.measurement.originalValue,
+        originalUnit: inferred.measurement.originalUnit,
+        originalScale: inferred.measurement.originalScale,
+        originalPeriod: inferred.measurement.originalPeriod,
+        derivedValue: round2(row.usage_amount),
+        derivedUnit: inferred.measurement.derivedUnit,
+        derivedScale: inferred.measurement.derivedScale,
+        derivedPeriod: inferred.measurement.derivedPeriod,
+        conversionFormula: inferred.measurement.conversionFormula,
+        basis: label,
+        conversions: [],
+      }]);
       return;
     }
     sink.exclusions.push({
@@ -909,6 +984,15 @@ function normaliseInventoryRow(
     const quantity: CanonicalQuantity = {
       unit: fallback.unit,
       amount: fallback.amount,
+      originalValue: fallback.measurement.originalValue,
+      originalUnit: fallback.measurement.originalUnit,
+      originalScale: fallback.measurement.originalScale,
+      originalPeriod: fallback.measurement.originalPeriod,
+      derivedValue: fallback.measurement.derivedValue,
+      derivedUnit: fallback.measurement.derivedUnit,
+      derivedScale: fallback.measurement.derivedScale,
+      derivedPeriod: fallback.measurement.derivedPeriod,
+      conversionFormula: fallback.measurement.conversionFormula,
       basis: label,
       conversions: fallback.conversions,
     };
@@ -946,6 +1030,10 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
   let vcpu: number | undefined;
   let ramGb: number | undefined;
   let count: number | undefined;
+  let countOriginalValue: number | string | undefined;
+  let countOriginalPeriod: string | undefined;
+  let countDerivedValue: number | string | undefined;
+  let countConversionFormula: string | undefined;
   let countConversions: string[] = [];
   let runtimePerUnit: number | undefined;
   let runtimeConversions: string[] = [];
@@ -1010,13 +1098,21 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
         // A per-day count is the user's own bug: ten tasks a day read as ten a month. The
         // conversion travels with the count so it reaches the workings line of whichever
         // dimension the count ends up feeding, rather than being applied here and forgotten.
+        countOriginalValue = parsed.amount;
+        countOriginalPeriod = /\b(day|days|daily)\b/.test(normalise(cellLabel)) ? 'day'
+          : /\b(yr|yrs|year|years|yearly|annual|annually)\b/.test(normalise(cellLabel)) ? 'year'
+            : /\b(month|months|monthly|mo|mth)\b/.test(normalise(cellLabel)) ? 'month'
+              : 'unspecified';
         if (/\b(day|days|daily)\b/.test(normalise(cellLabel))) {
           count = round2(parsed.amount * DAYS_PER_MONTH);
           countConversions = [`per-day count multiplied by ${round2(DAYS_PER_MONTH)} days to ${count} a month`];
+          countConversionFormula = countConversions[0];
         } else {
           count = parsed.amount;
           countConversions = [];
+          countConversionFormula = undefined;
         }
+        countDerivedValue = count;
         const aside = specFromAside(cellLabel);
         if (aside.vcpu !== undefined && vcpu === undefined) vcpu = aside.vcpu;
         if (aside.ramGb !== undefined && ramGb === undefined) ramGb = aside.ramGb;
@@ -1029,6 +1125,15 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
           quantities.push({
             unit: reading.unit,
             amount: reading.amount,
+            originalValue: reading.measurement.originalValue,
+            originalUnit: reading.measurement.originalUnit,
+            originalScale: reading.measurement.originalScale,
+            originalPeriod: reading.measurement.originalPeriod,
+            derivedValue: reading.measurement.derivedValue,
+            derivedUnit: reading.measurement.derivedUnit,
+            derivedScale: reading.measurement.derivedScale,
+            derivedPeriod: reading.measurement.derivedPeriod,
+            conversionFormula: reading.measurement.conversionFormula,
             basis: cellLabel,
             conversions: reading.conversions,
           });
@@ -1044,6 +1149,15 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
           quantities.push({
             unit: reading.unit,
             amount: reading.amount,
+            originalValue: reading.measurement.originalValue,
+            originalUnit: reading.measurement.originalUnit,
+            originalScale: reading.measurement.originalScale,
+            originalPeriod: reading.measurement.originalPeriod,
+            derivedValue: reading.measurement.derivedValue,
+            derivedUnit: reading.measurement.derivedUnit,
+            derivedScale: reading.measurement.derivedScale,
+            derivedPeriod: reading.measurement.derivedPeriod,
+            conversionFormula: reading.measurement.conversionFormula,
             basis: cellLabel,
             conversions: reading.conversions,
           });
@@ -1074,6 +1188,15 @@ function normaliseMetricGroup(group: MetricGroupRow, index: number, input: Canon
   const shape: CanonicalShape = {
     size,
     count: units,
+    ...(countOriginalValue !== undefined ? {
+      countOriginalValue,
+      countOriginalUnit: 'units',
+      countOriginalPeriod,
+      countDerivedValue,
+      countDerivedUnit: 'units',
+      countDerivedPeriod: 'month',
+      ...(countConversionFormula ? { countConversionFormula } : {}),
+    } : {}),
     vcpu,
     ramGb,
     hoursPerUnit: runtime.hours,

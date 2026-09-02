@@ -138,18 +138,6 @@ function objectField(value: Record<string, unknown> | undefined, key: string): R
     : undefined;
 }
 
-function nearestLambdaShape(gbSeconds: number, requests: number): { memoryMb: number; durationMs: number; errorPct: number } {
-  const targetGbMs = (gbSeconds / requests) * 1000;
-  let best = { memoryMb: 128, durationMs: Math.max(1, Math.round(targetGbMs * 8)), errorPct: Number.POSITIVE_INFINITY };
-  for (let memoryMb = 128; memoryMb <= 10_240; memoryMb++) {
-    const durationMs = Math.max(1, Math.round(targetGbMs / (memoryMb / 1024)));
-    const actual = (memoryMb / 1024) * durationMs;
-    const errorPct = Math.abs(actual - targetGbMs) / targetGbMs * 100;
-    if (errorPct < best.errorPct) best = { memoryMb, durationMs, errorPct };
-  }
-  return best;
-}
-
 function nearestBedrockSchedule(monthlyCalls: number): { requestsPerMinute: number; hoursPerDay: number; representedCalls: number } {
   const billingUnits = Math.max(1, Math.round(monthlyCalls / (60 * 30)));
   let hoursPerDay = 24;
@@ -490,13 +478,21 @@ const lambdaAdapter: CalculatorAdapter = {
   compile(group, context) {
     const requests = quantity(group, 'invocations/month') || quantity(group, 'requests/month');
     const gbSeconds = quantity(group, 'GB-seconds/month');
-    if (!requests || !gbSeconds) return {
-      serviceCode: 'AWSLambda', filters: {} as Record<string, string>, basis: 'Lambda was detected but its request and compute dimensions are incomplete.',
-      calculatorUnsupported: 'Lambda requires both monthly invocations and GB-seconds, or an explicit memory and duration, before Calculator compilation.',
+    const profile = structuredDetail(group, 'lambda.execution_profile');
+    const memoryMb = numberField(profile, 'memoryMb', 'memory_mb', 'memoryMB', 'memory');
+    const durationMs = numberField(profile, 'durationMs', 'duration_ms', 'durationMS', 'duration');
+    if (!requests || !memoryMb || !durationMs) return {
+      serviceCode: 'AWSLambda',
+      filters: {} as Record<string, string>,
+      basis: 'Lambda was detected but its Calculator execution profile is incomplete.',
+      calculatorUnsupported: 'Lambda Calculator compilation requires explicit monthly invocations, memory MB and duration ms. Aggregate GB-seconds are preserved as evidence only; the pipeline will not manufacture a memory/duration pair.',
       storageOwner: 'none',
     };
     const calculatorRequests = Math.max(1, Math.round(requests));
-    const equivalent = nearestLambdaShape(gbSeconds, calculatorRequests);
+    const representedGbSeconds = (calculatorRequests * memoryMb / 1024 * durationMs) / 1000;
+    const computeVariance = gbSeconds
+      ? Math.abs(representedGbSeconds - gbSeconds) / Math.max(gbSeconds, 1) * 100
+      : undefined;
     return {
       serviceCode: 'AWSLambda', filters: { group: 'AWS-Lambda-Duration' },
       calculatorKey: 'aWSLambda',
@@ -504,12 +500,12 @@ const lambdaAdapter: CalculatorAdapter = {
         region: group.region || context.defaultRegion,
         selectArchitectureRequests: /arm|graviton/i.test(serviceText(group)) ? '2' : '1',
         numberOfRequests: wholeFrequency(requests),
-        durationOfEachRequest: String(equivalent.durationMs),
-        sizeOfMemoryAllocated: fileSize(equivalent.memoryMb, 'mb|NA'),
+        durationOfEachRequest: String(Math.round(durationMs)),
+        sizeOfMemoryAllocated: fileSize(Math.round(memoryMb), 'mb|NA'),
         selectArchitectureConcurrency: '1',
         description: description(group, 'Lambda aggregate workload'),
       },
-      basis: `Lambda uses the nearest Calculator-representable integer shape (${equivalent.memoryMb} MB, ${equivalent.durationMs} ms) for ${calculatorRequests} invocations and ${gbSeconds} GB-seconds/month (${equivalent.errorPct.toFixed(4)}% compute variance)${calculatorRequests !== requests ? `; fractional annual-to-month invocations were rounded from ${requests} to ${calculatorRequests} because AWS Calculator requires whole requests` : ''}.`,
+      basis: `Lambda uses the explicit execution profile (${Math.round(memoryMb)} MB, ${Math.round(durationMs)} ms) for ${calculatorRequests} invocations${gbSeconds ? `; workbook GB-seconds/month cross-check variance ${computeVariance!.toFixed(4)}%` : ''}${calculatorRequests !== requests ? `; fractional annual-to-month invocations were rounded from ${requests} to ${calculatorRequests} because AWS Calculator requires whole requests` : ''}.`,
       storageOwner: 'none',
       fingerprintFields: ['selectArchitectureRequests', 'numberOfRequests', 'durationOfEachRequest', 'sizeOfMemoryAllocated'],
     };

@@ -806,6 +806,15 @@ function declareBilling(input: CanonicalInput, cite: string, context: AnalysisCo
     declaration.quantities = priced.slice(0, MAX_QUANTITIES).map((quantity) => ({
       unit: quantity.unit,
       amount: quantity.amount,
+      originalValue: quantity.originalValue,
+      originalUnit: quantity.originalUnit,
+      originalScale: quantity.originalScale,
+      originalPeriod: quantity.originalPeriod,
+      derivedValue: quantity.derivedValue,
+      derivedUnit: quantity.derivedUnit,
+      derivedScale: quantity.derivedScale,
+      derivedPeriod: quantity.derivedPeriod,
+      conversionFormula: quantity.conversionFormula,
       // Trimmed to the schema's lengths rather than trusted to be short: a basis and a
       // conversion line are both assembled out of column headings, and a heading is as long as
       // whoever typed it felt like making it.

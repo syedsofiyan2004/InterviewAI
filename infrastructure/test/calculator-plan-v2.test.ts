@@ -33,7 +33,7 @@ describe('Estimate Plan v2 review lifecycle', () => {
   test('stores one submitted default region constraint for the whole estimate', () => {
     const resources: CalculationResource[] = [
       { raw: 'S3 storage', service: 'S3', name: 'Storage' },
-      { raw: 'Lambda requests', service: 'Lambda', name: 'Requests' },
+      { raw: 'SQS requests', service: 'SQS', name: 'Requests' },
     ];
     const plan = buildInitialPlan({ workbookId: 'book-hash', resources, defaultRegion: 'ap-south-1' });
     const regions = plan.revisions[0].requirements.filter((entry) => entry.field === 'resource.region');
@@ -95,6 +95,28 @@ describe('Estimate Plan v2 review lifecycle', () => {
       .toContainEqual(expect.objectContaining({ sheet: 'Any Customer', row: 9 }));
   });
 
+  test('asks for Lambda execution profile instead of treating aggregate GB-seconds as ready', () => {
+    const plan = buildInitialPlan({
+      workbookId: 'lambda-book',
+      defaultRegion: 'ap-south-1',
+      resources: [{
+        raw: 'Lambda invocations and GB-seconds',
+        service: 'AWS Lambda',
+        name: 'BFF Lambda',
+        quantities: [
+          { unit: 'invocations/month', amount: 1_000_000, basis: 'invocations', conversions: [] },
+          { unit: 'GB-seconds/month', amount: 3200, basis: 'compute', conversions: [] },
+        ],
+      }],
+    });
+
+    expect(plan.status).toBe('NEEDS_INPUT');
+    expect(plan.unresolved).toContainEqual(expect.objectContaining({
+      field: 'lambda.execution_profile',
+      impact: 'high',
+    }));
+  });
+
   test('creates an immutable structured revision and compiles its constraints into resources', () => {
     const original = buildInitialPlan({ workbookId: 'book-hash', resources: rows });
     const proposal = createPlanProposal(original, { text: 'Use eu-west-1 and run 300 hours per month' });
@@ -146,6 +168,7 @@ describe('Estimate Plan v2 review lifecycle', () => {
     const plan = buildInitialPlan({ workbookId: 'book-hash', resources: rows });
     const proposal = createPlanProposal(plan, { requirements: [
       { scope: ['service:SageMaker'], field: 'sagemaker.inference_configuration', operator: 'eq', expected: 'real-time inference, ml.g5.xlarge', impact: 'critical' },
+      { scope: ['service:Lambda'], field: 'lambda.execution_profile', operator: 'eq', expected: 'memory 512, duration 250', impact: 'critical' },
       { scope: ['service:Bedrock'], field: 'bedrock.model', operator: 'eq', expected: 'Claude Sonnet 4', impact: 'critical' },
       { scope: ['service:Bedrock'], field: 'bedrock.tokens_per_call', operator: 'eq', expected: 'input 2000, output 500', impact: 'critical' },
       { scope: ['service:Cognito'], field: 'cognito.tier', operator: 'eq', expected: 'Lite, 0', impact: 'critical' },
@@ -157,6 +180,7 @@ describe('Estimate Plan v2 review lifecycle', () => {
     expect(proposal.unresolved).toHaveLength(0);
     expect(Object.fromEntries(proposal.requirements.map((entry) => [entry.field, entry.expected]))).toMatchObject({
       'sagemaker.inference_configuration': { workloadType: 'real-time inference', instanceType: 'ml.g5.xlarge' },
+      'lambda.execution_profile': { memoryMb: 512, durationMs: 250 },
       'bedrock.model': 'Anthropic: Claude Sonnet 4',
       'bedrock.tokens_per_call': { inputTokens: 2000, outputTokens: 500 },
       'cognito.tier': { tier: 'Lite', monthlyTokenRequests: 0 },

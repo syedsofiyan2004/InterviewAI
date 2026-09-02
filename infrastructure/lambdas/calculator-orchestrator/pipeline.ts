@@ -9,6 +9,7 @@ import type {
   EstimatePlanRevision,
   EstimateScenarioRequest,
   ExecutionManifest,
+  ResourcePreflight,
   RequirementCheck,
   RequirementConstraint,
 } from '../../schema/estimate-plan';
@@ -1735,6 +1736,7 @@ interface SaveEntry {
   pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
   pricingReason?: string;
   fingerprintFields?: string[];
+  preflight: ResourcePreflight;
 }
 
 interface ValidatedSaveResult {
@@ -1745,6 +1747,91 @@ interface ValidatedSaveResult {
   validationErrors: string[];
   snapshot?: SavedEstimateSnapshot;
   manifest: ExecutionManifest;
+}
+
+function preflightFor(entry: {
+  label: string;
+  group: ResourceGroup;
+  serviceCode: string;
+  calculatorService?: string;
+  config?: Record<string, unknown>;
+  fingerprintFields?: string[];
+  pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
+  pricingReason?: string;
+}): ResourcePreflight {
+  const checks: ResourcePreflight['checks'] = [];
+  const blockers: string[] = [];
+  const add = (check: ResourcePreflight['checks'][number]) => {
+    checks.push(check);
+    if (check.status === 'FAIL' || check.status === 'UNRESOLVED') {
+      blockers.push(`${check.field}: ${check.message || 'unresolved'}`);
+    }
+  };
+  add({
+    field: 'service',
+    status: entry.serviceCode ? 'PASS' : 'UNRESOLVED',
+    actual: entry.serviceCode || undefined,
+    source: 'workbook',
+    message: entry.serviceCode ? undefined : 'No AWS service family was mapped.',
+  });
+  add({
+    field: 'region',
+    status: (entry.group.region || entry.config?.region) ? 'PASS' : 'UNRESOLVED',
+    actual: entry.group.region || entry.config?.region,
+    source: entry.group.region ? 'workbook' : 'system_default',
+    message: (entry.group.region || entry.config?.region) ? undefined : 'No AWS region is available for this resource.',
+  });
+  add({
+    field: 'calculator.adapter',
+    status: entry.calculatorService && entry.config ? 'PASS' : 'UNRESOLVED',
+    actual: entry.calculatorService || undefined,
+    source: 'mcp',
+    message: entry.calculatorService && entry.config
+      ? undefined
+      : (entry.pricingReason || 'No verified Calculator configuration was produced.'),
+  });
+  for (const field of entry.fingerprintFields || []) {
+    if (entry.config?.[field] === undefined) continue;
+    checks.push({
+      field: `calculator.${field}`,
+      status: 'PASS',
+      actual: entry.config?.[field],
+      source: 'workbook',
+    });
+  }
+  for (const quantity of entry.group.quantities || []) {
+    checks.push({
+      field: `quantity.${quantity.basis}`,
+      status: 'PASS',
+      actual: quantity.amount,
+      source: 'workbook',
+      measurement: {
+        originalValue: quantity.originalValue ?? quantity.amount,
+        originalUnit: quantity.originalUnit ?? quantity.unit,
+        originalScale: quantity.originalScale,
+        originalPeriod: quantity.originalPeriod ?? 'month',
+        derivedValue: quantity.derivedValue ?? quantity.amount,
+        derivedUnit: quantity.derivedUnit ?? quantity.unit,
+        derivedScale: quantity.derivedScale,
+        derivedPeriod: quantity.derivedPeriod ?? 'month',
+        conversionFormula: quantity.conversionFormula,
+      },
+    });
+  }
+  if (entry.pricingStatus === 'UNSUPPORTED') {
+    blockers.push(`pricing: ${entry.pricingReason || 'requested pricing model is unsupported for this resource'}`);
+  }
+  return {
+    resourceId: entry.group.members.map(String).join(',') || entry.label,
+    label: entry.label,
+    service: entry.serviceCode,
+    environment: entry.group.environment,
+    region: entry.group.region || String(entry.config?.region || ''),
+    readiness: blockers.length ? 'NEEDS_INPUT' : 'COMPILED',
+    checks,
+    blockers: [...new Set(blockers)],
+    sourceEvidence: [],
+  };
 }
 
 /**
@@ -1888,7 +1975,7 @@ async function saveEstimate(
         : intentionalOnDemandRemainder || (decision?.pricing === 'committed' && !decision.substitution)
           ? 'MIXED'
           : 'UNSUPPORTED';
-      return {
+      const saveEntry = {
         service: entry.plan.calculatorKey,
         serviceCode: entry.plan.serviceCode,
         group,
@@ -1904,6 +1991,19 @@ async function saveEstimate(
         pricingReason: entry.plan.calculatorUnsupported
           || (decision?.pricing === 'committed' ? decision.substitution : decision?.pricing === 'on-demand' ? decision.reason : decision?.caveat),
         fingerprintFields: entry.plan.fingerprintFields,
+      };
+      return {
+        ...saveEntry,
+        preflight: preflightFor({
+          label: saveEntry.label,
+          group: entry.group,
+          serviceCode: saveEntry.serviceCode,
+          calculatorService: saveEntry.service,
+          config: saveEntry.config,
+          fingerprintFields: saveEntry.fingerprintFields,
+          pricingStatus: saveEntry.pricingStatus,
+          pricingReason: saveEntry.pricingReason,
+        }),
       };
     });
 
@@ -1927,6 +2027,7 @@ async function saveEstimate(
     planRevisionId: context.planRevision?.revisionId || 'legacy',
     inputHash: context.inputHash,
     constraints,
+    preflight: services.map((entry) => entry.preflight),
     services: services.map((entry) => ({
       resourceIds: entry.resourceIds,
       serviceCode: entry.serviceCode,
@@ -1942,6 +2043,21 @@ async function saveEstimate(
     })),
   });
   let manifest = buildManifest();
+  const preflightBlockers = services.flatMap((entry) => entry.preflight.blockers.map((blocker) => `${entry.label}: ${blocker}`));
+  if (preflightBlockers.length) {
+    const validationErrors = [
+      'Calculator preflight failed; no AWS Pricing Calculator estimate was created.',
+      ...preflightBlockers,
+    ];
+    return {
+      url: null,
+      status: 'FAILED',
+      warning: validationErrors.join(' '),
+      requirementChecks: [],
+      validationErrors,
+      manifest,
+    };
+  }
   if (!saveable.length) {
     const validationErrors = [
       'No resource has a supported AWS Pricing Calculator adapter; no partial link was created.',
@@ -2353,6 +2469,7 @@ export function materializePlanResources(
         case 'sns.delivery_type':
         case 'ses.send_source':
         case 'cognito.tier':
+        case 'lambda.execution_profile':
         case 'bedrock.model':
         case 'bedrock.tokens_per_call':
         case 'sagemaker.inference_configuration':
@@ -2686,9 +2803,9 @@ export async function runEstimatePipeline(
       label: segment.label,
       kind: segment.kind,
       status: savedSegments[index].status,
-      monthly: savedSegments[index].snapshot?.monthly ?? (savedSegments[index].url ? round2(segment.monthly) : null),
-      upfront: savedSegments[index].snapshot?.upfront ?? null,
-      total_12_months: savedSegments[index].snapshot?.total12Months ?? (savedSegments[index].url ? round2(segment.monthly * 12) : null),
+      monthly: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.monthly ?? null : null,
+      upfront: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.upfront ?? null : null,
+      total_12_months: savedSegments[index].status === 'COMPLETED' ? savedSegments[index].snapshot?.total12Months ?? null : null,
       url: savedSegments[index].url,
       requirement_checks: savedSegments[index].requirementChecks,
       validation_errors: savedSegments[index].validationErrors,
@@ -2716,7 +2833,7 @@ export async function runEstimatePipeline(
   const result: CalculationResult = {
     url: saved.url,
     currency: 'USD',
-    monthlyTotal: saved.snapshot?.monthly ?? (saved.url ? round2(baselineTotal) : null),
+    monthlyTotal: saved.status === 'COMPLETED' ? saved.snapshot?.monthly ?? null : null,
     lineItems: toLineItems(priced),
     environments: toEnvironments(priced, record),
     scenarios,

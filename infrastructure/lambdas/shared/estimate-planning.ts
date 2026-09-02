@@ -230,6 +230,20 @@ export function normalizeReviewAnswer(field: string, raw: unknown): NormalizedRe
     return { expected: { workloadType: 'real-time inference', instanceType } };
   }
 
+  if (field === 'lambda.execution_profile') {
+    const compact = compactNumbers(text);
+    const memoryMb = finiteNumber(profile?.memoryMb ?? profile?.memory_mb ?? profile?.memoryMB ?? profile?.memory)
+      ?? finiteNumber(/memory\D{0,20}([0-9][0-9,.]*)/i.exec(text)?.[1])
+      ?? compact[0];
+    const durationMs = finiteNumber(profile?.durationMs ?? profile?.duration_ms ?? profile?.durationMS ?? profile?.duration)
+      ?? finiteNumber(/duration\D{0,20}([0-9][0-9,.]*)/i.exec(text)?.[1])
+      ?? compact[1];
+    if (!memoryMb || !durationMs || memoryMb <= 0 || durationMs <= 0) return {
+      error: 'Provide Lambda memory in MB and average duration in ms, for example: memory 512, duration 250.',
+    };
+    return { expected: { memoryMb, durationMs } };
+  }
+
   if (field === 'bedrock.model') {
     const provider = String(profile?.provider || '').trim();
     const suppliedModel = String(profile?.model || profile?.modelName || text).trim();
@@ -463,6 +477,11 @@ export function buildInitialPlan(input: InitialPlanInput): EstimatePlanV2 {
     prompt: 'Choose the SageMaker workload type and instance class for model hosting.',
     field: 'sagemaker.inference_configuration',
     scope: ['service:SageMaker'], impact: 'high',
+  });
+  if (uniqueFamilies.has('Lambda')) addQuestion(unresolved, {
+    prompt: 'Provide the Lambda execution profile: memory in MB and average duration in ms. Aggregate GB-seconds will not be converted into a guessed profile.',
+    field: 'lambda.execution_profile',
+    scope: ['service:Lambda'], impact: 'high',
   });
   if (uniqueFamilies.has('Bedrock')) {
     addQuestion(unresolved, {
