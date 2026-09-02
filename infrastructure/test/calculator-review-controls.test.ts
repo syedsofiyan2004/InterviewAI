@@ -20,6 +20,14 @@ describe('calculator review controls', () => {
       .toEqual(['Recommended', 'Recommended']);
   });
 
+  test('Lambda memory remains a finite memory dropdown and accepts the recommended value', () => {
+    const memory = REVIEW_CONTROL_SPECS['lambda.execution_profile'].controls.find((entry) => entry.key === 'memoryMb');
+
+    expect(memory?.options?.map((entry) => entry.value)).toContain('512');
+    expect(validateFiniteOptions('lambda.execution_profile', { memoryMb: 512, durationMs: 250 })).toEqual([]);
+    expect(answerIsComplete('lambda.execution_profile', { memoryMb: 512, durationMs: 250 })).toBe(true);
+  });
+
   test('invalid finite AWS options are rejected before proposal submission', () => {
     expect(validateFiniteOptions('database.engine', 'Oracle', ['Aurora PostgreSQL', 'Aurora MySQL']))
       .toHaveLength(1);

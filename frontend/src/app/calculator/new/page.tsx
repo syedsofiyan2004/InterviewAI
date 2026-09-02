@@ -250,6 +250,11 @@ function NewCalculationForm() {
   ) => {
     const live = reviewCatalog?.fields?.[question.field] || [];
     if (!live.length || control.kind !== 'searchable-select') return control.options || [];
+    if (question.field === 'resource.region'
+      || question.field === 'lambda.execution_profile'
+      || question.field === 'sagemaker.inference_configuration' && control.key === 'workloadType'
+      || question.field === 'nat_gateway.configuration' && control.key === 'mode'
+      || question.field === 'cognito.tier') return control.options || [];
     const filtered = live.filter((option) => {
       const text = `${option.id} ${option.label} ${option.calculatorField}`.toLowerCase();
       if (control.key === 'instanceType') return /\bml\./.test(text);
@@ -299,12 +304,21 @@ function NewCalculationForm() {
     const record = answer && typeof answer === 'object' && !Array.isArray(answer)
       ? answer as Record<string, string | number>
       : { value: answer as string | number };
+    const shouldUseNativeSelect = (questionField: string, control: ReviewControlField) => (
+      Boolean(control.options?.length)
+      && (questionField === 'resource.region'
+        || questionField === 'lambda.execution_profile'
+        || questionField === 'sagemaker.inference_configuration' && control.key === 'workloadType'
+        || questionField === 'nat_gateway.configuration' && control.key === 'mode'
+        || questionField === 'cognito.tier')
+    );
 
     return (
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         {controls.map((control) => {
           const id = `${question.id}-${control.key}`;
           const value = record[control.key] ?? control.recommended ?? '';
+          const options = liveOptionsFor(question, control);
           return (
             <div key={control.key}>
               <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -316,21 +330,36 @@ function NewCalculationForm() {
                 </span>
               </div>
               {control.kind === 'searchable-select' ? (
-                <>
-                <input
-                  id={id}
-                  list={`${id}-options`}
-                  className="premium-input w-full px-4 text-sm"
-                  value={String(value)}
-                  onChange={(event) => setQuestionAnswer(question, control, event.target.value)}
-                />
-                <datalist id={`${id}-options`}>
-                  {!control.required && <option value="" />}
-                  {liveOptionsFor(question, control).map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </datalist>
-                </>
+                shouldUseNativeSelect(question.field, control) ? (
+                  <select
+                    id={id}
+                    className="premium-input w-full px-4 text-sm"
+                    value={String(value)}
+                    onChange={(event) => setQuestionAnswer(question, control, event.target.value)}
+                  >
+                    {!control.required && <option value="">Not used</option>}
+                    {control.required && !value && <option value="">Choose an option</option>}
+                    {options.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      id={id}
+                      list={`${id}-options`}
+                      className="premium-input w-full px-4 text-sm"
+                      value={String(value)}
+                      onChange={(event) => setQuestionAnswer(question, control, event.target.value)}
+                    />
+                    <datalist id={`${id}-options`}>
+                      {!control.required && <option value="" />}
+                      {options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </datalist>
+                  </>
+                )
               ) : (
                 <input
                   id={id}
