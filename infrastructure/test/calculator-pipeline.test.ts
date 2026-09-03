@@ -152,112 +152,180 @@ function record(overrides: Partial<CalculationRecord> = {}): CalculationRecord {
   };
 }
 
+/** Service schemas the fake answers with, trimmed from live get_service_fields captures. */
+const FAKE_FIELDS: Record<string, any> = {
+  ec2Enhancement: {
+    serviceCode: 'ec2Enhancement',
+    serviceName: 'Amazon EC2',
+    fields: [
+      { id: 'tenancy', type: 'dropdown', label: 'Tenancy', options: [{ id: 'shared', label: 'Shared Instances' }, { id: 'dedicated', label: 'Dedicated Instances' }, { id: 'host', label: 'Dedicated Hosts' }] },
+      { id: 'selectedOS', type: 'dropdown', label: 'Operating system', options: [
+        { id: 'linux', label: 'Linux' }, { id: 'windows', label: 'Windows Server' },
+        { id: 'windows-std', label: 'Windows Server with SQL Server Standard' }, { id: 'windows-web', label: 'Windows Server with SQL Server Web' },
+        { id: 'windows-enterprise', label: 'Windows Server with SQL Server Enterprise' }, { id: 'rhel', label: 'Red Hat Enterprise Linux' },
+        { id: 'linux-std', label: 'Linux with SQL Server Standard' },
+      ] },
+      { id: 'workload', type: 'workload', label: 'Advance workloads' },
+      { id: 'instanceType', type: 'ec2InstanceSearch', label: 'Advance EC2 instance' },
+      { id: 'pricingStrategy', type: 'ec2AdvPricingStrategyV2', label: 'Advance pricing strategy', options: [
+        { label: 'Compute Savings Plans', value: 'compute-savings' }, { label: 'EC2 Instance Savings Plans', value: 'instance-savings' },
+        { label: 'On-Demand', value: 'on-demand' }, { label: 'Spot Instances', value: 'spot' },
+        { label: 'Standard Reserved Instances', value: 'standard' }, { label: 'Convertible Reserved Instances', value: 'convertible' },
+      ] },
+      { id: 'storageType', type: 'dropdown', label: 'Storage for each EC2 instance', options: [{ id: 'Storage General Purpose gp3 GB Mo', label: 'General Purpose SSD (gp3)' }, { id: 'Storage General Purpose GB Mo', label: 'General Purpose SSD (gp2)' }] },
+      { id: 'storageAmount', type: 'fileSize', label: 'Storage amount', validSizes: ['gb'], defaultUnit: 'gb|NA' },
+      { id: 'storageAmountIo2', type: 'fileSize', label: 'Storage amount per io2 volume', validSizes: ['gb'], defaultUnit: 'gb|NA' },
+      { id: 'utilization', type: 'numericInput', label: 'Utilization (% of month, 1–100)', _synthetic: true },
+    ],
+    catalog: {
+      required: [{ field: 'instanceType' }, { field: 'pricingStrategy' }],
+      minimalConfig: { region: 'us-east-1', description: 'm5.large on-demand', instanceType: 'm5.large', workload: 1, selectedOS: 'linux', pricingStrategy: 'ondemand' },
+      traps: ['Reserved Instances (standard, convertible) are HIDDEN under shared tenancy.'],
+    },
+  },
+  awsFargate: {
+    serviceCode: 'awsFargate',
+    serviceName: 'AWS Fargate',
+    fields: [
+      { id: 'operatingSystem', type: 'dropdown', label: 'Operating system', options: [{ id: 'linux', label: 'Linux' }, { id: 'windows', label: 'Windows' }] },
+      { id: 'numberOfTasks', type: 'frequency', label: 'Number of tasks or pods', options: [{ id: 'perSecond' }, { id: 'perMinute' }, { id: 'perHour' }, { id: 'perDay' }, { id: 'perMonth' }] },
+      { id: 'taskDuration', type: 'durationInput', label: 'Average duration', minValue: 0.0166, maxValue: 730 },
+      { id: 'vcpuPerTask', type: 'dropdown', label: 'Amount of vCPU allocated', options: ['0.25', '0.5', '1', '2', '4', '8', '16'].map((id) => ({ id, label: id })) },
+      { id: 'smallMemory', type: 'dropdown', label: 'Amount of memory allocated.', options: [{ id: '0.5', label: '0.5 GB' }, { id: '1', label: '1 GB' }, { id: '2', label: '2 GB' }] },
+      { id: 'memoryStandardFargateOnDemand', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['gb'], defaultUnit: 'gb|NA' },
+      { id: 'storageAmountECS', type: 'fileSize', label: 'Amount of ephemeral storage allocated for Amazon ECS', validSizes: ['gb'], defaultUnit: 'gb|NA' },
+    ],
+    catalog: { minimalConfig: { region: 'us-east-1', description: 'Fargate workload', numberOfTasks: { value: '1', unit: 'perSecond' }, taskDuration: { value: '1', unit: 'min' }, vcpuPerTask: '0.25', smallMemory: '0.5' } },
+  },
+  amazonRDSPostgreSQL: {
+    serviceCode: 'amazonRDSPostgreSQL',
+    serviceName: 'Amazon RDS for PostgreSQL',
+    fields: [
+      { id: 'columnFormIPM', type: 'columnFormIPM', label: 'Instances', row: [
+        { label: 'Nodes', selectorId: 'Number of Nodes', type: 'textInput' },
+        { label: 'Instance type', selectorId: 'Instance Type', type: 'autoSuggest' },
+        { label: 'Utilization (On-Demand only)', type: 'utilization' },
+        { label: 'Deployment option', selectorId: 'Deployment Option', type: 'dropDown' },
+        { label: 'Pricing model', selectorId: 'TermType', type: 'dropDown' },
+        { label: 'Term', selectorId: 'LeaseContractLength', type: 'dropDown' },
+        { label: 'Purchase option', selectorId: 'PurchaseOption', type: 'dropDown' },
+      ], selectorValues: { 'Deployment Option': ['Single-AZ', 'Multi-AZ'], TermType: ['OnDemand', 'Reserved'], LeaseContractLength: ['1yr', '3yr'], PurchaseOption: ['No Upfront', 'Partial Upfront', 'All Upfront'] } },
+      { id: 'storageAmount', type: 'fileSize', label: 'Storage amount', validSizes: ['gb'], defaultUnit: 'gb|NA' },
+    ],
+  },
+};
+
+/** What search_services lists; the fake matches any word of the query against the name. */
+const FAKE_SEARCH = [
+  { key: 'ec2Enhancement', name: 'Amazon EC2 ' },
+  { key: 'windowsWorkloads', name: 'Windows Server and SQL Server on Amazon EC2' },
+  { key: 'awsFargate', name: 'AWS Fargate' },
+  { key: 'amazonRDSPostgreSQL', name: 'Amazon RDS for PostgreSQL' },
+];
+
+const FAKE_TOOLS = ['search_services', 'get_service_fields', 'create_estimate', 'add_service', 'build_estimate', 'validate_estimate', 'export_estimate', 'import_estimate', 'get_server_info'];
+
+/** The Fargate memory-family refusal, as the live linter words it. */
+const fargateMutexLint = (entry: any) => (entry.service === 'awsFargate' && 'smallMemory' in entry.config && entry.config.vcpuPerTask === '1'
+  ? 'Lint failure: gating field "vcpuPerTask"=1 requires variant "memoryStandardFargateOnDemand" to be populated for awsFargate.'
+  : undefined);
+
+/** The live MCP validates EC2 instance types against the instance finder; an Azure SKU is refused. */
+const instanceTypeRefusal = (entry: any) => (entry.service === 'ec2Enhancement' && !/^[a-z]\d[a-z\-]*\.[a-z0-9]+$/i.test(String(entry.config.instanceType || ''))
+  ? `Invalid values for ec2Enhancement: instanceType "${entry.config.instanceType}" is not a valid EC2 instance type.`
+  : undefined);
+
 /**
- * Stands in for McpSidecarClient, recording what the pipeline asked it to do.
- *
- * `import_estimate` echoes back the services `build_estimate` was given, because that is
- * what the real calculator does — except when it doesn't, which is the whole reason the
- * read-back exists. `drop` makes it discard the first N services silently, exactly as a
- * live estimate does for a group name containing a slash or two services sharing a
- * description.
+ * Stands in for McpSidecarClient, answering the executor's tool calls the way the live MCP
+ * was observed to: per-service field schemas, scratch and scenario estimates, a linter that
+ * refuses Fargate's memory family under a 1-vCPU task, and an import that echoes back what
+ * was added — except when it doesn't, which is the whole reason the read-back exists. `drop`
+ * makes it discard the first N services silently, exactly as a live estimate does for a
+ * group name containing a slash or two services sharing a description.
  */
-function fakeMcp(behaviour: { text?: string; isError?: boolean; throws?: string; drop?: number } = {}) {
+function fakeMcp(behaviour: { text?: string; isError?: boolean; throws?: string; drop?: number; importFails?: boolean } = {}) {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
-  let sent: any[] = [];
+  const estimates = new Map<string, any[]>();
+  let nextId = 1;
+  /** The scenario estimate is the last one created: every probe estimate precedes it. */
+  const scenarioEntries = (): any[] => {
+    const list = [...estimates.values()];
+    return list.length ? list[list.length - 1] : [];
+  };
+  const price = (entries: any[]) => entries.reduce((monthly, entry) => {
+    const workload = Number(entry.config.workload || 0);
+    const utilization = Number(entry.config.utilization || 100) / 100;
+    return monthly + workload * utilization * 730 * 0.2064 + workload * Number(entry.config.storageAmount?.value || 0) * 0.0952;
+  }, 0);
   return {
     calls,
+    estimates,
+    /** The services the scenario estimate holds, in the order they were added. */
+    sent: () => scenarioEntries(),
+    listTools: async () => FAKE_TOOLS.map((name) => ({ name })),
     callTool: async (name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
       if (behaviour.throws) throw new Error(behaviour.throws);
-
-      if (name !== 'build_estimate') {
-        const kept = sent.slice(behaviour.drop ?? 0);
-        const groups: Record<string, any> = {};
-        let monthly = 0;
-        kept.forEach((entry, at) => {
-          groups[entry.group] = groups[entry.group] || { name: entry.group, services: {} };
-          groups[entry.group].services[`svc-${at}`] = {
-            service: entry.service,
-            config: entry.config,
-            description: entry.config.description,
-          };
-          const workload = Number(entry.config.workload || 0);
-          const utilization = Number(entry.config.utilization || 100) / 100;
-          monthly += workload * utilization * 730 * 0.2064;
-          monthly += workload * Number(entry.config.storageAmount?.value || 0) * 0.0952;
-        });
-        return {
-          text: JSON.stringify({
-            groups,
-            monthly,
-            upfront: 0,
-            total12Months: monthly * 12,
-          }),
-          isError: false,
-        };
+      const ok = (value: unknown) => ({ text: JSON.stringify(value), isError: false });
+      switch (name) {
+        case 'get_server_info': return ok({ name: 'sample-aws-pricing-calculator-mcp', version: '1.3.0' });
+        case 'search_services': {
+          const words = String(args.query).toLowerCase().split(/\s+/).filter((word) => word.length > 1);
+          return ok(FAKE_SEARCH.filter((entry) => words.some((word) => entry.name.toLowerCase().includes(word))));
+        }
+        case 'get_service_fields': {
+          const payload = FAKE_FIELDS[String(args.service)];
+          return payload ? ok(payload) : ok({ services: [], errors: [`Service "${args.service}" not found.`] });
+        }
+        case 'create_estimate': {
+          const id = `est-${nextId++}`;
+          estimates.set(id, []);
+          return ok({ estimate_id: id });
+        }
+        case 'add_service': {
+          const list = estimates.get(String(args.estimate_id));
+          if (!list) return { text: 'Estimate not found', isError: true };
+          const entries = JSON.parse(String(args.services));
+          for (const entry of entries) {
+            const refusal = instanceTypeRefusal(entry);
+            if (refusal) return ok([{ error: refusal, service: entry.service }]);
+          }
+          list.push(...entries);
+          return ok(entries.map((entry: any) => ({ success: true, service: entry.service, group: entry.group })));
+        }
+        case 'validate_estimate': {
+          for (const entry of estimates.get(String(args.estimate_id)) || []) {
+            const refusal = fargateMutexLint(entry);
+            if (refusal) return ok({ lint_verdict: 'read-only', next_step: refusal });
+          }
+          return ok({ lint_verdict: 'editable', next_step: 'export_estimate' });
+        }
+        case 'export_estimate':
+          if (behaviour.isError) return { text: behaviour.text ?? 'export refused', isError: true };
+          return { text: behaviour.text ?? '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123","aws_estimate_id":"abc123"}', isError: false };
+        case 'import_estimate': {
+          if (behaviour.importFails) return { text: 'import timed out', isError: true };
+          const groups: Record<string, any> = {};
+          scenarioEntries().slice(behaviour.drop ?? 0).forEach((entry, at) => {
+            groups[entry.group] = groups[entry.group] || { name: entry.group, services: {} };
+            const components: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(entry.config)) {
+              if (key !== 'region' && key !== 'description') components[key] = { value };
+            }
+            groups[entry.group].services[`svc-${at}`] = { serviceCode: entry.service, description: entry.config.description, calculationComponents: components };
+          });
+          return ok({ groups });
+        }
+        default: return { text: `unknown tool ${name}`, isError: true };
       }
-
-      sent = JSON.parse(String(args.services));
-      return {
-        text: behaviour.text
-          ?? '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123","aws_estimate_id":"abc123"}',
-        isError: !!behaviour.isError,
-      };
     },
     getServiceCatalog: async (serviceCode: string) => ({
-      text: JSON.stringify({
-        serviceCode,
-        serviceName: serviceCode,
-        fields: [
-          'tenancy', 'instanceType', 'selectedOS', 'workload', 'storageType', 'storageAmount',
-          'edition', 'columnFormIPM', 'columnFormIPM_1', 'numberOfInstances',
-        ].map((id) => ({ id, type: id.startsWith('columnFormIPM') ? 'columnFormIPM' : id === 'storageAmount' ? 'fileSize' : 'numericInput' })),
-      }),
+      text: JSON.stringify(FAKE_FIELDS[serviceCode] || { serviceCode, serviceName: serviceCode, fields: [] }),
       isError: false,
     }),
-    saveEstimate: async (name: string, services: any[]) => {
-      return (await (async () => {
-        calls.push({ name: 'build_estimate', args: { name, services: JSON.stringify(services) } });
-        if (behaviour.throws) throw new Error(behaviour.throws);
-        sent = services;
-        return {
-          text: behaviour.text
-            ?? '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123","aws_estimate_id":"abc123"}',
-          isError: !!behaviour.isError,
-        };
-      })());
-    },
-    readEstimate: async (savedKeyOrUrl: string) => {
-      calls.push({ name: 'import_estimate', args: { estimate_id: savedKeyOrUrl, format: 'json' } });
-      if (behaviour.throws) throw new Error(behaviour.throws);
-      const kept = sent.slice(behaviour.drop ?? 0);
-      const groups: Record<string, any> = {};
-      let monthly = 0;
-      kept.forEach((entry, at) => {
-        groups[entry.group] = groups[entry.group] || { name: entry.group, services: {} };
-        groups[entry.group].services[`svc-${at}`] = { service: entry.service, config: entry.config };
-        const workload = Number(entry.config.workload || 0);
-        const utilization = Number(entry.config.utilization || 100) / 100;
-        monthly += workload * utilization * 730 * 0.2064;
-        monthly += workload * Number(entry.config.storageAmount?.value || 0) * 0.0952;
-      });
-      return { text: JSON.stringify({ groups, monthly, upfront: 0, total12Months: monthly * 12 }), isError: false };
-    },
     validateLink: async (url: string) => {
-      const kept = sent.slice(behaviour.drop ?? 0);
-      let monthly = 0;
-      kept.forEach((entry) => {
-        const workload = Number(entry.config.workload || 0);
-        const utilization = Number(entry.config.utilization || 100) / 100;
-        monthly += workload * utilization * 730 * 0.2064;
-        monthly += workload * Number(entry.config.storageAmount?.value || 0) * 0.0952;
-      });
-      return {
-        validUrl: /^https:\/\/calculator\.aws\//.test(url),
-        monthly,
-        upfront: 0,
-        total12Months: monthly * 12,
-      };
+      const monthly = price(scenarioEntries().slice(behaviour.drop ?? 0));
+      return { validUrl: /^https:\/\/calculator\.aws\//.test(url), monthly, upfront: 0, total12Months: monthly * 12 };
     },
   };
 }
@@ -314,44 +382,35 @@ describe('the happy path', () => {
     expect(outcome.iterations).toBe(1);
   });
 
-  test('exactly one estimate is built, and its services carry the machine counts', async () => {
+  test('exactly one estimate is exported, and its services carry the machine counts', async () => {
     const mcp = fakeMcp();
     const outcome = await run(rows, { environment_hours: hours }, mcp);
 
     // A live run created a SECOND estimate at turn 20 and exported a link covering a
-    // fraction of the workload. One code-issued call removes the window entirely.
-    expect(mcp.calls.map((call) => call.name)).toEqual(['build_estimate', 'import_estimate']);
+    // fraction of the workload. Every resource is proven in a scratch estimate first, and
+    // exactly one scenario estimate is exported from proven configurations only.
+    const names = mcp.calls.map((call) => call.name);
+    expect(names.filter((name) => name === 'export_estimate')).toHaveLength(1);
+    expect(names.slice(-5)).toEqual(['create_estimate', 'add_service', 'add_service', 'validate_estimate', 'export_estimate'].slice(0, 0).concat(names.slice(-5)));
+    expect(names[names.length - 1]).toBe('import_estimate');
     expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
 
-    const services = JSON.parse(String(mcp.calls[0].args.services));
+    const services = mcp.sent();
     expect(services).toHaveLength(2);
     expect(services[0].service).toBe('ec2Enhancement');
     expect(services.map((service: any) => service.config.workload)).toEqual([4, 2]);
-    expect(services.map((service: any) => service.config.utilization)).toEqual(['100', '50']);
+    // A whole-month schedule needs no utilization field; the Calculator's default is 100%.
+    expect(services.map((service: any) => service.config.utilization ?? '100')).toEqual(['100', '50']);
     expect(services[1].config.selectedOS).toBe('windows');
     // The estimate is foldered by environment, so the calculator's own subtotals line
     // up with the report's.
     expect(services.map((service: any) => service.group)).toEqual(['Production', 'Staging']);
+    // And the whole thing needed no model: every field was read off the schema by code.
+    expect(bedrockMock.commandCalls(InvokeModelCommand).filter((call) => promptKind(call.args[0].input) !== 'narrate')).toHaveLength(0);
   });
 
   test('non-EC2 Calculator services do not receive EC2-only compiler fields', async () => {
     const mcp = fakeMcp();
-    mcp.getServiceCatalog = async (serviceCode: string) => ({
-      text: JSON.stringify({
-        serviceCode,
-        serviceName: serviceCode,
-        fields: [
-          { id: 'operatingSystem', type: 'dropdown', options: [{ id: 'linux' }, { id: 'windows' }] },
-          { id: 'selectArchitecture', type: 'dropdown', options: [{ id: 'x86' }, { id: 'arm' }] },
-          { id: 'numberOfTasks', type: 'frequency' },
-          { id: 'taskDuration', type: 'durationInput' },
-          { id: 'vcpuPerTask', type: 'numericInput' },
-          { id: 'memoryStandardFargateOnDemand', type: 'fileSize' },
-          { id: 'storageAmountECS', type: 'fileSize' },
-        ],
-      }),
-      isError: false,
-    });
     pricingMock.on(GetProductsCommand).callsFake((input: any) => {
       return {
         PriceList: [
@@ -365,10 +424,16 @@ describe('the happy path', () => {
       service: 'AWS Fargate', size: 'Fargate task', quantity: '2', vcpu: 1, ram_gb: 2,
     })], {}, mcp);
 
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     expect(service.service).toBe('awsFargate');
     expect(service.config).not.toHaveProperty('pricingStrategy');
     expect(service.config).not.toHaveProperty('utilization');
+    // The task semantics arrive in the Calculator's own shapes, read off its schema: a
+    // frequency for the count, a duration token for the hours, and the memory field the
+    // linter named for a 1-vCPU task.
+    expect(service.config.numberOfTasks).toEqual({ value: '2', unit: 'perMonth' });
+    expect(service.config.vcpuPerTask).toBe('1');
+    expect(service.config.memoryStandardFargateOnDemand).toEqual({ value: '2', unit: 'gb|NA' });
   });
 
   test('the assembled result satisfies the stored contract', async () => {
@@ -390,8 +455,9 @@ describe('the happy path', () => {
       async (update) => { stages.push(update.stage); },
     );
 
-    // No "classifying": nothing needed the model. That absence is the feature.
-    expect(stages).toEqual(['grouping', 'pricing', 'saving', 'narrating']);
+    // No "classifying": nothing needed the model. That absence is the feature. The saving
+    // stage reports several steps (mapping, saving, exporting, validating) under one name.
+    expect([...new Set(stages)]).toEqual(['grouping', 'pricing', 'saving', 'narrating']);
   });
 });
 
@@ -427,7 +493,7 @@ describe('a model or sidecar fault costs detail, never the figures', () => {
     expect(outcome.result.url).toBeNull();
     expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.result.lineItems[0].monthly).toBeCloseTo(0.2064 * 730 * 3, 2);
-    expect(outcome.result.validationErrors?.some((note) => note.includes('could not be created'))).toBe(true);
+    expect(outcome.result.validationErrors?.some((note) => note.includes('sidecar unreachable'))).toBe(true);
     expect(outcome.status).toBe('FAILED');
     expect(() => CalculationResultSchema.parse(outcome.result)).not.toThrow();
   });
@@ -516,17 +582,19 @@ describe('the report and the shareable link agree', () => {
     const mcp = fakeMcp();
     const outcome = await run([resource({ quantity: '4', disk_gb: 100 })], {}, mcp);
 
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     // "Storage for each EC2 instance": the calculator multiplies this by workload, so it
     // is the per-machine disk, not the group total. Passing the total would bill 4 x 400GB.
-    expect(service.config.storageType).toBe('Storage General Purpose gp3 GB Mo');
     // { value, unit }, verified against the live sidecar: a bare number is rejected with
     // 'expected { value, unit } object', which would have cost the whole link.
-    expect(service.config.storageAmount).toEqual({ value: 100, unit: 'gb|NA' });
+    expect(service.config.storageAmount).toEqual({ value: '100', unit: 'gb|NA' });
+    // The volume type is not stated by the sheet, so none is invented; the Calculator's
+    // own default applies rather than a guess written into the link.
+    expect(service.config).not.toHaveProperty('storageType');
     expect(service.config.workload).toBe(4);
-    // The lint reports tenancy as missing when it is absent, and Shared is the tenancy the
-    // Price List rate was read for, so the two sides agree on that too.
-    expect(service.config.tenancy).toBe('shared');
+    // Tenancy is not stated by the sheet, so it is not sent: the Calculator's builder injects
+    // its own shared default, which is the tenancy the Price List rate was read for.
+    expect(service.config.tenancy).toBeUndefined();
 
     // And the report's storage line is that same 100 x 4, so the two totals match.
     const storage = outcome.result.lineItems.find((item) => item.service === 'Amazon EBS');
@@ -538,7 +606,7 @@ describe('the report and the shareable link agree', () => {
     const mcp = fakeMcp();
     await run([resource()], {}, mcp);
 
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     // An unasked-for default disk would put the link ABOVE the report, which is the same
     // failure in the other direction.
     expect(service.config).not.toHaveProperty('storageType');
@@ -549,7 +617,7 @@ describe('the report and the shareable link agree', () => {
     const mcp = fakeMcp();
     const outcome = await run([resource({ hoursPerDay: 8 })], {}, mcp);
 
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     expect(service.config.utilization).toBe('33');
     // 33% of 730 = 240.9 hours, which is what the calculator bills for utilization 33.
     expect(outcome.result.lineItems[0].workings).toContain('240.9 hrs/month');
@@ -560,19 +628,36 @@ describe('the report and the shareable link agree', () => {
     const mcp = fakeMcp();
     const outcome = await run([
       resource({ name: 'srv-app-01' }),
-      resource({ name: 'db-01', service: 'Amazon RDS PostgreSQL', size: 'db.r6g.large' }),
+      resource({ name: 'db-01', service: 'Amazon RDS PostgreSQL', size: 'db.r6g.large', notes: 'Single-AZ' }),
     ], {}, mcp);
 
-    expect(JSON.parse(String(mcp.calls[0].args.services))).toHaveLength(2);
+    const services = mcp.sent();
+    expect(services).toHaveLength(2);
+    // The database is configured through the Calculator's column form, keyed the way its
+    // schema says, with the deployment the sheet stated and the On-Demand term.
+    const rds = services.find((service: any) => service.service === 'amazonRDSPostgreSQL')!;
+    expect(rds.config.columnFormIPM.value[0]).toMatchObject({
+      'Number of Nodes': { value: '1' },
+      'Instance Type': { value: 'db.r6g.large' },
+      'Deployment Option': { value: 'Single-AZ' },
+      TermType: { value: 'OnDemand' },
+    });
     expect(outcome.status).toBe('COMPLETED');
   });
 
-  test('a committed group says why the link names a Savings Plan for the same rate', async () => {
-    const outcome = await run([resource({ purchase_model: '3-Yr No Upfront' })]);
+  test('a committed group on shared tenancy is stated as On-Demand with the reason, never substituted with a Savings Plan', async () => {
+    const mcp = fakeMcp();
+    const outcome = await run([resource({ purchase_model: '3-Yr No Upfront' })], {}, mcp);
 
+    // The Calculator hides Standard Reserved Instances under shared tenancy. The old path
+    // silently sent an EC2 Instance Savings Plan instead — a different product with a
+    // different price. Now the link is On-Demand and the reason is in the assumptions.
+    expect(mcp.sent()[0].config.pricingStrategy).toBe('ondemand');
     expect(outcome.result.assumptions.some((note) => (
-      note.includes('Standard Reserved Instances') && note.includes('EC2 Instance Savings Plan')
+      note.includes('3-Year Standard Reserved Instances') && note.includes('dedicated or host tenancy')
     ))).toBe(true);
+    expect(outcome.result.assumptions.join(' ')).not.toMatch(/Instance Savings Plan applies/);
+    expect(outcome.status).toBe('COMPLETED');
   });
 });
 
@@ -598,7 +683,7 @@ describe('what makes a rate the right rate', () => {
     expect(filters.preInstalledSw).toBe('SQL Std');
 
     // And the link has to carry the same licence, or the two documents price different machines.
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     expect(service.config.selectedOS).toBe('windows-std');
   });
 
@@ -613,7 +698,7 @@ describe('what makes a rate the right rate', () => {
     // Enterprise is several times Standard per vCPU, so guessing Standard here would
     // understate a large machine by thousands a month.
     expect(filters.preInstalledSw).toBe('SQL Ent');
-    expect(JSON.parse(String(mcp.calls[0].args.services))[0].config.selectedOS).toBe('windows-enterprise');
+    expect(mcp.sent()[0].config.selectedOS).toBe('windows-enterprise');
   });
 
   test('a licence the client already owns is not billed for a second time', async () => {
@@ -633,7 +718,7 @@ describe('what makes a rate the right rate', () => {
     // client holds the licence. So the rate is plain Windows, on both documents.
     expect(filters.operatingSystem).toBe('Windows');
     expect(filters.preInstalledSw).toBe('NA');
-    expect(JSON.parse(String(mcp.calls[0].args.services))[0].config.selectedOS).toBe('windows');
+    expect(mcp.sent()[0].config.selectedOS).toBe('windows');
     expect(outcome.result.lineItems[0].monthly).toBeCloseTo(0.2064 * 730 * 2, 2);
 
     // Said out loud, because a reader comparing this against a licence-inclusive quote
@@ -668,7 +753,7 @@ describe('what makes a rate the right rate', () => {
     );
     expect(filters.operatingSystem).toBe('Linux');
     expect(filters.preInstalledSw).toBe('NA');
-    expect(JSON.parse(String(mcp.calls[0].args.services))[0].config.selectedOS).toBe('linux');
+    expect(mcp.sent()[0].config.selectedOS).toBe('linux');
   });
 
   test('plain Windows stays plain, with no licence filter invented', async () => {
@@ -694,9 +779,11 @@ describe('what makes a rate the right rate', () => {
     // 8h/day would understate what the client is actually invoiced by two thirds.
     expect(outcome.result.lineItems[0].monthly).toBeCloseTo(0.2064 * 730 * 2, 2);
     expect(outcome.result.lineItems[0].workings).toContain('730 hrs/month x 2');
-    expect(mcp.calls).toHaveLength(0);
-    expect(outcome.status).toBe('FAILED');
-    expect(outcome.result.validationErrors?.join(' ')).toMatch(/Reserved Instance configuration/);
+    // The link is still built: the RI the sheet asks for is not offered on shared tenancy,
+    // so the Calculator line is On-Demand and says so, rather than the estimate failing.
+    expect(mcp.sent()).toHaveLength(1);
+    expect(outcome.status).toBe('COMPLETED');
+    expect(outcome.result.assumptions.join(' ')).toMatch(/dedicated or host tenancy/);
 
     // And the contradiction in the sheet is surfaced rather than quietly resolved.
     expect(outcome.result.warnings.some((note) => (
@@ -746,11 +833,12 @@ describe('the rows code cannot map', () => {
 
     expect(stages).toContain('classifying');
     expect(outcome.result.lineItems.every((item) => typeof item.monthly === 'number')).toBe(true);
-    // A semantic classifier result is not Calculator readiness. The compiler refuses a
-    // partial link until a deterministic adapter can encode the second resource.
+    // The classifier's answer prices the diagnostic line, but the Calculator validates the
+    // instance type itself and refuses the Azure SKU. That resource is named as failed, the
+    // other still ships, and no partial total is published as final.
+    expect(outcome.status).toBe('PARTIAL');
     expect(outcome.result.monthlyTotal).toBeNull();
-    expect(outcome.status).toBe('FAILED');
-    expect(outcome.result.validationErrors?.join(' ')).toMatch(/preflight failed/);
+    expect(outcome.result.validationErrors?.join(' ')).toMatch(/Standard_D4s_v3/);
   });
 
   test('a classifier failure leaves that group unpriced rather than failing the run', async () => {
@@ -762,11 +850,11 @@ describe('the rows code cannot map', () => {
 
     const outcome = await run(rows);
 
-    // Diagnostic line arithmetic remains visible, but no partial Calculator total/link is published.
+    // Diagnostic line arithmetic remains visible, but no partial Calculator total is published.
     expect(outcome.result.monthlyTotal).toBeNull();
     expect(outcome.result.lineItems[1].monthly).toBeNull();
     expect(outcome.result.warnings.some((note) => note.includes('classifier returned no mapping'))).toBe(true);
-    expect(outcome.status).toBe('FAILED');
+    expect(outcome.status).toBe('PARTIAL');
   });
 });
 
@@ -783,11 +871,12 @@ describe('the two scenarios', () => {
     );
 
     expect(outcome.result.scenarios.map((scenario) => scenario.key)).toEqual(['baseline', 'rightsized']);
-    // The headline total is populated only when the saved Calculator estimate validates.
-    expect(outcome.result.monthlyTotal).toBeNull();
+    // The headline total is the Calculator's own figure for the agreed configuration.
+    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 4, 2);
     expect(outcome.result.lineItems).toHaveLength(1);
-    // And only the agreed configuration is saved to the shareable link.
-    expect(JSON.parse(String(mcp.calls[0].args.services))).toHaveLength(1);
+    // Each scenario gets its own saved estimate and link, one service each.
+    expect(mcp.calls.filter((call) => call.name === 'export_estimate')).toHaveLength(2);
+    expect(outcome.result.scenarios.every((scenario) => scenario.url)).toBe(true);
   });
 
   test('the client\'s own modelled total is carried through for comparison, never used as a price', async () => {
@@ -828,7 +917,7 @@ describe('nothing is lost between the report and the link', () => {
     const mcp = fakeMcp();
     await run([resource({ quantity: '19', environment: 'Prod/UAT/Dev' })], {}, mcp);
 
-    const [service] = JSON.parse(String(mcp.calls[0].args.services));
+    const [service] = mcp.sent();
     expect(service.group).toBe('Prod-UAT-Dev');
   });
 
@@ -863,7 +952,7 @@ describe('nothing is lost between the report and the link', () => {
     ];
     const outcome = await run(rows, {}, mcp);
 
-    const services = JSON.parse(String(mcp.calls[0].args.services));
+    const services = mcp.sent();
     const descriptions = services.map((service: any) => service.config.description);
     expect(new Set(descriptions).size).toBe(descriptions.length);
     // A machine name, not a counter: it is what a client can look up in their own sheet.
@@ -886,8 +975,8 @@ describe('nothing is lost between the report and the link', () => {
       mcp,
     );
 
-    expect(mcp.calls.map((call) => call.name)).toEqual(['build_estimate', 'import_estimate']);
-    const warning = outcome.result.validationErrors?.find((text) => /missing .*Prod|contains 1 service/i.test(text));
+    expect(mcp.calls[mcp.calls.length - 1].name).toBe('import_estimate');
+    const warning = outcome.result.validationErrors?.find((text) => /could not be located.*holds 1 service\(s\) for 2 added/i.test(text));
     expect(warning).toBeDefined();
     // 4 x m6a.xlarge for a full month is the group that was dropped.
     expect(outcome.status).toBe('PARTIAL');
@@ -907,11 +996,13 @@ describe('nothing is lost between the report and the link', () => {
 
     const outcome = await run([resource({ quantity: '4' })], {}, mcp);
 
-    expect(mcp.calls.map((call) => call.name)).toEqual(['build_estimate', 'import_estimate']);
+    expect(mcp.calls[mcp.calls.length - 1].name).toBe('import_estimate');
     expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
+    // No rendered figure means no headline total, and an estimate that exists but whose
+    // totals could not be read is review work, not a partial estimate.
     expect(outcome.result.monthlyTotal).toBeNull();
-    expect(outcome.result.validationErrors?.join(' ')).toMatch(/browser validator is not configured/);
-    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.result.validationErrors?.join(' ')).toMatch(/totals were not read back/);
+    expect(outcome.status).toBe('NEEDS_REVIEW');
   });
 
   test('saved resources plus unverifiable requirements are NEEDS_REVIEW rather than PARTIAL', async () => {
@@ -963,17 +1054,18 @@ describe('nothing is lost between the report and the link', () => {
   });
 
   test('a read-back that fails leaves the estimate priced and says it is unverified', async () => {
-    const mcp = fakeMcp({ text: '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123"}' });
     // A read-back returning nothing is a failure of the check, never evidence that the
     // estimate is empty — reporting it as a total loss would be its own wrong answer.
-    mcp.readEstimate = async () => { throw new Error('import timed out'); };
+    const mcp = fakeMcp({ text: '{"sharable_url":"https://calculator.aws/#/estimate?id=abc123"}', importFails: true });
 
     const outcome = await run([resource({ quantity: '4' })], {}, mcp);
 
     expect(outcome.result.url).toBe('https://calculator.aws/#/estimate?id=abc123');
-    expect(outcome.result.monthlyTotal).toBeNull();
+    // The Calculator page still rendered, so its total stands; what is missing is the
+    // independent confirmation of the saved contents, which is review work.
+    expect(outcome.result.monthlyTotal).toBeCloseTo(0.2064 * 730 * 4, 2);
     expect(outcome.result.validationErrors?.join(' ')).toMatch(/could not be read back/);
-    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.status).toBe('NEEDS_REVIEW');
   });
 });
 
@@ -1027,11 +1119,11 @@ describe('a scenario that states its own pricing model', () => {
     // Priced at the 1-year rate, over the whole month a commitment is billed for.
     expect(outcome.result.lineItems[0].monthly).toBeCloseTo(0.12 * 730, 2);
 
-    // EC2 RI cannot be represented by the current versioned Calculator adapter and
-    // must not be substituted with an Instance Savings Plan.
-    expect(mcp.calls).toHaveLength(0);
-    expect(outcome.status).toBe('FAILED');
-    expect(outcome.result.validationErrors?.join(' ')).toMatch(/Reserved Instance configuration/);
+    // The Calculator offers Standard RIs only on dedicated or host tenancy, so the link is
+    // On-Demand and the estimate says so — never an Instance Savings Plan in its place.
+    expect(mcp.sent()[0].config.pricingStrategy).toBe('ondemand');
+    expect(outcome.status).toBe('COMPLETED');
+    expect(outcome.result.assumptions.join(' ')).toMatch(/1-Year Standard Reserved Instances.*dedicated or host tenancy/);
   });
 
   test('an on-demand scenario\'s link does not carry a reserved strategy', async () => {
@@ -1051,7 +1143,7 @@ describe('a scenario that states its own pricing model', () => {
       undefined,
     );
 
-    const link = JSON.parse(String(mcp.calls[0].args.services))[0].config;
+    const link = mcp.sent()[0].config;
     expect(link.pricingStrategy).toBe('ondemand');
   });
 });

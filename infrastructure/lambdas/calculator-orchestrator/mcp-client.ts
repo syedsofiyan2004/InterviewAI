@@ -66,6 +66,10 @@ export interface McpToolResult {
 }
 
 export interface CalculatorGateway {
+  /** The tool surface the installed MCP exposes; the executor discovers roles from it. */
+  listTools(): Promise<Array<{ name: string }>>;
+  /** One tool call. Tool-level refusals come back as `isError`, never thrown. */
+  callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<McpToolResult>;
   getServiceCatalog(serviceCode: string): Promise<McpToolResult>;
   saveEstimate(name: string, services: Array<{ service: string; group: string; config: Record<string, unknown> }>): Promise<McpToolResult>;
   readEstimate(savedKeyOrUrl: string): Promise<McpToolResult>;

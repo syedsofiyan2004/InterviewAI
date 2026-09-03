@@ -19,6 +19,7 @@ import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { analyseWorkbook } from './calculator-workbook';
 import { McpSidecarClient } from '../calculator-orchestrator/mcp-client';
+import { enrichPlanWithCalculatorPreflight } from './calculator-preflight';
 import { parseServiceCatalog } from '../calculator-orchestrator/calculator-catalog';
 import {
   applyRequirementPatches,
@@ -321,13 +322,34 @@ async function createCalculationInternal(
   }
 
   const now = Date.now();
-  const planV2 = buildInitialPlan({
+  const initialPlan = buildInitialPlan({
     workbookId: workbookHash || `manual:${calculationId}`,
     resources: planResources.length ? planResources : resources,
     workbook,
     requestedPlan: input.plan,
     defaultRegion: input.region,
   });
+  // Before a review, the Calculator's own schema is asked what each resource still lacks, so
+  // the reviewer answers those questions here rather than reading them off a PARTIAL estimate.
+  // Time-boxed and non-fatal: a slow or unreachable sidecar costs the extra questions only.
+  let planV2 = initialPlan;
+  if (!startWorker && SIDECAR_FUNCTION_NAME) {
+    try {
+      const enriched = await enrichPlanWithCalculatorPreflight(
+        initialPlan,
+        planResources.length ? planResources : resources,
+        input.region || workbook?.primary_region || 'ap-south-1',
+        new McpSidecarClient(SIDECAR_FUNCTION_NAME),
+        resolveEnvironmentHours(input.environment_hours),
+      );
+      planV2 = enriched.plan;
+      if (enriched.added || enriched.unapplied.length) {
+        console.log(`[createCalculation] calculator preflight added ${enriched.added} question(s); ${enriched.unapplied.length} Calculator input(s) have no plan field yet.`);
+      }
+    } catch (error) {
+      console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
+    }
+  }
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,

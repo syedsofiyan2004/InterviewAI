@@ -1,0 +1,87 @@
+/**
+ * Semantic preflight: the executor's mapper run without an estimate, so the gaps become typed
+ * questions before anything is built. The fake MCP is the same shape as in the executor tests.
+ */
+
+import { preflightResources } from '../lambdas/aws-calculator-mcp-executor/preflight';
+import type { SemanticResource } from '../lambdas/aws-calculator-mcp-executor/types';
+
+const EC2_FIELDS = {
+  serviceCode: 'ec2Enhancement',
+  serviceName: 'Amazon EC2',
+  fields: [
+    { id: 'selectedOS', type: 'dropdown', label: 'Operating system', options: [{ id: 'linux', label: 'Linux' }, { id: 'windows', label: 'Windows Server' }] },
+    { id: 'workload', type: 'workload', label: 'Advance workloads' },
+    { id: 'instanceType', type: 'ec2InstanceSearch', label: 'Advance EC2 instance' },
+    { id: 'pricingStrategy', type: 'ec2AdvPricingStrategyV2', label: 'Advance pricing strategy', options: [{ label: 'On-Demand', value: 'on-demand' }] },
+  ],
+  catalog: { required: [{ field: 'instanceType' }, { field: 'pricingStrategy' }], minimalConfig: { region: 'us-east-1', description: 'x', instanceType: 'm5.large', workload: 1, selectedOS: 'linux', pricingStrategy: 'ondemand' } },
+};
+const RDS_FIELDS = {
+  serviceCode: 'amazonRDSPostgreSQL',
+  serviceName: 'Amazon RDS for PostgreSQL',
+  fields: [
+    { id: 'columnFormIPM', type: 'columnFormIPM', label: 'Instances', row: [
+      { label: 'Nodes', selectorId: 'Number of Nodes', type: 'textInput' },
+      { label: 'Instance type', selectorId: 'Instance Type', type: 'autoSuggest' },
+      { label: 'Deployment option', selectorId: 'Deployment Option', type: 'dropDown' },
+      { label: 'Pricing model', selectorId: 'TermType', type: 'dropDown' },
+    ], selectorValues: { 'Deployment Option': ['Single-AZ', 'Multi-AZ'], TermType: ['OnDemand', 'Reserved'], 'Instance Type': ['db.r6g.large', 'db.r6g.xlarge', 'db.t3.medium'] } },
+  ],
+};
+
+function fakeGateway() {
+  return {
+    listTools: async () => ['search_services', 'get_service_fields', 'create_estimate', 'add_service', 'validate_estimate', 'export_estimate', 'import_estimate', 'get_server_info'].map((name) => ({ name })),
+    callTool: async (name: string, args: Record<string, unknown>) => {
+      const ok = (value: unknown) => ({ text: JSON.stringify(value), isError: false });
+      if (name === 'get_server_info') return ok({ name: 'mcp', version: '1.3.0' });
+      if (name === 'search_services') return ok(String(args.query).includes('EC2') ? [{ key: 'ec2Enhancement', name: 'Amazon EC2 ' }] : String(args.query).includes('RDS') ? [{ key: 'amazonRDSPostgreSQL', name: 'Amazon RDS for PostgreSQL' }] : []);
+      if (name === 'get_service_fields') {
+        const code = String(args.service);
+        if (code === 'ec2Enhancement') return ok(EC2_FIELDS);
+        if (code === 'amazonRDSPostgreSQL') return ok(RDS_FIELDS);
+        return ok({ services: [], errors: [`Service "${code}" not found.`] });
+      }
+      return { text: `unexpected ${name} during preflight`, isError: true };
+    },
+  };
+}
+
+describe('semantic preflight', () => {
+  it('asks for the instance class an EC2 row lacks, as a searchable control, and never touches an estimate', async () => {
+    const gateway = fakeGateway();
+    const calls: string[] = [];
+    const original = gateway.callTool;
+    gateway.callTool = async (name, args) => { calls.push(name); return original(name, args); };
+    const report = await preflightResources([
+      { resourceId: 'ec2-no-type', service: 'Amazon EC2', region: 'ap-south-1', configuration: { instanceCount: 3, operatingSystem: 'Linux' } },
+      { resourceId: 'ec2-ok', service: 'Amazon EC2', region: 'ap-south-1', configuration: { instanceType: 'm6i.large', instanceCount: 1, operatingSystem: 'Linux' } },
+    ], gateway, { fetchDefinition: async () => undefined });
+
+    expect(report.ready).toBe(false);
+    expect(report.resources.find((entry) => entry.resourceId === 'ec2-ok')).toMatchObject({ ready: true, mapping: 'deterministic', questions: [] });
+    const [question] = report.resources.find((entry) => entry.resourceId === 'ec2-no-type')!.questions;
+    expect(question).toMatchObject({ label: 'Advance EC2 instance', target: 'instanceType', control: 'searchable', impact: 'high' });
+    expect(calls).not.toContain('create_estimate');
+    expect(calls).not.toContain('add_service');
+  });
+
+  it('offers the schema\'s own choices for a column-form cell the resource left unstated', async () => {
+    const report = await preflightResources([
+      { resourceId: 'db', service: 'Amazon RDS for PostgreSQL', region: 'ap-south-1', configuration: { instanceType: 'db.r6g.large', nodeCount: 2, engine: 'PostgreSQL' } },
+    ], fakeGateway(), { fetchDefinition: async () => undefined });
+    const [question] = report.questions;
+    expect(question).toMatchObject({ resourceId: 'db', label: 'Deployment option', control: 'dropdown', target: 'columnFormIPM.Deployment Option' });
+    expect(question.options).toEqual([{ id: 'Single-AZ', label: 'Single-AZ' }, { id: 'Multi-AZ', label: 'Multi-AZ' }]);
+    expect(question.recommended).toBeUndefined();
+  });
+
+  it('reports a resource whose service the Calculator does not list as blocked, with the reason', async () => {
+    const report = await preflightResources([
+      { resourceId: 'x', service: 'Amazon Nonexistent', region: 'ap-south-1', configuration: { instanceCount: 1 } },
+    ], fakeGateway(), { fetchDefinition: async () => undefined });
+    expect(report.resources[0]).toMatchObject({ ready: false, mapping: 'blocked' });
+    expect(report.resources[0].notes.join(' ')).toMatch(/no service matching/);
+  });
+});

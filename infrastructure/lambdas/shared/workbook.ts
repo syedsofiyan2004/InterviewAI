@@ -154,7 +154,10 @@ export async function readWorkbookDocument(buffer: Buffer, fileName: string): Pr
   try {
     // Lazy so the api-handler bundle only pays for exceljs on a request that
     // actually uploads a sheet.
-    const ExcelJS = await import('exceljs');
+    // exceljs is a CommonJS package: bundled by esbuild the namespace IS the module, but under
+    // a native ESM loader (the local tsx runners) its classes sit on `default`. Both are read.
+    const loaded = await import('exceljs') as typeof import('exceljs') & { default?: typeof import('exceljs') };
+    const ExcelJS = loaded.default?.Workbook ? loaded.default : loaded;
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer as never);
 
