@@ -83,6 +83,7 @@ contractTest('every Digital Assets period saves and structurally validates every
   const resources = materializePlanResources(analysis.resources, {
     requirements: [
       { scope: ['service:SageMaker'], field: 'sagemaker.inference_configuration', expected: { workloadType: 'real-time inference', instanceType: 'ml.g5.xlarge' } },
+      { scope: ['service:Lambda'], field: 'lambda.execution_profile', expected: { memoryMb: 128, durationMs: 25 } },
       { scope: ['service:Bedrock'], field: 'bedrock.model', expected: 'Anthropic: Claude Sonnet 4' },
       { scope: ['service:Bedrock'], field: 'bedrock.tokens_per_call', expected: { inputTokens: 2000, outputTokens: 500 } },
       { scope: ['service:Cognito'], field: 'cognito.tier', expected: { tier: 'Essentials', monthlyTokenRequests: 1_000_000 } },
@@ -178,6 +179,7 @@ contractTest('the production pipeline saves and reads back the full Digital Asse
         source: 'user',
         requirements: [
           { scope: ['service:SageMaker'], field: 'sagemaker.inference_configuration', expected: { workloadType: 'real-time inference', instanceType: 'ml.g5.xlarge' } },
+          { scope: ['service:Lambda'], field: 'lambda.execution_profile', expected: { memoryMb: 128, durationMs: 25 } },
           { scope: ['service:Bedrock'], field: 'bedrock.model', expected: 'Anthropic: Claude Sonnet 4' },
           { scope: ['service:Bedrock'], field: 'bedrock.tokens_per_call', expected: { inputTokens: 2000, outputTokens: 500 } },
           { scope: ['service:Cognito'], field: 'cognito.tier', expected: { tier: 'Essentials', monthlyTokenRequests: 1_000_000 } },
