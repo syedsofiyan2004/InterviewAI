@@ -88,6 +88,27 @@ describe('machine groups', () => {
     expect(cognito).toEqual({ usageCount: 50_000, usageFrequency: 'perMonth', usageBasis: 'monthly active users (MAU)' });
   });
 
+  it('carries Review answers onto semantic keys, overriding what the sheet left unsaid', () => {
+    const lambda = configurationOf(group({
+      service: 'AWS Lambda',
+      quantities: [{ unit: 'requests/month', amount: 14_785_500, originalValue: 177_426_000, originalPeriod: 'year', basis: 'invocations', conversions: [] }],
+      configuration: { 'lambda.execution_profile': { memoryMb: 512, durationMs: 200 } },
+    }));
+    expect(lambda).toMatchObject({ requestCount: 177_426_000, requestFrequency: 'perYear', memoryMb: 512, requestDurationMs: 200 });
+
+    const sagemaker = configurationOf(group({
+      service: 'Amazon SageMaker',
+      configuration: { 'sagemaker.inference_configuration': { workloadType: 'real-time inference', instanceType: 'ml.g5.xlarge', instancesPerEndpoint: 2, modelsPerEndpoint: 1, modelsDeployed: 3 } },
+    }));
+    expect(sagemaker).toMatchObject({ instanceType: 'ml.g5.xlarge', instanceCount: 2, modelsPerEndpoint: 1, modelsDeployed: 3, workloadType: 'real-time inference' });
+
+    const database = configurationOf(group({ service: 'Amazon RDS', size: 'db.r6g.large', os: 'PostgreSQL', configuration: { 'database.multi_az': true } }));
+    expect(database.deployment).toBe('Multi-AZ');
+
+    const bedrock = configurationOf(group({ service: 'Amazon Bedrock', configuration: { 'bedrock.model': 'Anthropic: Claude Sonnet 4', 'bedrock.tokens_per_call': { inputTokens: 2000, outputTokens: 500 } } }));
+    expect(bedrock).toMatchObject({ model: 'Anthropic: Claude Sonnet 4', inputTokens: 2000, outputTokens: 500 });
+  });
+
   it('carries the EBS volume type only when the sheet names one', () => {
     expect(configurationOf(group({ size: 'm6a.large', diskGb: 100, details: ['Data storage: 100 GB gp3'] })).storageType).toBe('gp3');
     expect(configurationOf(group({ size: 'm6a.large', diskGb: 100 })).storageType).toBeUndefined();

@@ -249,7 +249,52 @@ export function configurationOf(group: ResourceGroup): Record<string, string | n
         break;
     }
   }
+  applyAnsweredRequirements(group, config);
   return config;
+}
+
+/** Review-answer keys whose wording differs from the semantic vocabulary's. */
+const ANSWER_KEY_RENAMES: Record<string, string> = {
+  durationMs: 'requestDurationMs',
+  instancesPerEndpoint: 'instanceCount',
+  multi_az: 'deployment',
+};
+
+const camel = (text: string) => text.replace(/[_\-\s]+([a-zA-Z0-9])/g, (_, letter: string) => letter.toUpperCase());
+
+/**
+ * Review and chat answers, from the resource's configuration onto semantic keys.
+ *
+ * A reviewer's answer is stored on the row under its requirement field —
+ * `configuration['lambda.execution_profile'] = { memoryMb: 512, durationMs: 200 }` — and it is
+ * the most authoritative statement about the resource there is: a person made it, in reply
+ * to a question about exactly this gap. Every such answer becomes a semantic key. Keys the
+ * vocabulary knows (memory, request duration, instance class, count) map by code; the rest
+ * travel as stated for a model to place against the schema. Nothing is converted.
+ */
+function applyAnsweredRequirements(group: ResourceGroup, config: Record<string, string | number | boolean>): void {
+  for (const [field, answer] of Object.entries(group.configuration || {})) {
+    if (!field.includes('.') || field === 'resource.exclude' || answer === undefined || answer === null) continue;
+    const place = (key: string, value: unknown) => {
+      if (value === undefined || value === null || value === '') return;
+      const semanticKey = ANSWER_KEY_RENAMES[key] || camel(key);
+      if (typeof value === 'boolean') {
+        if (semanticKey === 'deployment') config.deployment = value ? 'Multi-AZ' : 'Single-AZ';
+        else config[semanticKey] = value;
+        return;
+      }
+      if (typeof value === 'number' || typeof value === 'string') {
+        // An answer overrides what the sheet said: the question was asked because the sheet
+        // was silent or ambiguous, and the person answering saw both.
+        config[semanticKey] = value;
+      }
+    };
+    if (answer && typeof answer === 'object' && !Array.isArray(answer)) {
+      for (const [key, value] of Object.entries(answer as Record<string, unknown>)) place(key, value);
+    } else {
+      place(field.split('.').pop() || field, answer);
+    }
+  }
 }
 
 /** One line a reader recognises the group by. */
