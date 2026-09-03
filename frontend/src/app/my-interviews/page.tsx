@@ -48,10 +48,6 @@ export default function MyInterviewsPage() {
 
   const openInterview = async (item: ScheduledInterview) => {
     if (item.cancelled_at) return;
-    if (item.intelligence_id) {
-      router.push(`/interviews/intelligence/view?id=${encodeURIComponent(item.intelligence_id)}`);
-      return;
-    }
 
     setOpeningId(item.keka_interview_id);
     setError(null);
