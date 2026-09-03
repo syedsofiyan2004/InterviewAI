@@ -46,6 +46,7 @@ import { selectQuestionsFromBank, detectInterviewLevel, SelectedBankQuestion } f
 import {
   queryScheduledForPanelist,
   findScheduledByInterviewId,
+  findScheduledWithMeetingByKekaInterviewId,
   claimScheduledProvisioning,
   clearScheduledProvisioning,
   releaseScheduledProvisioning,
@@ -4445,6 +4446,31 @@ async function syncIntelligenceTeamsTranscript(id: string | undefined, event: AP
       };
     } catch (error) {
       console.warn('[Keka Hire] Could not refresh interview metadata before Teams sync:', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  if (
+    itemForSync.keka.interviewId
+    && !itemForSync.teams.meetingUrl
+    && !itemForSync.teams.meetingId
+  ) {
+    try {
+      const scheduled = await findScheduledWithMeetingByKekaInterviewId(itemForSync.keka.interviewId);
+      if (scheduled) {
+        itemForSync = {
+          ...itemForSync,
+          teams: {
+            ...itemForSync.teams,
+            meetingUrl: itemForSync.teams.meetingUrl || scheduled.meeting_url,
+            meetingId: itemForSync.teams.meetingId || scheduled.meeting_id,
+            organizerEmail: itemForSync.teams.organizerEmail || scheduled.organizer_email,
+            organizerUserId: itemForSync.teams.organizerUserId || scheduled.organizer_user_id,
+            scheduledAt: itemForSync.teams.scheduledAt || new Date(scheduled.scheduled_at).toISOString(),
+          },
+        };
+      }
+    } catch (error) {
+      console.warn('[My Interviews] Could not backfill Teams meeting metadata from scheduled interview row:', error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
