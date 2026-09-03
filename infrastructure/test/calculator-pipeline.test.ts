@@ -28,6 +28,22 @@ import {
  *    estimate, because the figures are arithmetic that has already happened.
  */
 
+// The executor reads a service's unit tokens from the Calculator's definition CDN. A unit test
+// must not depend on that network call — one slow run of this file took 42 minutes waiting on
+// it — so the definition is served from a fixture: the real taskDuration component, whose
+// missing token list is the bug the client exists to prevent.
+jest.mock('../lambdas/calculator-orchestrator/calculator-definitions', () => {
+  const actual = jest.requireActual('../lambdas/calculator-orchestrator/calculator-definitions');
+  const fargate = actual.parseDefinition('awsFargate', {
+    templates: [{ cards: [{ inputSection: { components: [{
+      type: 'input', subType: 'durationInput', id: 'taskDuration', label: 'Average duration',
+      dropDownDuration: [{ label: 'seconds', value: 'sec' }, { label: 'minutes', value: 'min' }, { label: 'hours', value: 'hr' }, { label: 'days', value: 'day' }],
+      defaultDuration: 'min', validations: { required: true, minValue: 0.0166, maxValue: 730 },
+    }] } }] }],
+  });
+  return { ...actual, fetchServiceDefinition: async (code: string) => (code === 'awsFargate' ? fargate : undefined) };
+});
+
 const bedrockMock = mockClient(BedrockRuntimeClient);
 const pricingMock = mockClient(PricingClient);
 

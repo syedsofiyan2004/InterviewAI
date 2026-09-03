@@ -205,8 +205,20 @@ function render(
       const period = companion(entry.frequencyKey);
       if (period === undefined) return { ok: false, reason: `${entry.key} needs a period (${entry.frequencyKey}) for "${field.label}"` };
       const unit = matchFrequency(field.options, period);
-      if (!unit) return { ok: false, reason: `period "${period}" is not one "${field.label}" accepts (${(field.options || []).map((option) => option.id).join(', ')})` };
-      return { ok: true, value: { value: String(value), unit } };
+      if (unit) return { ok: true, value: { value: String(value), unit } };
+      // Sheets state annual volumes and the Calculator has no per-year option. Dividing by
+      // twelve is representation, not a new number, and it is done here in the open — with
+      // the arithmetic written into the notes — rather than left to a model.
+      const monthly = matchFrequency(field.options, 'perMonth');
+      if (/year|annual/i.test(String(period)) && monthly) {
+        const perMonth = Math.round((Number(value) / 12) * 1_000_000) / 1_000_000;
+        return {
+          ok: true,
+          value: { value: String(perMonth), unit: monthly },
+          note: `${value} per year for "${field.label}" sent as ${perMonth} per month (÷ 12): the Calculator offers no per-year period`,
+        };
+      }
+      return { ok: false, reason: `period "${period}" is not one "${field.label}" accepts (${(field.options || []).map((option) => option.id).join(', ')})` };
     }
     case 'durationInput': {
       const unitWord = companion(entry.unitKey) ?? entry.impliedUnit;

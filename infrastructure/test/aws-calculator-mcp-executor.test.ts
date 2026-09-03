@@ -457,6 +457,29 @@ describe('service names the Calculator does not list as a phrase', () => {
   });
 });
 
+describe('an annual volume against a Calculator with no per-year period', () => {
+  it('is divided by twelve by code, with the arithmetic in the notes, and needs no model', async () => {
+    const LAMBDA_FIELDS = {
+      serviceCode: 'aWSLambda', serviceName: 'AWS Lambda',
+      fields: [
+        { id: 'selectArchitectureRequests', type: 'dropdown', label: 'Architecture', options: [{ id: '1' }, { id: '2' }] },
+        { id: 'numberOfRequests', type: 'frequency', label: 'Number of requests', options: [{ id: 'perMonth' }, { id: 'millionPerMonth' }] },
+        { id: 'durationOfEachRequest', type: 'numericInput', label: 'Duration of each request (in ms)' },
+        { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
+        { id: 'selectArchitectureConcurrency', type: 'dropdown', label: 'Architecture', options: [{ id: '1' }, { id: '2' }] },
+      ],
+      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
+    };
+    const gateway = fakeGateway({ fields: { aWSLambda: LAMBDA_FIELDS } });
+    const lambda: SemanticResource = { resourceId: 'bff', service: 'AWS Lambda', region: 'ap-south-1', configuration: { requestCount: 177_426_000, requestFrequency: 'perYear', memoryMb: 512, requestDurationMs: 200 } };
+    const result = await executeScenario({ scenarioId: 'l', estimateName: 'L', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [lambda] }, gateway, noModels);
+    expect(result.status).toBe('COMPLETED');
+    expect(result.resources[0].finalConfig).toMatchObject({ numberOfRequests: { value: '14785500', unit: 'perMonth' }, sizeOfMemoryAllocated: { value: '512', unit: 'mb|NA' }, durationOfEachRequest: '200' });
+    expect(result.resources[0].notes.join(' ')).toMatch(/177426000 per year .* 14785500 per month/);
+    expect(result.resources[0].tiers).toEqual([]);
+  });
+});
+
 describe('a model may not invent a quantity', () => {
   it('drops a memory size and duration the customer never stated, and the resource becomes a question instead of a guess', async () => {
     const LAMBDA_FIELDS = {
