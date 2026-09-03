@@ -98,7 +98,7 @@ import {
  */
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
-const MCP_PACKAGE_VERSION = 'sample-aws-pricing-calculator-mcp@1.2.9';
+const MCP_PACKAGE_VERSION = 'sample-aws-pricing-calculator-mcp@1.3.0';
 
 /**
  * How many price lookups are in flight at once.
@@ -2112,9 +2112,12 @@ async function saveEstimate(
       const intentionalOnDemandRemainder = decision?.pricing === 'on-demand'
         && ['no-commitment-offered', 'not-instance-capacity', 'no-savings-plan-coverage']
           .includes(decision.because);
+      const calculatorVisibleCommitmentGap = decision?.pricing === 'unpriceable-commitment';
       const pricingStatus: SaveEntry['pricingStatus'] = exact
         ? 'EXACT'
-        : intentionalOnDemandRemainder || (decision?.pricing === 'committed' && !decision.substitution)
+        : intentionalOnDemandRemainder
+            || calculatorVisibleCommitmentGap
+            || (decision?.pricing === 'committed' && !decision.substitution)
           ? 'MIXED'
           : 'UNSUPPORTED';
       const saveEntry = {
@@ -2216,21 +2219,12 @@ async function saveEstimate(
       manifest,
     };
   }
-  if (saveable.length !== services.length) {
-    const missing = services.filter((entry) => !entry.service || !entry.config);
-    const validationErrors = [
-      `Calculator compilation stopped before save: ${missing.length} resource group(s) still need a supported, fully specified service contract.`,
-      ...missing.map((entry) => `${entry.label}: ${entry.pricingReason || 'no Calculator adapter/configuration was produced'}`),
-    ];
-    return {
-      url: null,
-      status: 'FAILED',
-      warning: validationErrors.join(' '),
-      requirementChecks: [],
-      validationErrors,
-      manifest,
-    };
-  }
+  const compileOmissionErrors = saveable.length === services.length ? [] : [
+    `Calculator compilation omitted ${services.length - saveable.length} of ${services.length} resource group(s); the saved AWS estimate is partial.`,
+    ...services
+      .filter((entry) => !entry.service || !entry.config)
+      .map((entry) => `${entry.label}: ${entry.pricingReason || 'no Calculator adapter/configuration was produced'}`),
+  ];
 
   const catalogs = new Map<string, ReturnType<typeof parseServiceCatalog>>();
   const validateCatalogs = async (refresh = false): Promise<string[]> => {
@@ -2342,6 +2336,7 @@ async function saveEstimate(
     };
     const validation = validateSavedEstimate(manifest, renderedSnapshot);
     const validationErrors = [...new Set([
+      ...compileOmissionErrors,
       ...validation.errors,
       ...(!linkCheck.validUrl
         ? [linkCheck.reason || 'AWS Pricing Calculator link browser validation could not be completed.']

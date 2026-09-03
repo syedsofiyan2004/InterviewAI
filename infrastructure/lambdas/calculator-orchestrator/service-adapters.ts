@@ -87,6 +87,17 @@ const frequency = (value: number, unit = 'perMonth') => ({ value: String(Math.ma
 const fileSize = (value: number, unit = 'gb|month') => ({ value: Math.max(0, value), unit });
 const wholeFrequency = (value: number, unit = 'perMonth') => frequency(Math.round(value), unit);
 
+function durationToken(unit: string): string | undefined {
+  const normalized = unit.trim().toLowerCase();
+  const map: Record<string, string> = {
+    second: 'sec', seconds: 'sec', sec: 'sec', secs: 'sec',
+    minute: 'min', minutes: 'min', min: 'min', mins: 'min',
+    hour: 'hr', hours: 'hr', hr: 'hr', hrs: 'hr', h: 'hr',
+    day: 'day', days: 'day',
+  };
+  return map[normalized];
+}
+
 function description(group: ResourceGroup, label: string): string {
   return `${label}${group.environment ? ` (${group.environment})` : ''}`;
 }
@@ -443,9 +454,15 @@ const fargateAdapter: CalculatorAdapter = {
     const durationUnit = String((durationMeasure as any)?.derived?.unit || (durationMeasure as any)?.derivedUnit || 'hours');
     const vcpu = sourceNumber(vcpuMeasure) ?? group.vcpu;
     const memory = sourceNumber(memoryMeasure) ?? group.ramGb;
+    const calculatorDurationUnit = durationToken(durationUnit);
     if (!taskCount || !vcpu || !memory || !durationHours) return {
       serviceCode: 'AmazonECS', filters: {} as Record<string, string>, basis: 'Fargate was detected but its vCPU-hours and GB-hours are incomplete.',
       calculatorUnsupported: 'Fargate requires task count, task frequency, task duration, task duration unit, vCPU per task, memory per task and region before Calculator compilation.',
+      storageOwner: 'service-native',
+    };
+    if (!calculatorDurationUnit) return {
+      serviceCode: 'AmazonECS', filters: {} as Record<string, string>, basis: `Fargate duration unit "${durationUnit}" is not supported by AWS Pricing Calculator.`,
+      calculatorUnsupported: `Fargate duration unit "${durationUnit}" could not be mapped to an AWS Calculator token; valid units are seconds, minutes, hours or days.`,
       storageOwner: 'service-native',
     };
     const tasks = Math.max(1, taskCount);
@@ -460,7 +477,7 @@ const fargateAdapter: CalculatorAdapter = {
         operatingSystem: /win/i.test(group.os || '') ? 'windows' : 'linux',
         selectArchitecture: /arm|graviton/i.test(serviceText(group)) ? 'arm' : 'x86',
         numberOfTasks: frequency(tasks, taskFrequency),
-        taskDuration: { value: String(durationHours), unit: /^min/i.test(durationUnit) ? 'minutes' : 'hr' },
+        taskDuration: { value: String(durationHours), unit: calculatorDurationUnit },
         vcpuPerTask: String(vcpu),
         ...(vcpu <= 0.5 ? { smallMemory: String(memory) }
           : vcpu <= 4 ? { memoryStandardFargateOnDemand: fileSize(memory, 'gb|NA') }

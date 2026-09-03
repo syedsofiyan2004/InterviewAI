@@ -8,7 +8,7 @@
     "start:local": "MCP_TRANSPORT=http PORT=8931 HOST=127.0.0.1 npm start"
   },
   "dependencies": {
-    "sample-aws-pricing-calculator-mcp": "1.2.9",
+    "sample-aws-pricing-calculator-mcp": "1.3.0",
     "@aws-sdk/client-dynamodb": "^3.712.0",
     "@aws-sdk/lib-dynamodb": "^3.712.0"
   }

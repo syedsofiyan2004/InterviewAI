@@ -260,19 +260,71 @@ export class McpSidecarClient implements CalculatorGateway {
     return this.callTool('get_service_fields', { service: serviceCode });
   }
 
+  private parseEstimateId(result: McpToolResult): string | undefined {
+    try {
+      const parsed = JSON.parse(result.text);
+      return String(parsed?.estimate_id || parsed?.aws_estimate_id || '').trim() || undefined;
+    } catch {
+      return /"estimate_id"\s*:\s*"([^"]+)"/.exec(result.text)?.[1]
+        || /"aws_estimate_id"\s*:\s*"([^"]+)"/.exec(result.text)?.[1];
+    }
+  }
+
+  private parseEstimateUrl(result: McpToolResult): string | undefined {
+    try {
+      const parsed = JSON.parse(result.text);
+      return String(parsed?.sharable_url || parsed?.shareable_url || parsed?.url || '').trim() || undefined;
+    } catch {
+      return /https:\/\/[^\s"'\\]*calculator\.aws[^\s"'\\]*/.exec(result.text)?.[0];
+    }
+  }
+
   async saveEstimate(
     name: string,
     services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
   ): Promise<McpToolResult> {
-    const result = await this.callTool('build_estimate', { name, services: JSON.stringify(services) }, 180_000);
-    if (result.isError || /https:\/\/[^\s"'\\]*calculator\.aws/i.test(result.text)) return result;
+    const create = await this.callTool('create_estimate', { name, partition: 'aws' }, 60_000);
+    if (create.isError) return create;
+    const estimateId = this.parseEstimateId(create);
+    if (!estimateId) return {
+      text: `create_estimate returned no estimate_id: ${create.text.slice(0, 500)}`,
+      isError: true,
+    };
+
+    const add = await this.callTool('add_service', { estimate_id: estimateId, services: JSON.stringify(services) }, 180_000);
+    if (add.isError || /"error"\s*:/.test(add.text)) return {
+      text: `add_service failed for ${estimateId}: ${add.text.slice(0, 2000)}`,
+      isError: true,
+    };
+
+    const validate = await this.callTool('validate_estimate', { estimate_id: estimateId }, 120_000);
+    if (validate.isError) return validate;
     try {
-      const parsed = JSON.parse(result.text);
-      if (parsed?.sharable_url) return result;
-      return { ...result, isError: true };
+      const parsed = JSON.parse(validate.text);
+      if (parsed?.lint_verdict && parsed.lint_verdict !== 'editable') return {
+        text: `validate_estimate refused ${estimateId}: ${validate.text.slice(0, 2000)}`,
+        isError: true,
+      };
     } catch {
-      return { ...result, isError: true };
+      return { text: `validate_estimate returned invalid JSON: ${validate.text.slice(0, 500)}`, isError: true };
     }
+
+    const exported = await this.callTool('export_estimate', { estimate_id: estimateId }, 180_000);
+    if (exported.isError) return exported;
+    const url = this.parseEstimateUrl(exported);
+    if (!url) return {
+      text: `export_estimate returned no calculator.aws URL: ${exported.text.slice(0, 500)}`,
+      isError: true,
+    };
+    return {
+      text: JSON.stringify({
+        sharable_url: url,
+        aws_estimate_id: this.parseEstimateId(exported) || estimateId,
+        mcp_workflow: ['create_estimate', 'add_service', 'validate_estimate', 'export_estimate'],
+        services,
+      }),
+      isError: false,
+    };
   }
 
   async readEstimate(savedKeyOrUrl: string): Promise<McpToolResult> {
