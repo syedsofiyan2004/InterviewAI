@@ -246,6 +246,51 @@ describe('Keka panel email resolution', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/v1/hris/employees'))).toBe(false);
   });
 
+  test('uses a raw email address from a string-form Hire panel without HRIS lookup', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/connect/token')) return tokenResponse();
+      if (url.includes('/candidate/candidate-1/interviews')) {
+        return jsonResponse({
+          data: [{
+            id: 'interview-email-string',
+            scheduledAt: '2026-08-14T10:00:00Z',
+            panel: 'syed.sofiyan@minfytech.com',
+          }],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const interviews = await new KekaHireIntegration().listInterviews('job-1', 'candidate-1');
+
+    expect(interviews[0].panel[0].email).toBe('syed.sofiyan@minfytech.com');
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/v1/hris/employees'))).toBe(false);
+  });
+
+  test('uses an email embedded in a string-form Hire panel member', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/connect/token')) return tokenResponse();
+      if (url.includes('/candidate/candidate-1/interviews')) {
+        return jsonResponse({
+          data: [{
+            id: 'interview-name-email-string',
+            scheduledAt: '2026-08-14T10:00:00Z',
+            panel: 'Syed Sofiyan <syed.sofiyan@minfytech.com>',
+          }],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const interviews = await new KekaHireIntegration().listInterviews('job-1', 'candidate-1');
+
+    expect(interviews[0].panel[0].name).toBe('Syed Sofiyan');
+    expect(interviews[0].panel[0].email).toBe('syed.sofiyan@minfytech.com');
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/v1/hris/employees'))).toBe(false);
+  });
+
   test('batches duplicate panel IDs and caches them across interview-list calls', async () => {
     let hrisCalls = 0;
     const duplicatePanelPage = {

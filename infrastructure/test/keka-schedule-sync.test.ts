@@ -17,10 +17,12 @@ import { keys } from '../schema/admin';
 const listJobs = jest.fn();
 const listCandidates = jest.fn();
 const listInterviews = jest.fn();
+const findMeetingLink = jest.fn();
 
 jest.mock('../lambdas/api-handler/intelligence-integrations', () => ({
   ...jest.requireActual('../lambdas/api-handler/intelligence-integrations'),
   createKekaIntegration: () => ({ listJobs, listCandidates, listInterviews }),
+  createTeamsIntegration: () => ({ findMeetingLink }),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -65,11 +67,14 @@ beforeEach(() => {
   listJobs.mockReset();
   listCandidates.mockReset();
   listInterviews.mockReset();
+  findMeetingLink.mockReset();
+  findMeetingLink.mockResolvedValue({});
   ddbMock.on(GetCommand).resolves({});
   ddbMock.on(UpdateCommand).resolves({});
   ddbMock.on(DeleteCommand).resolves({});
   mockQueries();
   process.env.KEKA_INTERVIEW_ACTIVE_STATUSES = 'interview scheduled,in interview';
+  process.env.TEAMS_INTEGRATION_MODE = 'live';
   delete process.env.KEKA_SYNC_STATUS_MODE;
 
   listJobs.mockResolvedValue([{ id: 'job-1', title: 'Migration Architect', department: 'Cloud' }]);
@@ -80,6 +85,7 @@ beforeEach(() => {
 afterAll(() => {
   delete process.env.KEKA_INTERVIEW_ACTIVE_STATUSES;
   delete process.env.KEKA_SYNC_STATUS_MODE;
+  delete process.env.TEAMS_INTEGRATION_MODE;
 });
 
 describe('The sweep fails closed without a status vocabulary', () => {
@@ -150,6 +156,59 @@ describe('One row per panelist per interview', () => {
     const response = await runKekaScheduleSyncWorker('test');
 
     expect(JSON.parse(response.body).rowsWritten).toBe(1);
+  });
+
+  test('fills a missing Keka meeting URL from the panelists Teams calendar', async () => {
+    const scheduledAt = soonIso();
+    listInterviews.mockResolvedValue([kekaInterview({ scheduledAt, meetingUrl: undefined })]);
+    findMeetingLink.mockResolvedValue({
+      meetingUrl: 'https://teams.microsoft.com/l/meetup-join/example',
+      organizerEmail: 'organizer@minfytech.com',
+    });
+
+    const response = await runKekaScheduleSyncWorker('test');
+
+    expect(JSON.parse(response.body).rowsWritten).toBe(1);
+    expect(findMeetingLink).toHaveBeenCalledWith({
+      calendarEmail: ALICE,
+      scheduledAt,
+      candidateName: 'Asha Rao',
+      candidateEmail: 'asha@example.com',
+      jobTitle: 'Migration Architect',
+    });
+    expect(ddbMock).toHaveReceivedCommandWith(UpdateCommand, {
+      Key: { PK: keys.schedPk(ALICE), SK: keys.schedSk(Date.parse(scheduledAt), 'int-1') },
+      ExpressionAttributeValues: expect.objectContaining({
+        ':meeting_url': 'https://teams.microsoft.com/l/meetup-join/example',
+        ':organizer_email': 'organizer@minfytech.com',
+      }),
+    });
+  });
+
+  test('uses the Keka meeting URL without calling Teams calendar lookup', async () => {
+    listInterviews.mockResolvedValue([kekaInterview({ meetingUrl: 'https://teams.microsoft.com/l/meetup-join/from-keka' })]);
+
+    const response = await runKekaScheduleSyncWorker('test');
+
+    expect(JSON.parse(response.body).rowsWritten).toBe(1);
+    expect(findMeetingLink).not.toHaveBeenCalled();
+    expect(ddbMock).toHaveReceivedCommandWith(UpdateCommand, {
+      ExpressionAttributeValues: expect.objectContaining({
+        ':meeting_url': 'https://teams.microsoft.com/l/meetup-join/from-keka',
+      }),
+    });
+  });
+
+  test('still indexes the interview when Teams calendar lookup has no safe match', async () => {
+    findMeetingLink.mockRejectedValue(new Error('Multiple Teams meetings were found around this Keka interview time.'));
+
+    const response = await runKekaScheduleSyncWorker('test');
+
+    expect(JSON.parse(response.body).rowsWritten).toBe(1);
+    const writes = ddbMock.commandCalls(UpdateCommand)
+      .map((call) => call.args[0].input as any)
+      .filter((input) => String(input.Key?.PK || '').startsWith('SCHED#'));
+    expect(writes[0].ExpressionAttributeValues[':meeting_url']).toBeUndefined();
   });
 
   test('a panel with no email cannot be indexed and is skipped', async () => {

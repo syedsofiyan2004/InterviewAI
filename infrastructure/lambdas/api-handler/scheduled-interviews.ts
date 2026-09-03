@@ -145,3 +145,22 @@ export async function releaseScheduledProvisioning(
     if (err?.name !== 'ConditionalCheckFailedException') throw err;
   }
 }
+
+export async function clearScheduledProvisioning(
+  row: Pick<ScheduledInterview, 'PK' | 'SK'>,
+): Promise<void> {
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: ADMIN_TABLE_NAME,
+    Key: { PK: row.PK, SK: row.SK },
+    UpdateExpression: [
+      'REMOVE intelligence_id',
+      'workspace_id',
+      'provisioned_at',
+      'provisioned_by',
+      'provisioning_token',
+      'provisioning_expires_at',
+      'provisioning_by',
+      'provisioning_intelligence_id',
+    ].join(', '),
+  }));
+}

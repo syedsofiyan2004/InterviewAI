@@ -168,6 +168,11 @@ describe('POST /my-interviews/{schedId}/open — panel membership is the boundar
 describe('Opening twice does not create a second round', () => {
   test('a second open returns the same intelligence_id and writes nothing', async () => {
     partitionHas([schedRow({ intelligence_id: 'intel-existing', workspace_id: 'ws-existing' })]);
+    ddbMock.on(GetCommand, {
+      TableName: 'test-intelligence',
+      Key: { intelligence_id: 'intel-existing' },
+      ProjectionExpression: 'intelligence_id, deleted_at',
+    }).resolves({ Item: { intelligence_id: 'intel-existing' } });
 
     const response = await handler(openEvent(PANELIST) as any);
 
@@ -179,6 +184,21 @@ describe('Opening twice does not create a second round', () => {
     });
     expect(ddbMock).not.toHaveReceivedCommand(PutCommand);
     expect(getInterviewData).not.toHaveBeenCalled();
+  });
+
+  test('a stale provisioned pointer is cleared and the interview opens a fresh round', async () => {
+    partitionHas([schedRow({ intelligence_id: 'intel-deleted', workspace_id: 'ws-deleted' })]);
+
+    const response = await handler(openEvent(PANELIST) as any);
+
+    expect(response.statusCode).toBe(201);
+    expect(ddbMock).toHaveReceivedCommandWith(UpdateCommand, {
+      TableName: 'test-admin',
+      Key: { PK: keys.schedPk(PANELIST), SK: schedRow().SK },
+      UpdateExpression: expect.stringContaining('REMOVE intelligence_id'),
+    });
+    expect(ddbMock).toHaveReceivedCommandWith(PutCommand, { TableName: 'test-intelligence' });
+    expect(getInterviewData).toHaveBeenCalledTimes(1);
   });
 
   test('when a concurrent open wins the conditional stamp, the loser returns the winner\'s round', async () => {

@@ -361,6 +361,18 @@ export interface KekaScheduledInterview {
 }
 
 export interface TeamsIntegration {
+  findMeetingLink(input: {
+    calendarEmail?: string;
+    calendarUserId?: string;
+    scheduledAt?: string;
+    candidateName?: string;
+    candidateEmail?: string;
+    jobTitle?: string;
+  }): Promise<{
+    meetingUrl?: string;
+    calendarUserId?: string;
+    organizerEmail?: string;
+  }>;
   getTranscript(input: {
     meetingUrl?: string;
     meetingId?: string;
@@ -450,6 +462,7 @@ type GraphCalendarEvent = {
   start?: { dateTime?: string; timeZone?: string };
   end?: { dateTime?: string; timeZone?: string };
   onlineMeeting?: { joinUrl?: string };
+  organizer?: { emailAddress?: { address?: string; name?: string } };
   attendees?: Array<{ emailAddress?: { address?: string; name?: string } }>;
 };
 
@@ -568,6 +581,10 @@ function exactSingleEmployeeEmail(rows: KekaRecord[], panelName: string): string
   return exactEmails.length === 1 ? exactEmails[0] : null;
 }
 
+function emailFromText(value: string): string | undefined {
+  return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.toLowerCase();
+}
+
 function kekaDateToMs(value: string | undefined): number | undefined {
   const text = getRequiredString(value);
   if (!text) return undefined;
@@ -662,10 +679,14 @@ function extractPanel(record: KekaRecord): IntelligencePanelist[] {
     .split(/[,;|]/)
     .map((name) => name.trim())
     .filter(Boolean)
-    .map((name, index) => ({
-      interviewerId: `keka-panel-${index + 1}`,
-      name,
-    }));
+    .map((name, index) => {
+      const email = emailFromText(name);
+      return {
+        interviewerId: `keka-panel-${index + 1}`,
+        name: email ? cleanKekaText(name.replace(email, '').replace(/[<>()\[\]]+/g, ' ')) || email : name,
+        email,
+      };
+    });
 }
 
 function toKekaJob(record: KekaRecord): KekaJob {
@@ -901,6 +922,29 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
     return user.id;
   }
 
+  async findMeetingLink(input: {
+    calendarEmail?: string;
+    calendarUserId?: string;
+    scheduledAt?: string;
+    candidateName?: string;
+    candidateEmail?: string;
+    jobTitle?: string;
+  }): Promise<{ meetingUrl?: string; calendarUserId?: string; organizerEmail?: string }> {
+    const calendarUserId = await this.resolveOrganizerUserId({
+      organizerUserId: input.calendarUserId,
+      organizerEmail: input.calendarEmail,
+    });
+    const meeting = await this.findMeetingFromCalendar({
+      userId: calendarUserId,
+      scheduledAt: input.scheduledAt,
+      candidateName: input.candidateName,
+      candidateEmail: input.candidateEmail,
+      jobTitle: input.jobTitle,
+      allowUniqueTimeMatch: true,
+    });
+    return { meetingUrl: meeting?.meetingUrl, calendarUserId, organizerEmail: meeting?.organizerEmail };
+  }
+
   private calendarSearchTerms(input: {
     candidateName?: string;
     candidateEmail?: string;
@@ -1001,13 +1045,20 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
     return Math.abs(startMs - scheduledAt.getTime()) <= 3 * 60 * 60 * 1000;
   }
 
-  private async findMeetingUrlFromCalendar(input: {
+  private isWithinTightCalendarTolerance(event: GraphCalendarEvent, scheduledAt: Date): boolean {
+    const startMs = this.graphDateToMs(event.start?.dateTime, event.start?.timeZone);
+    if (startMs === undefined) return false;
+    return Math.abs(startMs - scheduledAt.getTime()) <= 20 * 60 * 1000;
+  }
+
+  private async findMeetingFromCalendar(input: {
     userId: string;
     scheduledAt?: string;
     candidateName?: string;
     candidateEmail?: string;
     jobTitle?: string;
-  }): Promise<string | undefined> {
+    allowUniqueTimeMatch?: boolean;
+  }): Promise<{ meetingUrl: string; organizerEmail?: string } | undefined> {
     const scheduledAt = new Date(getRequiredString(input.scheduledAt));
     if (Number.isNaN(scheduledAt.getTime())) return undefined;
 
@@ -1016,7 +1067,7 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
     const params = new URLSearchParams({
       startDateTime,
       endDateTime,
-      '$select': 'id,subject,start,end,onlineMeeting,onlineMeetingUrl,webLink,attendees',
+      '$select': 'id,subject,start,end,onlineMeeting,onlineMeetingUrl,webLink,organizer,attendees',
       '$top': '50',
     });
 
@@ -1033,15 +1084,27 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
       }))
       .filter((entry) => entry.joinUrl);
 
+    const toMeeting = (entry: { event: GraphCalendarEvent; joinUrl: string }) => ({
+      meetingUrl: entry.joinUrl,
+      organizerEmail: getRequiredString(entry.event.organizer?.emailAddress?.address).toLowerCase() || undefined,
+    });
+
     if (!teamsEvents.length) return undefined;
     const candidateEvents = teamsEvents.filter((entry) => (
       this.hasCandidateEvidence(entry.event, input)
       && this.isWithinCalendarTolerance(entry.event, scheduledAt)
     ));
     if (!candidateEvents.length) {
+      if (input.allowUniqueTimeMatch) {
+        const slotEvents = teamsEvents.filter((entry) => this.isWithinTightCalendarTolerance(entry.event, scheduledAt));
+        if (slotEvents.length === 1) return toMeeting(slotEvents[0]);
+        if (slotEvents.length > 1) {
+          throw new TeamsIntegrationError('Multiple Teams meetings were found at this Keka interview time. Add the exact Teams meeting link in Keka, or make the panel calendar slot unique.');
+        }
+      }
       throw new TeamsIntegrationError('No Teams meeting with this candidate was found around the Keka interview time. Add the exact Teams meeting link in Keka or verify the candidate attendee details.');
     }
-    if (candidateEvents.length === 1) return candidateEvents[0].joinUrl;
+    if (candidateEvents.length === 1) return toMeeting(candidateEvents[0]);
 
     const scored = candidateEvents
       .map((entry) => ({
@@ -1056,10 +1119,21 @@ export class MicrosoftGraphTeamsIntegration implements TeamsIntegration {
       .sort((left, right) => right.score - left.score);
 
     if (scored[0].score > 0 && scored[0].score > scored[1].score) {
-      return scored[0].joinUrl;
+      return toMeeting(scored[0]);
     }
 
     throw new TeamsIntegrationError('Multiple Teams meetings were found around this Keka interview time. Add the exact Teams meeting link in Keka, or use a schedule with a unique Teams meeting.');
+  }
+
+  private async findMeetingUrlFromCalendar(input: {
+    userId: string;
+    scheduledAt?: string;
+    candidateName?: string;
+    candidateEmail?: string;
+    jobTitle?: string;
+  }): Promise<string | undefined> {
+    const meeting = await this.findMeetingFromCalendar(input);
+    return meeting?.meetingUrl;
   }
 
   private async resolveMeeting(input: {
@@ -1508,6 +1582,10 @@ export class ManualIntegration implements KekaIntegration, TeamsIntegration {
 
   async getTranscript(): Promise<{ rawText: string }> {
     return { rawText: '' };
+  }
+
+  async findMeetingLink(): Promise<{ meetingUrl?: string }> {
+    return {};
   }
 
   async getRecording(): Promise<{

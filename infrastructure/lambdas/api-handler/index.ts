@@ -47,6 +47,7 @@ import {
   queryScheduledForPanelist,
   findScheduledByInterviewId,
   claimScheduledProvisioning,
+  clearScheduledProvisioning,
   releaseScheduledProvisioning,
   stampScheduledProvisioned,
 } from './scheduled-interviews.js';
@@ -3867,6 +3868,16 @@ async function refreshMyInterviews(event: APIGatewayProxyEvent) {
   return successResponse({ items });
 }
 
+async function scheduledIntelligenceStillExists(intelligenceId: string): Promise<boolean> {
+  const result = await ddbDocClient.send(new GetCommand({
+    TableName: INTELLIGENCE_TABLE_NAME,
+    Key: { intelligence_id: intelligenceId },
+    ProjectionExpression: 'intelligence_id, deleted_at',
+  }));
+  const item = result.Item as { deleted_at?: number } | undefined;
+  return !!item && !item.deleted_at;
+}
+
 /**
  * POST /my-interviews/{schedId}/open — provision the caller's own scheduled
  * interview into the evaluation pipeline. No tier required: panel membership is
@@ -3889,12 +3900,17 @@ async function openMyInterview(schedId: string | undefined, event: APIGatewayPro
   if (!row) return errorResponse(404, 'NOT_FOUND', 'No scheduled interview found for you with that id.');
 
   // Idempotent: already provisioned => return the existing round, no new work.
+  // If the workspace was deleted later, clear the stale pointer so reopening
+  // this scheduled interview creates a fresh intelligence record.
   if (row.intelligence_id) {
-    return successResponse({
-      intelligence_id: row.intelligence_id,
-      workspace_id: row.workspace_id,
-      already_provisioned: true,
-    });
+    if (await scheduledIntelligenceStillExists(row.intelligence_id)) {
+      return successResponse({
+        intelligence_id: row.intelligence_id,
+        workspace_id: row.workspace_id,
+        already_provisioned: true,
+      });
+    }
+    await clearScheduledProvisioning(row);
   }
 
   if (row.cancelled_at) {
@@ -3945,6 +3961,14 @@ async function openMyInterview(schedId: string | undefined, event: APIGatewayPro
       console.warn('[My Interviews] Could not load interview data from Keka:', error instanceof Error ? error.message : 'Unknown error');
       return errorResponse(502, 'KEKA_SYNC_FAILED', error instanceof KekaIntegrationError ? error.message : 'Keka Hire could not load this interview.');
     }
+
+    integrationData = {
+      ...integrationData,
+      meetingUrl: integrationData.meetingUrl || row.meeting_url,
+      meetingId: integrationData.meetingId || row.meeting_id,
+      organizerEmail: integrationData.organizerEmail || row.organizer_email,
+      organizerUserId: integrationData.organizerUserId || row.organizer_user_id,
+    };
 
     if (!integrationData.job.title || !integrationData.job.description || !integrationData.candidate.name) {
       return errorResponse(422, 'INCOMPLETE_INTERVIEW_DATA', 'This interview is missing the job or candidate details needed to open it. Ask an administrator to complete it in Keka.');
