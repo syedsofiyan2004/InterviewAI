@@ -15,6 +15,7 @@
 
 import type { CalculationResource, EnvironmentHours } from '../../schema/calculator';
 import type { EstimatePlanV2, PlanQuestion } from '../../schema/estimate-plan';
+import { semanticKeysForLabel } from '../aws-calculator-mcp-executor/field-mapping';
 import { preflightResources, type PreflightQuestion } from '../aws-calculator-mcp-executor/preflight';
 import { toSemanticResources } from '../aws-calculator-mcp-executor/semantic-resources';
 import type { McpGateway } from '../aws-calculator-mcp-executor/types';
@@ -31,6 +32,27 @@ export function requirementFieldFor(question: PreflightQuestion): string | undef
   if (/average duration|task duration/.test(label)) return 'fargate.task_duration';
   return undefined;
 }
+
+/**
+ * Which semantic keys each plan field already supplies, so a Calculator input the plan asks
+ * for under its own name is not asked for a second time under the Calculator's.
+ */
+const SUPPLIED_KEYS: Record<string, string[]> = {
+  'resource.instance_type': ['instanceType'],
+  'resource.count': ['instanceCount', 'nodeCount'],
+  'resource.hours_per_month': ['duration', 'utilizationPct'],
+  'database.multi_az': ['deployment'],
+  'database.engine': ['engine'],
+  'fargate.task_frequency': ['taskCount'],
+  'fargate.task_duration': ['duration'],
+  'lambda.execution_profile': ['memoryMb', 'memoryGbPerTask', 'requestDurationMs'],
+  'sagemaker.inference_configuration': ['instanceType', 'workloadType'],
+  'cognito.tier': ['tier', 'monthlyTokenRequests'],
+  'nat_gateway.configuration': ['mode', 'availabilityZoneCount', 'numberOfRegionalNatGateways', 'numberOfAvailabilityZonesRegionalNatGatewaysIsActiveIn'],
+  'bedrock.model': ['model', 'provider'],
+  'bedrock.tokens_per_call': ['inputTokens', 'outputTokens'],
+  'quicksight.subscription_profile': ['spiceCapacityInGigabytes', 'spiceGb'],
+};
 
 /** "Number of models deployed" → numberOfModelsDeployed: a semantic key named from the label. */
 export function semanticKeyFor(label: string): string {
@@ -71,6 +93,21 @@ export async function enrichPlanWithCalculatorPreflight(
   const overlaps = (a: string[], b: string[]) => a.some((scope) => b.includes(scope));
 
   const unresolved: PlanQuestion[] = [...plan.unresolved];
+  const currentRevision = plan.revisions.find((revision) => revision.revisionId === plan.currentRevisionId);
+  const existingChanges: Array<{ field: string; scope: string[] }> = [
+    ...plan.unresolved.map((question) => ({ field: question.field, scope: question.scope })),
+    ...(currentRevision?.requirements || []).map((requirement) => ({ field: requirement.field, scope: requirement.scope })),
+  ];
+  /** Whether a plan question or answered requirement already covers this resource. */
+  const covers = (change: { field: string; scope: string[] }, resourceScope: string[], service: string, keys: string[]) => {
+    const supplied = SUPPLIED_KEYS[change.field] || [];
+    if (!supplied.some((key) => keys.includes(key))) return false;
+    if (!change.scope.length || change.scope.includes('all-resources')) return true;
+    if (overlaps(change.scope, resourceScope)) return true;
+    return change.scope.some((scope) => scope.startsWith('service:')
+      && service.toLowerCase().includes(scope.slice('service:'.length).toLowerCase()));
+  };
+
   const unapplied: PreflightQuestion[] = [];
   let added = 0;
   for (const question of report.questions) {
@@ -83,14 +120,21 @@ export async function enrichPlanWithCalculatorPreflight(
       continue;
     }
     const scope = scopeOf(question.resourceId);
-    const duplicate = unresolved.find((entry) => entry.field === field && overlaps(entry.scope, scope));
+    // Asked once, however many rows share it. The plan already asking for Lambda's memory
+    // under lambda.execution_profile covers the Calculator's "Amount of memory allocated" for
+    // every Lambda row: a second question for the same number is noise the reviewer pays for.
+    const keys = [...semanticKeysForLabel(question.label), semanticKeyFor(question.label)];
+    if (existingChanges.some((change) => covers(change, scope, question.service, keys))) continue;
+    const duplicate = unresolved.find((entry) => entry.field === field && (overlaps(entry.scope, scope) || entry.id.startsWith('calculator-preflight-')));
     if (duplicate) {
-      // The plan already asks; the Calculator's choices make its dropdown, if it had none.
+      // The plan already asks; the Calculator's choices make its dropdown, if it had none, and
+      // the question now covers this row as well.
       if (!duplicate.options?.length && question.options?.length) duplicate.options = question.options.map((option) => option.label).slice(0, 20);
+      for (const entry of scope) if (!duplicate.scope.includes(entry)) duplicate.scope.push(entry);
       continue;
     }
     unresolved.push({
-      id: `calculator-preflight-${question.resourceId}-${field}`.replace(/[^A-Za-z0-9._:-]+/g, '-').slice(0, 160),
+      id: `calculator-preflight-${field}`.replace(/[^A-Za-z0-9._:-]+/g, '-').slice(0, 160),
       prompt: `${question.service}: ${question.label}${question.control === 'number' && question.units?.length ? ` (${question.units.map((unit) => unit.label).join(', ')})` : ''}`,
       field,
       scope,

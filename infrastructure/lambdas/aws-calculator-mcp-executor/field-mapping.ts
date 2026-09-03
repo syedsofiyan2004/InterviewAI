@@ -110,6 +110,23 @@ function minimalRow(payload: McpFieldsPayload, formId: string): Record<string, {
 /** Keys the executor consumes itself rather than mapping onto the Calculator. */
 const EXECUTOR_KEYS = new Set(['hoursPerDay', 'hoursPerMonth']);
 
+const BASIS_STOP_WORDS = new Set(['number', 'of', 'the', 'per', 'a', 'an', 'and', 'or', 'in', 'for', 'to', 'total', 'count', 'requested', 'yr', 'year', 'month', 'monthly']);
+
+/** The words in a label or basis that carry meaning, lower-cased, filler removed. */
+function significantWordsOf(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 1 && !BASIS_STOP_WORDS.has(word)));
+}
+
+/**
+ * The semantic keys a Calculator label could stand for, by the vocabulary's own patterns.
+ *
+ * Used by the preflight to tell whether a plan already asks for what a Calculator input
+ * needs: "Amount of memory allocated" is memory whichever key spells it.
+ */
+export function semanticKeysForLabel(label: string): string[] {
+  return SEMANTIC_FIELDS.filter((entry) => entry.labels.some((pattern) => pattern.test(label.trim()))).map((entry) => entry.key);
+}
+
 /** Column-form selectors the pricing intent owns; never filled from the resource. */
 const PRICING_SELECTORS = new Set(['TermType', 'LeaseContractLength', 'PurchaseOption']);
 
@@ -451,6 +468,38 @@ export function mapDeterministically(
     if (!result.claimed[key]) result.claimed[key] = field.id;
     taken.add(field.id);
     if (rendered.note) result.notes.push(rendered.note);
+  }
+
+  // A bare usage count travels with the sheet's own words for what it counts ("monthly active
+  // users (MAU)"). When exactly one numeric field's label shares those words, the sheet has
+  // named the field itself, and the number lands without a model and without being asked for
+  // again. Two candidates is an ambiguity, none is a question — never a guess.
+  if (!result.claimed.usageCount && resource.configuration.usageCount !== undefined && resource.configuration.usageBasis) {
+    const basisWords = significantWordsOf(String(resource.configuration.usageBasis));
+    const scored = fields
+      .filter((field) => (field.type === 'numericInput' || field.type === 'frequency') && !taken.has(field.id))
+      .map((field) => ({ field, shared: [...significantWordsOf(field.label || '')].filter((word) => basisWords.has(word)).length }))
+      .filter((entry) => entry.shared >= 2 || (entry.shared === 1 && basisWords.size === 1))
+      .sort((a, b) => b.shared - a.shared);
+    if (scored.length && (scored.length === 1 || scored[0].shared > scored[1].shared)) {
+      const field = scored[0].field;
+      const value = resource.configuration.usageCount;
+      if (field.type === 'frequency') {
+        const unit = matchFrequency(field.options, resource.configuration.usageFrequency ?? 'perMonth');
+        if (unit) {
+          result.config[field.id] = { value: String(value), unit };
+          result.claimed.usageCount = field.id;
+          taken.add(field.id);
+          result.unmapped = result.unmapped.filter((key) => key !== 'usageCount');
+        }
+      } else {
+        result.config[field.id] = String(value);
+        result.claimed.usageCount = field.id;
+        taken.add(field.id);
+        result.unmapped = result.unmapped.filter((key) => key !== 'usageCount');
+      }
+      if (result.claimed.usageCount) result.notes.push(`"${resource.configuration.usageBasis}" placed in "${field.label}", the one field whose label names the same thing`);
+    }
   }
 
   // Hours a day is a schedule; the Calculator's EC2 form takes it as a utilization percentage.

@@ -480,6 +480,26 @@ describe('an annual volume against a Calculator with no per-year period', () => 
   });
 });
 
+describe('a usage figure whose basis names the field', () => {
+  it('places monthly active users into the one field whose label says the same, with no model', async () => {
+    const COGNITO_FIELDS = {
+      serviceCode: 'amazonCognito', serviceName: 'Amazon Cognito',
+      fields: [
+        { id: 'numberOfMonthlyActiveUsers', type: 'numericInput', label: 'Number of monthly active users (MAU)' },
+        { id: 'additionalRps', type: 'numericInput', label: 'Additional RPS Requested' },
+        { id: 'advancedSecurity', type: 'dropdown', label: 'Advanced security features', options: [{ id: 'no' }, { id: 'yes' }] },
+      ],
+      catalog: { minimalConfig: { region: 'us-east-1', description: 'x', numberOfMonthlyActiveUsers: '1000', advancedSecurity: 'no' } },
+    };
+    const gateway = fakeGateway({ fields: { amazonCognito: COGNITO_FIELDS } });
+    const cognito: SemanticResource = { resourceId: 'idp', service: 'Amazon Cognito', region: 'ap-south-1', configuration: { usageCount: 50_000, usageFrequency: 'perMonth', usageBasis: 'monthly active users (MAU)' } };
+    const result = await executeScenario({ scenarioId: 'c', estimateName: 'C', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [cognito] }, gateway, noModels);
+    expect(result.status).toBe('COMPLETED');
+    expect(result.resources[0].finalConfig).toMatchObject({ numberOfMonthlyActiveUsers: '50000', advancedSecurity: 'no' });
+    expect(result.resources[0].tiers).toEqual([]);
+  });
+});
+
 describe('a model may not invent a quantity', () => {
   it('drops a memory size and duration the customer never stated, and the resource becomes a question instead of a guess', async () => {
     const LAMBDA_FIELDS = {

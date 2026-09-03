@@ -289,10 +289,15 @@ function applyAnsweredRequirements(group: ResourceGroup, config: Record<string, 
         config[semanticKey] = value;
       }
     };
+    const own = field.split('.').pop() || field;
     if (answer && typeof answer === 'object' && !Array.isArray(answer)) {
-      for (const [key, value] of Object.entries(answer as Record<string, unknown>)) place(key, value);
+      const entries = Object.entries(answer as Record<string, unknown>);
+      // The Review page's generic control stores a single answer as { value: X }; the key that
+      // means something is the field's own name, not "value".
+      if (entries.length === 1 && entries[0][0] === 'value') place(own, entries[0][1]);
+      else for (const [key, value] of entries) place(key, value);
     } else {
-      place(field.split('.').pop() || field, answer);
+      place(own, answer);
     }
   }
 }

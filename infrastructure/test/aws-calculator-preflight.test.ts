@@ -77,6 +77,56 @@ describe('turning preflight gaps into Review questions', () => {
   });
 });
 
+describe('not asking twice', () => {
+  const LAMBDA_FIELDS = {
+    serviceCode: 'aWSLambda', serviceName: 'AWS Lambda',
+    fields: [
+      { id: 'numberOfRequests', type: 'frequency', label: 'Number of requests', options: [{ id: 'perMonth' }] },
+      { id: 'durationOfEachRequest', type: 'numericInput', label: 'Duration of each request (in ms)' },
+      { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
+    ],
+    catalog: { minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'perMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' } } },
+  };
+  const lambdaGateway = () => {
+    const base = fakeGateway();
+    return {
+      ...base,
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        if (name === 'search_services' && String(args.query).includes('Lambda')) return { text: JSON.stringify([{ key: 'aWSLambda', name: 'AWS Lambda' }]), isError: false };
+        if (name === 'get_service_fields' && /lambda/i.test(String(args.service))) return { text: JSON.stringify(LAMBDA_FIELDS), isError: false };
+        return base.callTool(name, args);
+      },
+    };
+  };
+  const basePlan = {
+    planId: 'p', workbookId: 'w', status: 'NEEDS_INPUT' as const, currentRevisionId: 'r',
+    detectedDimensions: { regions: [], environments: [], scenarios: [], serviceFamilies: [], resourceCount: 3, mappedResourceCount: 3, excludedCount: 0, coveragePct: 100 },
+    recommendedScenarios: [],
+    revisions: [{ revisionId: 'r', planId: 'p', createdAt: '2026-09-03T00:00:00.000Z', createdBy: 'system' as const, scenarios: [], requirements: [], decisions: [], hash: 'h'.repeat(16) }],
+  };
+  const lambdaRows = [
+    { raw: 'a', service: 'AWS Lambda', scenario: '26-27', quantities: [{ unit: 'requests/month' as const, amount: 1000, basis: 'invocations', conversions: [] as string[] }] },
+    { raw: 'b', service: 'AWS Lambda', scenario: '27-28', quantities: [{ unit: 'requests/month' as const, amount: 2000, basis: 'invocations', conversions: [] as string[] }] },
+    { raw: 'c', service: 'AWS Lambda', scenario: '28-29', quantities: [{ unit: 'requests/month' as const, amount: 3000, basis: 'invocations', conversions: [] as string[] }] },
+  ];
+
+  it('does not re-ask for Lambda memory and duration when the plan already asks under lambda.execution_profile', async () => {
+    const plan = { ...basePlan, unresolved: [{ id: 'q1', prompt: 'Provide the Lambda execution profile', field: 'lambda.execution_profile', scope: ['service:Lambda'], impact: 'high' as const, resolved: false }] };
+    const enriched = await enrichPlanWithCalculatorPreflight(plan, lambdaRows, 'ap-south-1', lambdaGateway(), [], 10_000);
+    expect(enriched.added).toBe(0);
+    expect(enriched.plan.unresolved).toHaveLength(1);
+  });
+
+  it('asks once, scoped to every row that needs it, when nothing in the plan covers the input', async () => {
+    const plan = { ...basePlan, unresolved: [] };
+    const enriched = await enrichPlanWithCalculatorPreflight(plan, lambdaRows, 'ap-south-1', lambdaGateway(), [], 10_000);
+    const fields = enriched.plan.unresolved.map((question) => question.field).sort();
+    expect(fields).toEqual(['calculator.amountOfMemoryAllocated', 'calculator.durationOfEachRequest']);
+    // Three fiscal-year rows, one question each, covering all three.
+    for (const question of enriched.plan.unresolved) expect(question.scope.sort()).toEqual(['resource:0', 'resource:1', 'resource:2']);
+  });
+});
+
 describe('semantic preflight', () => {
   it('asks for the instance class an EC2 row lacks, as a searchable control, and never touches an estimate', async () => {
     const gateway = fakeGateway();
