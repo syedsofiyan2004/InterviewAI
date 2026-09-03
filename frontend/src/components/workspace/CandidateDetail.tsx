@@ -37,9 +37,9 @@ const RECORD_HREF: Record<LinkedRecord['record_type'], (id: string) => string> =
 };
 
 const RECORD_LABEL: Record<LinkedRecord['record_type'], string> = {
-  interview: 'Manual evaluation',
+  interview: 'Legacy evaluation',
   mom: 'Meeting report',
-  intelligence: 'Intelligence interview',
+  intelligence: 'HireRite interview',
 };
 
 interface CandidateDetailProps {
@@ -304,7 +304,7 @@ export function CandidateDetail({ workspaceId, backHref, backLabel }: CandidateD
         </h2>
         <div className="mb-4 flex items-center justify-between">
           <p className="max-w-2xl text-xs leading-5 text-text-muted">
-            This workspace is the shared review layer for a candidate. Manual evaluations, Interview Intelligence rounds,
+            This workspace is the shared review layer for a candidate. HireRite interview rounds
             and related meeting reports should be linked here so reviewers can compare evidence before a final decision.
           </p>
           <div className="flex items-center gap-2">
@@ -339,7 +339,7 @@ export function CandidateDetail({ workspaceId, backHref, backLabel }: CandidateD
         </div>
         {(linked_records || []).filter((r) => r.record_id && r.label?.toUpperCase() !== 'LOI' && r.record_id.toUpperCase() !== 'LOI').length === 0 ? (
           <div className="rounded-lg border border-border bg-surface-elevated px-4 py-4 text-sm text-text-muted">
-            No interview rounds are linked yet. Start from an evaluation or Interview Intelligence workspace so reports are
+            No interview rounds are linked yet. Start from HireRite so reports are
             connected here automatically before reviewers discuss the candidate.
           </div>
         ) : (

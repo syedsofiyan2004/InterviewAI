@@ -125,6 +125,16 @@ export function serviceNameOf(group: ResourceGroup): string {
     return 'Application Load Balancer';
   }
   if (EC2_INSTANCE_TYPE.test(size) || /\bec2\b/i.test(service)) return 'Amazon EC2';
+
+  // Redshift Serverless is RPU-based with no provisioned instance class; provisioned uses
+  // ra3.* and dc2.* nodes. Returning the specific name lets service resolution pick the
+  // serverless Calculator schema — which has no instance-type requirement — without a model.
+  if (/redshift/i.test(service)) {
+    const hasRpu = (group.quantities || []).some((q) => q.unit === 'units/month' && /\brpu\b/i.test(q.basis || ''));
+    const hasProvisionedSize = /^(ra3|dc2)\./i.test(size);
+    if (hasRpu && !hasProvisionedSize) return 'Amazon Redshift Serverless';
+  }
+
   return service;
 }
 
@@ -185,11 +195,19 @@ export function configurationOf(group: ResourceGroup): Record<string, string | n
   }
 
   const machine = Boolean(group.size || group.vcpu !== undefined);
+  // Redshift Serverless uses RPU capacity as its billing unit, not provisioned nodes. The
+  // serverless schema has no instance-type or node-count field; carrying nodeCount would only
+  // produce an unmapped key that misleads the model. Query hours per day is the operational
+  // runtime the Calculator's own Query_period field expects (hours/day, 0–24).
+  const isRedshiftServerless = /redshift/i.test(group.service || '')
+    && (group.quantities || []).some((q) => q.unit === 'units/month' && /\brpu\b/i.test(q.basis || ''))
+    && !/^(ra3|dc2)\./i.test(String(group.size || ''));
+
   // "r7g.large.search(2c16g)": the class is the class; the sheet's own annotation of its
   // vCPU and memory is not part of it.
   if (group.size) config.instanceType = String(group.size).replace(/\s*\(.*?\)\s*/g, ' ').trim();
-  if (isDatabaseOrCache(group)) config.nodeCount = group.count;
-  else if (machine) config.instanceCount = group.count;
+  if (isDatabaseOrCache(group) && !isRedshiftServerless) config.nodeCount = group.count;
+  else if (!isRedshiftServerless && machine) config.instanceCount = group.count;
   const os = operatingSystemOf(group);
   if (os && !isDatabaseOrCache(group)) config.operatingSystem = os;
   const engine = engineOf(group);
@@ -249,6 +267,15 @@ export function configurationOf(group: ResourceGroup): Record<string, string | n
         break;
     }
   }
+  // Redshift Serverless expresses its operational runtime as hours of active query activity
+  // per day (Calculator field: Query_period, range 0–24). Carry it from the workbook's own
+  // hours/month figure so the field mapper does not have to ask.
+  if (isRedshiftServerless) {
+    const hoursPerMonth = group.hoursPerMonth ?? group.hoursPerDay * 30;
+    const queryHoursPerDay = Math.min(24, Math.max(0, hoursPerMonth / 30));
+    if (queryHoursPerDay > 0) config.queryHoursPerDay = queryHoursPerDay;
+  }
+
   applyAnsweredRequirements(group, config);
   return config;
 }

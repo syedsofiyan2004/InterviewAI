@@ -351,7 +351,7 @@ function InterviewDetailsContent() {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <BackButton defaultHref="/interviews" defaultLabel="Evaluations" />
+        <BackButton defaultHref="/my-interviews" defaultLabel="HireRite" />
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-text-muted">Status</span>

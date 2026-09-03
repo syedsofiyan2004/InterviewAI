@@ -78,6 +78,9 @@ describe('machine groups', () => {
     expect(named({ service: 'Amazon RDS', size: 'db.t4g.medium', names: ['redis'], os: 'Redis' })).toBe('Amazon MemoryDB');
     expect(named({ service: 'Elastic Load Balancing', size: 'Internal Network Load Balancer' })).toBe('Network Load Balancer');
     expect(named({ service: 'Elastic Load Balancing', size: 'ALB external' })).toBe('Application Load Balancer');
+    // Redshift Serverless is detected by RPU quantities; provisioned uses ra3/dc2 instance classes.
+    expect(named({ service: 'Amazon Redshift', quantities: [{ unit: 'units/month', amount: 32, basis: 'RPU capacity', conversions: [] }] })).toBe('Amazon Redshift Serverless');
+    expect(named({ service: 'Amazon Redshift', size: 'ra3.xlplus' })).toBe('Amazon Redshift');
   });
 
   it('strips a sheet annotation from the instance class and carries a bare usage count with its basis for a model to place', () => {
@@ -162,5 +165,56 @@ describe('scenario and row pricing', () => {
     expect(first.region).toBe('us-east-1');
     expect(second.region).toBe('ap-south-1');
     expect(second.configuration).toEqual({ storageGb: 500 });
+  });
+});
+
+describe('Redshift Serverless semantic representation', () => {
+  const rpuGroup = (rpuCount: number, hoursPerMonth = 730) => group({
+    service: 'Amazon Redshift',
+    count: 1,
+    hoursPerMonth,
+    quantities: [
+      { unit: 'units/month', amount: rpuCount, basis: 'RPU capacity', conversions: [] },
+      { unit: 'GB/month', amount: 500, basis: 'managed storage', conversions: [] },
+    ],
+  });
+
+  it('returns "Amazon Redshift Serverless" when the group carries RPU-based quantities and no provisioned instance class', () => {
+    const [resource] = toSemanticResources({ segmentKey: 'prod', groups: [rpuGroup(32)], defaultRegion: 'ap-south-1' });
+    expect(resource.service).toBe('Amazon Redshift Serverless');
+  });
+
+  it('returns "Amazon Redshift" for a provisioned group with an ra3 or dc2 instance class', () => {
+    const provisioned = group({ service: 'Amazon Redshift', size: 'ra3.xlplus', count: 2 });
+    const [resource] = toSemanticResources({ segmentKey: 'prod', groups: [provisioned], defaultRegion: 'ap-south-1' });
+    expect(resource.service).toBe('Amazon Redshift');
+  });
+
+  it('populates usageCount + usageBasis for the RPU figure, storageGb for managed storage, and queryHoursPerDay derived from hours/month', () => {
+    const config = configurationOf(rpuGroup(32, 730));
+    expect(config.usageCount).toBe(32);
+    expect(config.usageBasis).toBe('RPU capacity');
+    expect(config.storageGb).toBe(500);
+    // 730 hours/month ÷ 30 ≈ 24.3 → capped at 24
+    expect(config.queryHoursPerDay).toBe(24);
+  });
+
+  it('scales queryHoursPerDay correctly for a part-active workload', () => {
+    // 300 hours/month ÷ 30 = 10 hours/day
+    const config = configurationOf(rpuGroup(16, 300));
+    expect(config.queryHoursPerDay).toBeCloseTo(10, 1);
+  });
+
+  it('does NOT set nodeCount for a serverless Redshift group (there are no nodes)', () => {
+    const config = configurationOf(rpuGroup(32));
+    expect(config).not.toHaveProperty('nodeCount');
+  });
+
+  it('S3 200 GB never produces an instanceType or nodeCount — storage ownership is preserved', () => {
+    const s3 = configurationOf(group({ service: 'Amazon S3', quantities: [{ unit: 'GB/month', amount: 200, basis: 'Standard storage', conversions: [] }] }));
+    expect(s3).toEqual({ storageGb: 200 });
+    expect(s3).not.toHaveProperty('instanceType');
+    expect(s3).not.toHaveProperty('nodeCount');
+    expect(s3).not.toHaveProperty('instanceCount');
   });
 });

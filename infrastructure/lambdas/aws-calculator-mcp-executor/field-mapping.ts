@@ -76,6 +76,10 @@ const SEMANTIC_FIELDS: SemanticFieldSpec[] = [
   { key: 'deployment', labels: [/deployment/i, /multi-?az/i], types: ['dropdown', 'columnCell'] },
   { key: 'dataTransferGb', labels: [/data transfer/i], types: ['fileSize', 'numericInput'], unitKey: 'dataTransferUnit', impliedUnit: 'GB' },
   { key: 'utilizationPct', labels: [/utilization/i], types: ['numericInput'] },
+  // Redshift Serverless: active query hours per day (0–24). Derived from the workbook's
+  // hours/month figure and carried as a semantic key so the Calculator's Query_period field
+  // is populated without inventing a number the customer did not state.
+  { key: 'queryHoursPerDay', labels: [/query period/i, /active query hours/i], types: ['numericInput'] },
 ];
 
 /** Keys that qualify another key (its unit, period or basis) and are never mapped on their own. */

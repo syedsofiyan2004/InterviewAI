@@ -23,7 +23,7 @@ export default function HubPage() {
       try {
         // allSettled so one app's endpoint failing never blanks the other cards.
         const [interviewsResult, momsResult, calculationsResult] = await Promise.allSettled([
-          api.getInterviews(),
+          api.getIntelligenceInterviews(),
           api.getMoms(),
           calculatorApi.getCalculations(),
         ]);
@@ -48,14 +48,14 @@ export default function HubPage() {
 
   const apps = useMemo(() => [
     {
-      title: 'Interview Evaluator',
-      description: 'Paste an interview transcript and a job description. Get a scored report with evidence for each competency.',
-      proof: 'Output: Score / Strengths / Red flags / PDF',
-      href: '/interviews',
+      title: 'HireRite',
+      description: 'Open scheduled interviews, prepare panel guides, sync Teams transcripts, and complete evidence-backed hiring reviews.',
+      proof: 'Output: Panel guide / Transcript / Review / PDF',
+      href: '/my-interviews',
       logoSrc: '/interview-evaluator-logo.png',
-      logoAlt: 'Interview Evaluator',
+      logoAlt: 'HireRite',
       icon: undefined as typeof Calculator | undefined,
-      statLabel: 'Evaluations',
+      statLabel: 'Interviews',
       stat: stats.interviews,
     },
     {
@@ -115,7 +115,7 @@ export default function HubPage() {
             <div className="mt-6 grid grid-cols-2 divide-x divide-border">
               <div className="pr-4">
                 <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.interviews}</p>
-                <p className="mt-1 text-xs text-text-muted">Evaluations</p>
+                <p className="mt-1 text-xs text-text-muted">HireRite</p>
               </div>
               <div className="pl-4">
                 <p className="text-3xl font-semibold tracking-tight text-text-primary">{stats.moms}</p>

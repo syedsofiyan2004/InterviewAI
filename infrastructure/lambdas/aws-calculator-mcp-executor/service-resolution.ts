@@ -115,6 +115,16 @@ function pickChildDeterministically(children: string[], resource: SemanticResour
   const storage = children.filter((child) => !/transfer/i.test(child));
   if (wantsTransfer && !wantsStorage && transfer.length === 1) return transfer[0];
   if (wantsStorage && !wantsTransfer && storage.length === 1) return storage[0];
+  // Redshift Serverless is RPU-based; provisioned uses ra3/dc2 instance types. When a parent
+  // envelope has both children, the presence of an RPU-based usageBasis or queryHoursPerDay in
+  // the semantic config is the deterministic signal to pick the serverless child.
+  const isServerlessRedshift = /rpu/i.test(String(resource.configuration.usageBasis || ''))
+    || 'queryHoursPerDay' in resource.configuration
+    || /serverless/i.test(resource.service);
+  if (isServerlessRedshift) {
+    const serverless = children.filter((child) => /serverless/i.test(child));
+    if (serverless.length === 1) return serverless[0];
+  }
   return undefined;
 }
 

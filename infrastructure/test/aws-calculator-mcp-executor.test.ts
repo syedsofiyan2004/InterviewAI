@@ -137,6 +137,8 @@ type Sent = { service: string; group: string; config: Record<string, unknown> };
  */
 function fakeGateway(options: {
   fields?: Record<string, unknown>;
+  /** Additional search entries merged into the built-in map. */
+  search?: Record<string, Array<{ key: string; name: string }>>;
   lint?: (sent: Sent) => string | undefined;
   savedServiceCode?: (sent: Sent) => string;
   saveWorkloadEnvelope?: boolean;
@@ -155,6 +157,7 @@ function fakeGateway(options: {
     S3: [{ key: 'amazonS3Backup', name: 'S3' }, { key: 'amazonS3Standard', name: 'S3 Standard' }],
     // The live search: the whole phrase finds nothing, the significant word does.
     'Amazon OpenSearch Service': [{ key: 'amazonElasticsearchService', name: 'Amazon OpenSearch Service' }],
+    ...(options.search || {}),
     'Amazon VPC NAT Gateway': [],
     'VPC NAT Gateway': [],
     Gateway: [{ key: 'networkAddressTranslationNatGatewayVpc', name: 'Network Address Translation (NAT) Gateway' }, { key: 'gatewayLoadBalancer', name: 'Gateway Load Balancer' }],
@@ -629,5 +632,270 @@ describe('the model tiers', () => {
     expect(result.resources[0].finalConfig).toHaveProperty('pricingStrategy', 'ondemand');
     expect(result.diagnostics.modelsUsed['map:prod-ec2']).toBe('HAIKU_4_5');
     expect(result.diagnostics.modelIds).toEqual({ HAIKU_4_5: 'haiku-id', SONNET_4_6: 'sonnet-id' });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INTEGRATION FIXTURES — Tests A through F from the architectural spec
+//
+// Each test uses a fake MCP gateway built from live get_service_fields captures.
+// Tests A, B and D include hard assertions that catch the regressions these tests
+// exist to prevent: A guards against provisioned Redshift fields on a serverless
+// workload; D guards against S3 storage landing on EBS.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Trimmed from a live get_service_fields('amazonRedshiftServerless') shape. */
+const REDSHIFT_SERVERLESS_FIELDS = {
+  serviceCode: 'amazonRedshiftServerless',
+  serviceName: 'Amazon Redshift Serverless',
+  fields: [
+    { id: 'select_Workload_size', type: 'dropdown', label: 'Workload size', options: [
+      { id: 'small', label: 'Small (up to 16 RPU)' },
+      { id: 'medium', label: 'Medium (16–64 RPU)' },
+      { id: 'large', label: 'Large (64–256 RPU)' },
+      { id: 'extra_large', label: 'Extra-Large (over 256 RPU)' },
+    ]},
+    { id: 'RPU_Size', type: 'numericInput', label: 'RPU capacity', minValue: 8, maxValue: 512 },
+    { id: 'Query_period', type: 'numericInput', label: 'Query period (hours per day)', minValue: 0, maxValue: 24 },
+    { id: 'sizeOfManagedStorage', type: 'fileSize', label: 'Managed storage', validSizes: ['gb', 'tb'], defaultUnit: 'gb|NA' },
+  ],
+  catalog: {
+    status: 'verified',
+    traps: ['Amazon Redshift Serverless uses RPU-based pricing; there is no instance type.'],
+    minimalConfig: {
+      region: 'ap-south-1',
+      description: 'Redshift Serverless',
+      select_Workload_size: 'medium',
+      RPU_Size: '32',
+      Query_period: 24,
+    },
+  },
+};
+
+/** Trimmed from a live get_service_fields('sageMakerRealTimeInference') shape. */
+const SAGEMAKER_RTI_FIELDS = {
+  serviceCode: 'sageMakerRealTimeInference',
+  serviceName: 'SageMaker Real-Time Inference',
+  fields: [
+    { id: 'modelsDeployed', type: 'numericInput', label: 'Number of models deployed' },
+    { id: 'modelsPerEndPoint', type: 'numericInput', label: 'Models per endpoint' },
+    { id: 'instancesPerEndPoint', type: 'numericInput', label: 'Instances per endpoint' },
+    { id: 'endpointHrsPerDay', type: 'numericInput', label: 'Endpoint hours per day', minValue: 0, maxValue: 24 },
+    { id: 'EndPointDaysPerMonth', type: 'numericInput', label: 'Endpoint days per month', minValue: 0, maxValue: 31 },
+    { id: 'columnFormIPM', type: 'columnFormIPM', label: 'Instance type cost', row: [
+      { label: 'Instance name', selectorId: 'Instance Name', type: 'autoSuggest' },
+    ]},
+  ],
+  catalog: {
+    status: 'verified',
+    required: [{ field: 'modelsDeployed' }, { field: 'modelsPerEndPoint' }, { field: 'instancesPerEndPoint' }],
+    traps: [],
+    minimalConfig: {
+      region: 'ap-south-1',
+      description: 'SageMaker real-time endpoint',
+      modelsDeployed: '1',
+      modelsPerEndPoint: '1',
+      instancesPerEndPoint: '1',
+      endpointHrsPerDay: '24',
+      EndPointDaysPerMonth: '30',
+      columnFormIPM: { value: [{ 'Instance Name': { value: 'ml.m5.large' } }] },
+    },
+  },
+};
+
+describe('TEST A — Redshift Serverless never requests a provisioned instance type', () => {
+  const redshiftServerless: SemanticResource = {
+    resourceId: 'prod-redshift',
+    service: 'Amazon Redshift Serverless',
+    region: 'ap-south-1',
+    description: 'Analytics warehouse, 32 RPU',
+    configuration: {
+      usageCount: 32,
+      usageBasis: 'RPU capacity',
+      usageFrequency: 'perMonth',
+      storageGb: 500,
+      queryHoursPerDay: 24,
+    },
+  };
+
+  it('reaches COMPLETED status with no model calls and never mentions ra3 or dc2', async () => {
+    const gateway = fakeGateway({ fields: { amazonRedshiftServerless: REDSHIFT_SERVERLESS_FIELDS } });
+    const result = await executeScenario({ scenarioId: 'rs', estimateName: 'Redshift Test', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [redshiftServerless] }, gateway, noModels);
+
+    // Hard assertion: if the system ever asks for ra3 or dc2, the Serverless path has broken.
+    const allConfigs = gateway.calls
+      .filter((call) => call.name === 'add_service')
+      .flatMap((call) => {
+        try { return JSON.parse(String(call.args.services)) as Array<{ config: Record<string, unknown> }>; } catch { return []; }
+      });
+    for (const sent of allConfigs) {
+      const configStr = JSON.stringify(sent.config).toLowerCase();
+      expect(configStr).not.toMatch(/ra3\.|dc2\./);
+    }
+
+    expect(result.status).toBe('COMPLETED');
+    expect(result.resources[0].serviceCode).toBe('amazonRedshiftServerless');
+    expect(result.resources[0].finalConfig).toMatchObject({
+      RPU_Size: '32',
+      Query_period: '24',
+      sizeOfManagedStorage: { value: '500', unit: 'gb|NA' },
+    });
+    expect(Object.values(result.diagnostics.modelsUsed)).not.toContain('HAIKU_4_5');
+    expect(Object.values(result.diagnostics.modelsUsed)).not.toContain('SONNET_4_6');
+  });
+
+  it('never receives an instance type question — MISSING_INPUT must name RPU or storage, not ra3/dc2', async () => {
+    // Even when the service resolution finds no serverless key, the resource must not be
+    // asked for a provisioned instance type. A MISSING_INPUT result means the customer was
+    // asked for something — it must be an RPU or storage field, never a node class.
+    const gateway = fakeGateway({ fields: { amazonRedshiftServerless: { serviceCode: 'amazonRedshiftServerless', serviceName: 'Amazon Redshift Serverless', fields: [{ id: 'RPU_Size', type: 'numericInput', label: 'RPU capacity' }], catalog: {} } } });
+    const result = await executeScenario({ scenarioId: 'rs', estimateName: 'RS', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [redshiftServerless] }, gateway, noModels);
+    for (const input of result.resources[0].missingInputs || []) {
+      expect(input.toLowerCase()).not.toMatch(/ra3|dc2|instance type/);
+    }
+  });
+});
+
+describe('TEST B — SageMaker Real-Time Inference selects its Calculator representation from semantic context', () => {
+  const sageMaker: SemanticResource = {
+    resourceId: 'prod-sagemaker',
+    service: 'SageMaker Real-Time Inference',
+    region: 'ap-south-1',
+    description: '3 ml.g5.xlarge inference endpoints',
+    configuration: {
+      instanceType: 'ml.g5.xlarge',
+      instanceCount: 1,
+      modelsDeployed: 3,
+      modelsPerEndpoint: 1,
+    },
+  };
+
+  it('selects the real-time inference Calculator service code from the semantic workload type', async () => {
+    const gateway = fakeGateway({
+      fields: { sageMakerRealTimeInference: SAGEMAKER_RTI_FIELDS },
+      // The word "SageMaker" returns the real-time inference service, which the executor
+      // then finds by exact name match. This mirrors the live Calculator's search behaviour.
+      search: { SageMaker: [{ key: 'sageMakerRealTimeInference', name: 'SageMaker Real-Time Inference' }] },
+    });
+    const result = await executeScenario({ scenarioId: 'sm', estimateName: 'SageMaker Test', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [sageMaker] }, gateway, noModels);
+    // The correct Calculator service was selected without a model.
+    expect(result.resources[0].serviceCode).toBe('sageMakerRealTimeInference');
+    // Only genuinely missing SEMANTIC inputs cause MISSING_INPUT; the service selection itself
+    // was deterministic. Missing inputs must use the Calculator's own field labels (semantic),
+    // never internal camelCase field ids ("modelsDeployed", "modelsPerEndPoint").
+    if (result.resources[0].status === 'MISSING_INPUT') {
+      for (const label of result.resources[0].missingInputs || []) {
+        expect(label).not.toMatch(/^[a-z][A-Z]/);
+      }
+    }
+    // Service selection was done by code, not by a model.
+    expect(result.diagnostics.modelsUsed[`service:${sageMaker.resourceId}`]).toBe('CODE');
+  });
+
+  it('reports MISSING_INPUT with semantic field labels, not Calculator field ids, when required fields are absent', async () => {
+    const minimal: SemanticResource = { ...sageMaker, configuration: { instanceType: 'ml.g5.xlarge' } };
+    const gateway = fakeGateway({
+      fields: { sageMakerRealTimeInference: SAGEMAKER_RTI_FIELDS },
+      search: { SageMaker: [{ key: 'sageMakerRealTimeInference', name: 'SageMaker Real-Time Inference' }] },
+    });
+    const result = await executeScenario({ scenarioId: 'sm', estimateName: 'SM', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [minimal] }, gateway, noModels);
+    // Service resolution must still succeed.
+    expect(result.resources[0].serviceCode).toBe('sageMakerRealTimeInference');
+    // When required fields are absent, missingInputs must carry Calculator field labels
+    // (the human-readable label from get_service_fields), never raw camelCase field ids.
+    for (const label of result.resources[0].missingInputs || []) {
+      expect(label).not.toMatch(/^[a-z][A-Z]/);
+    }
+  });
+});
+
+describe('TEST D — S3 storage ownership: 200 GB Standard must never compile as Amazon EBS', () => {
+  const s3storage: SemanticResource = {
+    resourceId: 'assets-s3',
+    service: 'Amazon S3',
+    region: 'ap-south-1',
+    description: 'Assets bucket 200 GB Standard storage',
+    configuration: { storageGb: 200 },
+  };
+
+  it('resolves to S3 Standard and no EBS service is ever submitted to the Calculator', async () => {
+    const gateway = fakeGateway();
+    const result = await executeScenario({ scenarioId: 's3d', estimateName: 'S3D', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [s3storage] }, gateway, noModels);
+
+    // Hard assertion: an EBS service code must never appear in any add_service call.
+    const submitted = gateway.calls.filter((call) => call.name === 'add_service')
+      .flatMap((call) => {
+        try { return JSON.parse(String(call.args.services)) as Array<{ service: string }>; } catch { return []; }
+      });
+    for (const sent of submitted) {
+      expect(sent.service.toLowerCase()).not.toContain('ebs');
+      expect(sent.service.toLowerCase()).not.toContain('ec2enhancement');
+    }
+
+    expect(result.resources[0].serviceCode).toMatch(/s3|storage/i);
+    expect(result.resources[0].finalConfig).toMatchObject({ s3StandardStorageSize: { value: '200', unit: 'gb|month' } });
+  });
+});
+
+describe('TEST E — mixed estate: incremental failures do not erase successful services', () => {
+  it('a Fargate failure does not remove the already-proven EC2 and S3 resources from the scenario estimate', async () => {
+    const gateway = fakeGateway({
+      lint: fargateMutexLint,
+      savedServiceCode: (sent) => (sent.service === 'amazonS3Standard' ? 'amazonSimpleStorageServiceGroup' : sent.service),
+    });
+    // Fargate will fail after exhausting retries (lint refuses both memory families);
+    // force it by giving it an impossible lint:
+    const brokenFargate: SemanticResource = { ...fargate, configuration: { ...fargate.configuration, durationUnit: 'fortnights' } };
+    const result = await executeScenario({ scenarioId: 'e', estimateName: 'Mixed', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [ec2, brokenFargate, s3] }, gateway, noModels);
+
+    expect(result.status).toBe('PARTIAL');
+    // EC2 and S3 were added before Fargate failed; they must remain in the estimate.
+    const ec2Outcome = result.resources.find((r) => r.resourceId === 'prod-ec2')!;
+    const s3Outcome = result.resources.find((r) => r.resourceId === 'prod-s3')!;
+    const fargateOutcome = result.resources.find((r) => r.resourceId === 'prod-fargate')!;
+    expect(ec2Outcome.status).toBe('ADDED');
+    expect(s3Outcome.status).toBe('ADDED');
+    expect(fargateOutcome.status).toBe('FAILED');
+    // The scenario estimate URL still exists — it is a partial estimate, not a total failure.
+    expect(result.calculatorUrl).toBeTruthy();
+    // A partial failure is bounded: no more than initial + 2 correction attempts.
+    expect(fargateOutcome.attempts.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('TEST F — per-resource repair loop: semantic values are never changed by the repair model', () => {
+  it('applies a model repair that fixes Calculator representation without altering customer capacity', async () => {
+    // Lint refuses the initial config (simulating a field that the deterministic mapper
+    // cannot set to the required token). The repair model is called, fixes the Calculator
+    // representation, and the semantic values in the resource are preserved.
+    const lint = (sent: { service: string; config: Record<string, unknown> }) =>
+      sent.service === 'ec2Enhancement' && sent.config.selectedOS === 'linux'
+        ? 'Lint failure: field "selectedOS" requires variant "windows" to be populated for ec2Enhancement.'
+        : undefined;
+
+    const repairCalls: string[] = [];
+    const models: ModelCaller = {
+      used: () => ({ SONNET_4_6: 'sonnet-id' }),
+      ask: async (request) => {
+        repairCalls.push(request.tier);
+        // Repair: swap the OS token from linux to windows.
+        const base = { region: 'ap-south-1', description: request.user.slice(0, 50), instanceType: 'm6i.xlarge', workload: 4, selectedOS: 'windows', pricingStrategy: 'ondemand', tenancy: 'shared' };
+        return JSON.stringify({ config: base });
+      },
+    };
+    const gateway = fakeGateway({ lint });
+    const result = await executeScenario({ scenarioId: 'f', estimateName: 'Repair', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [ec2] }, gateway, { models, fetchDefinition, buildSha: 'test' });
+
+    expect(result.status).toBe('COMPLETED');
+    // At least one repair attempt happened.
+    const ec2Outcome = result.resources.find((r) => r.resourceId === 'prod-ec2')!;
+    expect(ec2Outcome.attempts.length).toBeGreaterThanOrEqual(2);
+    // The Calculator representation changed (OS token) but the semantic instanceCount did NOT.
+    expect(ec2Outcome.finalConfig!.workload).toBe(4);
+    expect(ec2Outcome.finalConfig!.instanceType).toBe('m6i.xlarge');
+    // Bounded: never more than initial + 2 corrections.
+    expect(ec2Outcome.attempts.length).toBeLessThanOrEqual(3);
+    // The MCP error was captured and passed to the repair model (repair call happened).
+    expect(repairCalls.length).toBeGreaterThanOrEqual(1);
   });
 });

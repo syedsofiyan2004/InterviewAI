@@ -370,6 +370,7 @@ export interface InterviewIntelligenceRecord extends AnalysisProgress {
     mode: 'mock' | 'disabled' | 'live';
     meetingUrl?: string;
     meetingId?: string;
+    scheduledAt?: string;
     organizerUserId?: string;
     organizerEmail?: string;
     transcriptStatus: 'not_available' | 'pending' | 'transcribing' | 'mocked' | 'synced' | 'failed';
