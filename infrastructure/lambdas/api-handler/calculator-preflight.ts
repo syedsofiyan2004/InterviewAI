@@ -32,6 +32,12 @@ export function requirementFieldFor(question: PreflightQuestion): string | undef
   return undefined;
 }
 
+/** "Number of models deployed" → numberOfModelsDeployed: a semantic key named from the label. */
+export function semanticKeyFor(label: string): string {
+  const words = label.replace(/\(.*?\)/g, ' ').split(/[^A-Za-z0-9]+/).filter(Boolean);
+  return words.map((word, index) => (index === 0 ? word.toLowerCase() : word[0].toUpperCase() + word.slice(1).toLowerCase())).join('');
+}
+
 export interface PreflightEnrichment {
   plan: EstimatePlanV2;
   added: number;
@@ -68,8 +74,11 @@ export async function enrichPlanWithCalculatorPreflight(
   const unapplied: PreflightQuestion[] = [];
   let added = 0;
   for (const question of report.questions) {
-    const field = requirementFieldFor(question);
-    if (!field) {
+    // An input the vocabulary has no word for — "Number of models deployed", "Endpoint hours
+    // per day" — is still asked, under a field named from its own label. The pipeline stores
+    // the answer on the resource and the executor hands it to the Calculator as stated.
+    const field = requirementFieldFor(question) ?? `calculator.${semanticKeyFor(question.label)}`;
+    if (field === 'calculator.') {
       unapplied.push(question);
       continue;
     }

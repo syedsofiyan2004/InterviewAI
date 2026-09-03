@@ -2135,8 +2135,13 @@ export function materializePlanResources(
           resource = withConfiguration(resource, constraint.field, expected);
           break;
         default:
-          // Unknown fields remain requirements in the manifest and therefore make the run
-          // partial/unverifiable instead of being silently treated as applied.
+          // A Calculator-required input the preflight asked for by its own label. Stored on the
+          // row as stated; the semantic layer hands it to the executor under that name.
+          if (constraint.field.startsWith('calculator.')) {
+            resource = withConfiguration(resource, constraint.field, expected);
+          }
+          // Any other unknown field stays a requirement the run cannot verify, and is reported
+          // as review work rather than silently treated as applied.
           break;
       }
     }
@@ -2379,7 +2384,7 @@ export async function runEstimatePipeline(
     // A critical requirement the executor has no way to read back from the saved estimate is
     // review work for a person, and an estimate carrying one is complete but not verified.
     const unverifiable = (planRevision?.requirements || [])
-      .filter((requirement) => requirement.impact === 'critical' && !VERIFIABLE_REQUIREMENT_FIELDS.has(requirement.field))
+      .filter((requirement) => requirement.impact === 'critical' && !VERIFIABLE_REQUIREMENT_FIELDS.has(requirement.field) && !requirement.field.startsWith('calculator.'))
       .map((requirement) => `${requirement.field}: this requirement cannot be independently read back from the saved AWS Calculator estimate and needs a person to confirm it.`);
     const status = result.status === 'COMPLETED' && unverifiable.length ? 'NEEDS_REVIEW' : result.status;
     problems.push(...unverifiable);

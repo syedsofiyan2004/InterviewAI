@@ -107,6 +107,10 @@ describe('machine groups', () => {
 
     const bedrock = configurationOf(group({ service: 'Amazon Bedrock', configuration: { 'bedrock.model': 'Anthropic: Claude Sonnet 4', 'bedrock.tokens_per_call': { inputTokens: 2000, outputTokens: 500 } } }));
     expect(bedrock).toMatchObject({ model: 'Anthropic: Claude Sonnet 4', inputTokens: 2000, outputTokens: 500 });
+
+    // An answer to a question the preflight raised from the Calculator's own label.
+    const sagemaker2 = configurationOf(group({ service: 'Amazon SageMaker', configuration: { 'calculator.numberOfModelsDeployed': 3, 'calculator.endpointHoursPerDay': 24 } }));
+    expect(sagemaker2).toMatchObject({ numberOfModelsDeployed: 3, endpointHoursPerDay: 24 });
   });
 
   it('carries the EBS volume type only when the sheet names one', () => {

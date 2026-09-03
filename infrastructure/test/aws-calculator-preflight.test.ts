@@ -48,6 +48,35 @@ function fakeGateway() {
   };
 }
 
+import { enrichPlanWithCalculatorPreflight, semanticKeyFor } from '../lambdas/api-handler/calculator-preflight';
+
+describe('turning preflight gaps into Review questions', () => {
+  it('names a field from the Calculator label when the vocabulary has no word for the input', () => {
+    expect(semanticKeyFor('Number of models deployed')).toBe('numberOfModelsDeployed');
+    expect(semanticKeyFor('Endpoint hour(s) per day')).toBe('endpointHourPerDay');
+    expect(semanticKeyFor('SPICE capacity in gigabytes (GB)')).toBe('spiceCapacityInGigabytes');
+  });
+
+  it('adds a question for every Calculator-required input, mapped to a plan field the pipeline applies', async () => {
+    const gateway = fakeGateway();
+    const plan = {
+      planId: 'p', workbookId: 'w', status: 'READY' as const, currentRevisionId: 'r',
+      detectedDimensions: { regions: [], environments: [], scenarios: [], serviceFamilies: [], resourceCount: 1, mappedResourceCount: 1, excludedCount: 0, coveragePct: 100 },
+      unresolved: [], recommendedScenarios: [],
+      revisions: [{ revisionId: 'r', planId: 'p', createdAt: '2026-09-03T00:00:00.000Z', createdBy: 'system' as const, scenarios: [], requirements: [], decisions: [], hash: 'h'.repeat(16) }],
+    };
+    const resources = [{ raw: 'db', service: 'Amazon RDS PostgreSQL', size: 'db.r6g.large', quantity: '2', os: 'PostgreSQL' }];
+    const enriched = await enrichPlanWithCalculatorPreflight(plan, resources, 'ap-south-1', gateway, [], 10_000);
+    expect(enriched.added).toBe(1);
+    expect(enriched.plan.status).toBe('NEEDS_INPUT');
+    const [question] = enriched.plan.unresolved;
+    // "Deployment option" has a vocabulary word, so the plan's own field is used and the
+    // Calculator's choices become the dropdown; the scope is the parsed row's index.
+    expect(question).toMatchObject({ field: 'database.multi_az', scope: ['resource:0'], options: ['Single-AZ', 'Multi-AZ'], impact: 'high' });
+    expect(question.prompt).toMatch(/Amazon RDS for PostgreSQL: Deployment option/);
+  });
+});
+
 describe('semantic preflight', () => {
   it('asks for the instance class an EC2 row lacks, as a searchable control, and never touches an estimate', async () => {
     const gateway = fakeGateway();
