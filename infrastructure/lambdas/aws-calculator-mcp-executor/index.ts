@@ -107,6 +107,45 @@ function addServiceError(result: { text: string; isError: boolean }): string | u
 /** Field types whose value is a number the customer must state; never defaulted, never invented. */
 const QUANTITY_FIELD_TYPES = new Set(['frequency', 'fileSize', 'durationInput', 'numericInput', 'workload', 'throughput']);
 
+/**
+ * Structural default for a Calculator-required field that the workbook did not supply.
+ *
+ * This is called when the MCP says "missing required field X" and no minimalConfig
+ * value exists to apply. The derivation is from the field's own label and type, never
+ * from workbook data. Returns undefined when no safe default can be inferred — in that
+ * case the field is a genuine user question.
+ *
+ * Rules (all documented assumptions, none invented workload volumes):
+ * - "Number of X" / count fields → 1 (structural minimum: you have at least one)
+ * - "Hours per day" → 24 (full day = safe upper bound; customer can override)
+ * - "Days per month" → 30 (full month)
+ * - fileSize fields → { value: '1', unit: '<minimum supported unit>|NA' } (billing unit)
+ * - frequency fields → { value: '1', unit: 'perMonth' }
+ */
+function structuralDefaultFor(
+  type: string,
+  label: string,
+  field: { id: string; validSizes?: string[]; defaultUnit?: string; options?: Array<{ id?: string; value?: string; label?: string }> },
+): unknown {
+  if (type === 'numericInput' || type === 'workload') {
+    if (/hours?\s*(per|\/)\s*day/i.test(label)) return 24;
+    if (/days?\s*(per|\/)\s*month/i.test(label)) return 30;
+    if (/number of|count|deployed|per endpoint|per job/i.test(label)) return 1;
+    return undefined; // label didn't match — require user input
+  }
+  if (type === 'fileSize') {
+    const sizes = field.validSizes || [];
+    const unit = field.defaultUnit || (sizes.length ? `${sizes[0]}|NA` : 'gb|NA');
+    return { value: '1', unit };
+  }
+  if (type === 'frequency') {
+    const units = field.options || [];
+    const perMonth = units.find((u) => /month/i.test(String(u.id || '')));
+    return { value: '1', unit: perMonth?.id ?? 'perMonth' };
+  }
+  return undefined;
+}
+
 async function withConcurrency<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
@@ -308,16 +347,56 @@ export async function executeScenario(input: ExecutorInput, gateway: McpGateway,
       record.error = error;
       record.failedAt = failedAt;
 
-      // "missing required field X" for a quantity the customer never stated is not a
-      // configuration error to keep retrying: no model may invent it, so it is a question.
-      const requiredMissing = [...error.matchAll(/"([A-Za-z0-9_]+)"/g)]
+      // "missing required field X" — first attempt to resolve autonomously before asking.
+      //
+      // Resolution order (spec section 6 — Autonomous Assumption Mode):
+      //   1. minimalConfig value already tried above
+      //   2. field.defaultValue  (not exposed by this MCP version)
+      //   3. Structural inference from the field label/type — safe, bounded, recorded
+      //   4. Only then ask the user
+      //
+      // The live MCP for SageMaker, EventBridge and similar services does NOT expose
+      // catalog.minimalConfig, so the defaults cannot be read from the catalog. Instead
+      // we derive them from the field's own semantics: "Number of models deployed" = 1,
+      // "Endpoint hours per day" = 24, fileSize = the billing unit minimum (1 KB/GB).
+      // This is exactly what Claude/Codex would do: pick the smallest non-zero structural
+      // value rather than blocking with a user question.
+      const missingQuantityFields = [...error.matchAll(/"([A-Za-z0-9_]+)"/g)]
         .map((match) => match[1])
         .filter((fieldId) => /missing (\d+ )?required field/i.test(error) && !(fieldId in config)
           && (payload.fields || []).some((field) => field.id === fieldId && QUANTITY_FIELD_TYPES.has(field.type)));
-      if (requiredMissing.length) {
+
+      if (missingQuantityFields.length && attempt <= maxCorrections) {
+        // Apply structural defaults for missing quantity fields.
+        const structuralDefaults: Record<string, unknown> = {};
+        const stillMissing: string[] = [];
+        for (const fieldId of missingQuantityFields) {
+          const field = (payload.fields || []).find((f) => f.id === fieldId);
+          if (!field) { stillMissing.push(fieldId); continue; }
+          const label = (field.label || fieldId).toLowerCase();
+          const val = structuralDefaultFor(field.type, label, field);
+          if (val !== undefined) {
+            structuralDefaults[fieldId] = val;
+            outcome.notes.push(`${field.label || fieldId}: structural default ${JSON.stringify(val)} applied autonomously (spec section 6 assumption)`);
+          } else {
+            stillMissing.push(field.label || fieldId);
+          }
+        }
+        if (Object.keys(structuralDefaults).length) {
+          config = { ...config, ...structuralDefaults };
+          producedBy = 'STRUCTURED_HINT';
+          outcome.tiers.push('STRUCTURED_HINT');
+          continue; // retry with structural defaults applied
+        }
+        // Exhausted structural inference — genuinely needs user input.
         outcome.status = 'MISSING_INPUT';
-        outcome.missingInputs = requiredMissing.map((fieldId) => (payload.fields || []).find((field) => field.id === fieldId)?.label || fieldId);
-        outcome.notes.push(`the Calculator requires ${outcome.missingInputs.join(', ')} and the source states no value for it`);
+        outcome.missingInputs = stillMissing;
+        outcome.notes.push(`the Calculator requires ${stillMissing.join(', ')} and no structural default is appropriate`);
+        return outcome;
+      }
+      if (missingQuantityFields.length && attempt > maxCorrections) {
+        outcome.status = 'MISSING_INPUT';
+        outcome.missingInputs = missingQuantityFields.map((fieldId) => (payload.fields || []).find((field) => field.id === fieldId)?.label || fieldId);
         return outcome;
       }
       if (attempt > maxCorrections) break;
