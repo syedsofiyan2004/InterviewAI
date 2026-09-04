@@ -226,6 +226,13 @@ function CalculationDetailContent() {
   }
 
   const result = data?.result ?? null;
+  // The top-level Calculator URL, found in priority order: full result URL →
+  // first scenario URL → first scenario_summary URL. This ensures the link shows
+  // even when browser validation failed (NEEDS_REVIEW with null monthlyTotal).
+  const primaryUrl = result?.url
+    || result?.scenarios?.[0]?.url
+    || data?.scenario_summaries?.[0]?.calculatorUrl
+    || null;
   // BUILDING and VALIDATING are sub-states of the execution run emitted by the
   // orchestrator since the architectural refactor; PROCESSING is the legacy alias.
   // CONFIRMED means the plan is locked and the worker is about to start.
@@ -376,6 +383,24 @@ function CalculationDetailContent() {
         </div>
       )}
 
+      {/* When we have a Calculator URL but no full result yet (e.g. large result in S3
+          not loaded, or browser validation returned no totals), show the link prominently
+          so the user is never left with a blank page after a successful build. */}
+      {!result && primaryUrl && data?.status !== 'FAILED' && (
+        <div className="card p-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">AWS Pricing Calculator estimate</p>
+            <p className="mt-1 text-sm text-text-secondary">Open the link for live pricing — the Calculator renders totals when the page loads.</p>
+          </div>
+          <a href={primaryUrl} target="_blank" rel="noopener noreferrer"
+            className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+            <PiggyBank size={15} />
+            Open AWS Pricing Calculator
+            <ExternalLink size={15} />
+          </a>
+        </div>
+      )}
+
       {result && data?.status !== 'FAILED' && (
         <>
           <div className="card p-6">
@@ -416,9 +441,9 @@ function CalculationDetailContent() {
                 {/* The AWS Calculator link is always the primary action — it is the product.
                     Downloads are secondary; they come after. Single-scenario estimates show
                     the link here; multi-scenario links appear in the scenario table below. */}
-                {result.url && (result.scenarios?.length || 0) <= 1 && (
+                {primaryUrl && (result?.scenarios?.length || 0) <= 1 && (
                   <a
-                    href={result.url}
+                    href={primaryUrl!}
                     target="_blank"
                     rel="noopener noreferrer"
                     title={data?.status === 'PARTIAL'

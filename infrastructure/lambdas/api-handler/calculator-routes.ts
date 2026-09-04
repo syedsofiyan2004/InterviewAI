@@ -875,10 +875,24 @@ export async function getCalculationResult(
   const { item, error } = await loadOwned(id, userId);
   if (error) return error;
 
+  // When the result is too large to store inline, load it from S3 for terminal states.
+  // During execution (PROCESSING, BUILDING, VALIDATING) there is nothing to load yet, so
+  // only do the S3 round-trip when the run has finished. The view page shows blank when
+  // the inline result is null and the S3 key is not consulted.
+  const TERMINAL = new Set(['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED']);
+  let result = item!.result ?? null;
+  if (!result && item!.result_s3_key && TERMINAL.has(item!.status)) {
+    try {
+      result = await loadFullCalculationResult(BUCKET_NAME, item!);
+    } catch (loadErr) {
+      console.warn(`[calculator] could not load result from S3 for ${item!.calculation_id}:`, loadErr);
+    }
+  }
+
   return successResponse({
     calculation_id: item!.calculation_id,
     status: item!.status,
-    result: item!.result ?? null,
+    result,
     error_message: item!.error_message ?? null,
     progress_stage: item!.progress_stage ?? null,
     progress_message: item!.progress_message ?? null,
