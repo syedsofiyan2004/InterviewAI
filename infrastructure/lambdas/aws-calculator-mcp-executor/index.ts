@@ -92,14 +92,29 @@ const jsonOf = (text: string): Record<string, unknown> | undefined => {
   }
 };
 
-/** add_service reports per-service failures inside a success envelope; both are read. */
+/**
+ * add_service reports per-service failures inside a success envelope; both are read.
+ *
+ * The MCP returns success:true even for partially-configured services, but includes
+ * partial:true and next_step with the missing fields. Treat this as a soft error so
+ * the repair loop can apply structural defaults before validate_estimate is called —
+ * if we wait for validate, the partial configuration is already in the probe estimate
+ * and the repair creates a new probe anyway.
+ */
 function addServiceError(result: { text: string; isError: boolean }): string | undefined {
   if (result.isError) return result.text;
   const parsed = jsonOf(result.text);
   const entries: unknown[] = Array.isArray(parsed) ? parsed : Array.isArray((parsed as { results?: unknown[] })?.results) ? (parsed as { results: unknown[] }).results : parsed ? [parsed] : [];
   for (const entry of entries) {
-    const record = entry as { error?: unknown; success?: boolean } | undefined;
-    if (record && (record.error || record.success === false)) return typeof record.error === 'string' ? record.error : JSON.stringify(record);
+    const record = entry as { error?: unknown; success?: boolean; partial?: boolean; next_step?: string; missing_required_fields?: string[] } | undefined;
+    if (!record) continue;
+    if (record.error || record.success === false) return typeof record.error === 'string' ? record.error : JSON.stringify(record);
+    // partial:true means the service was accepted but with missing fields; surface the next_step
+    // hint so the repair loop can read the required field names from it directly.
+    if (record.partial) {
+      const fields = Array.isArray(record.missing_required_fields) ? record.missing_required_fields : [];
+      return record.next_step || (fields.length ? `missing required fields: ${fields.map((f) => `"${f}"`).join(', ')}` : JSON.stringify(record));
+    }
   }
   return undefined;
 }
@@ -128,8 +143,9 @@ function structuralDefaultFor(
   field: { id: string; validSizes?: string[]; defaultUnit?: string; options?: Array<{ id?: string; value?: string; label?: string }> },
 ): unknown {
   if (type === 'numericInput' || type === 'workload') {
-    if (/hours?\s*(per|\/)\s*day/i.test(label)) return 24;
-    if (/days?\s*(per|\/)\s*month/i.test(label)) return 30;
+    // Allow optional "(s)" between the unit word and "per", e.g. "Endpoint hour(s) per day"
+    if (/hours?(?:\([^)]*\))?\s*(per|\/)\s*day/i.test(label)) return 24;
+    if (/days?(?:\([^)]*\))?\s*(per|\/)\s*month/i.test(label)) return 30;
     if (/number of|count|deployed|per endpoint|per job/i.test(label)) return 1;
     return undefined; // label didn't match — require user input
   }
