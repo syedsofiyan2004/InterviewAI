@@ -85,7 +85,7 @@ describe('not asking twice', () => {
       { id: 'durationOfEachRequest', type: 'numericInput', label: 'Duration of each request (in ms)' },
       { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
     ],
-    catalog: { minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'perMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' } } },
+    catalog: { required: [{ field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'perMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' } } },
   };
   const lambdaGateway = () => {
     const base = fakeGateway();

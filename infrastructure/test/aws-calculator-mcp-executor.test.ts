@@ -471,7 +471,7 @@ describe('an annual volume against a Calculator with no per-year period', () => 
         { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
         { id: 'selectArchitectureConcurrency', type: 'dropdown', label: 'Architecture', options: [{ id: '1' }, { id: '2' }] },
       ],
-      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
+      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }, { field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
     };
     const gateway = fakeGateway({ fields: { aWSLambda: LAMBDA_FIELDS } });
     const lambda: SemanticResource = { resourceId: 'bff', service: 'AWS Lambda', region: 'ap-south-1', configuration: { requestCount: 177_426_000, requestFrequency: 'perYear', memoryMb: 512, requestDurationMs: 200 } };
@@ -514,7 +514,7 @@ describe('a model may not invent a quantity', () => {
         { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
         { id: 'selectArchitectureConcurrency', type: 'dropdown', label: 'Architecture', options: [{ id: '1' }, { id: '2' }] },
       ],
-      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
+      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }, { field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
     };
     const models: ModelCaller = {
       used: () => ({ HAIKU_4_5: 'haiku-id' }),

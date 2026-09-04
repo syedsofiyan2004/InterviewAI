@@ -14,7 +14,7 @@
  * the "730 hours priced as 730 minutes" bug in a new coat.
  */
 
-import { resolveUnitToken, validateValue, type ServiceDefinition } from '../calculator-orchestrator/calculator-definitions';
+import { resolveUnitToken, validateValue, type ServiceDefinition } from './service-definition.js';
 import {
   fileSizeUnit,
   matchFrequency,
@@ -554,6 +554,26 @@ export function mapDeterministically(
       result.defaultsApplied[fieldId] = token;
     } else {
       result.missingInputs.push(label);
+    }
+  }
+
+  // Apply minimalConfig defaults for structural fields NOT in catalog.required.
+  // These are safe-to-default fields: columnFormIPM secondaries (OpenSearch dedicated-master
+  // tables that must be zeroed or the Calculator adds phantom cost) and simple dropdown/
+  // checkbox choices where the minimalConfig value is the verified working default.
+  // Quantity fields (numericInput, fileSize, frequency, etc.) are deliberately excluded —
+  // those are workload dimensions the customer must supply.
+  const SAFE_DEFAULT_TYPES = new Set(['columnFormIPM', 'dropdown', 'checkbox', 'radioTiles']);
+  for (const [fieldId, minValue] of Object.entries(minimal)) {
+    if (fieldId in result.config) continue;
+    if (fieldId === 'region' || fieldId === 'description' || fieldId === 'pricingStrategy') continue;
+    const field = fields.find((entry) => entry.id === fieldId);
+    if (!field) continue;
+    if (field.type === 'columnFormIPM' && field === result.columnForm) continue; // already handled
+    if (SAFE_DEFAULT_TYPES.has(field.type)) {
+      result.config[fieldId] = minValue;
+      result.defaultsApplied[fieldId] = minValue;
+      result.notes.push(`${field.label || fieldId}: MCP minimalConfig default applied (${JSON.stringify(minValue)})`);
     }
   }
 

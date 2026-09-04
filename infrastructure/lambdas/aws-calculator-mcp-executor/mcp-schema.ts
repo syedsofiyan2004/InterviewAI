@@ -81,14 +81,24 @@ export function parseFieldsPayload(text: string): McpFieldsPayload {
   return parsed as McpFieldsPayload;
 }
 
-/** The field ids the catalog marks required, plus every key its minimal config sets. */
+/**
+ * The field ids explicitly marked required by the Calculator MCP catalog.
+ *
+ * Deliberately excludes minimalConfig keys. Those are verified working DEFAULTS,
+ * not requirements — treating them as requirements was causing the executor to push
+ * SageMaker's modelsDeployed, EventBridge's payload size, etc. to MISSING_INPUT
+ * even when the MCP's own minimalConfig supplies safe structural defaults for them.
+ *
+ * Resolution order in field-mapping.ts:
+ *   1. canonical workload value
+ *   2. catalog.required field (user must supply)
+ *   3. catalog.minimalConfig value (safe structural default, recorded as assumption)
+ *   4. field.defaultValue
+ */
 export function requiredFieldIds(payload: McpFieldsPayload): string[] {
-  const ids = new Set<string>();
-  for (const entry of payload.catalog?.required || []) if (entry.field) ids.add(entry.field);
-  for (const key of Object.keys(payload.catalog?.minimalConfig || {})) {
-    if (key !== 'region' && key !== 'description') ids.add(key);
-  }
-  return [...ids];
+  return (payload.catalog?.required || [])
+    .map((entry) => entry.field)
+    .filter(Boolean);
 }
 
 /** Option token for a value: by id, by value, by label, numerically, case-insensitively. */

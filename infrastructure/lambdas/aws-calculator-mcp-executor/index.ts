@@ -23,7 +23,7 @@
 
 import { createHash } from 'crypto';
 
-import { fetchServiceDefinition, type ServiceDefinition } from '../calculator-orchestrator/calculator-definitions';
+import { fetchServiceDefinition, type ServiceDefinition } from './service-definition.js';
 import { mapDeterministically } from './field-mapping';
 import { bedrockModelCaller, type ModelCaller } from './model-calls';
 import { mixedPricingScope, resolvePricing } from './pricing-intent';
