@@ -875,17 +875,21 @@ export async function getCalculationResult(
   const { item, error } = await loadOwned(id, userId);
   if (error) return error;
 
-  // When the result is too large to store inline, load it from S3 for terminal states.
-  // During execution (PROCESSING, BUILDING, VALIDATING) there is nothing to load yet, so
-  // only do the S3 round-trip when the run has finished. The view page shows blank when
-  // the inline result is null and the S3 key is not consulted.
+  // For terminal states, always serve the full S3 result when available so the view page
+  // shows real costs, real URLs and real assumptions — not the compact DynamoDB copy whose
+  // line items and detailed assumptions were stripped to meet the 400 KB item limit.
+  //
+  // The compact copy stores a "too large to display inline" warning so callers know to
+  // look in S3; loading from S3 removes the need to show that warning to users at all.
   const TERMINAL = new Set(['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED']);
   let result = item!.result ?? null;
-  if (!result && item!.result_s3_key && TERMINAL.has(item!.status)) {
+  const hasTooLargeWarning = result?.warnings?.some((w) => /too large to display inline/i.test(w));
+  if (item!.result_s3_key && TERMINAL.has(item!.status) && (!result || hasTooLargeWarning)) {
     try {
       result = await loadFullCalculationResult(BUCKET_NAME, item!);
     } catch (loadErr) {
-      console.warn(`[calculator] could not load result from S3 for ${item!.calculation_id}:`, loadErr);
+      console.warn(`[calculator] could not load full result from S3 for ${item!.calculation_id}:`, loadErr);
+      // Fall back to the compact inline copy — better than nothing.
     }
   }
 
