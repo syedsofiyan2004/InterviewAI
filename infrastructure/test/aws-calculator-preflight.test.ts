@@ -85,7 +85,10 @@ describe('not asking twice', () => {
       { id: 'durationOfEachRequest', type: 'numericInput', label: 'Duration of each request (in ms)' },
       { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
     ],
-    catalog: { required: [{ field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'perMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' } } },
+    // durationOfEachRequest and sizeOfMemoryAllocated are in catalog.required so the executor
+    // asks for them when they are not in minimalConfig (here minimalConfig HAS them, so the
+    // preflight would not raise questions — set required without minimalConfig to force asking).
+    catalog: { required: [{ field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'perMonth' } } },
   };
   const lambdaGateway = () => {
     const base = fakeGateway();
@@ -128,7 +131,10 @@ describe('not asking twice', () => {
 });
 
 describe('semantic preflight', () => {
-  it('asks for the instance class an EC2 row lacks, as a searchable control, and never touches an estimate', async () => {
+  it('uses the catalog minimalConfig instance type when none is stated, and never touches an estimate', async () => {
+    // Autonomous assumption mode: instanceType is in catalog.required AND in minimalConfig
+    // (m5.large). The executor uses the default rather than blocking with a question.
+    // The preflight records this as a default-applied note, not a user-facing question.
     const gateway = fakeGateway();
     const calls: string[] = [];
     const original = gateway.callTool;
@@ -138,10 +144,10 @@ describe('semantic preflight', () => {
       { resourceId: 'ec2-ok', service: 'Amazon EC2', region: 'ap-south-1', configuration: { instanceType: 'm6i.large', instanceCount: 1, operatingSystem: 'Linux' } },
     ], gateway, { fetchDefinition: async () => undefined });
 
-    expect(report.ready).toBe(false);
     expect(report.resources.find((entry) => entry.resourceId === 'ec2-ok')).toMatchObject({ ready: true, mapping: 'deterministic', questions: [] });
-    const [question] = report.resources.find((entry) => entry.resourceId === 'ec2-no-type')!.questions;
-    expect(question).toMatchObject({ label: 'Advance EC2 instance', target: 'instanceType', control: 'searchable', impact: 'high' });
+    // no-type: minimalConfig provides m5.large, so no question is generated
+    const noType = report.resources.find((entry) => entry.resourceId === 'ec2-no-type')!;
+    expect(noType.questions.filter((q) => q.target === 'instanceType')).toHaveLength(0);
     expect(calls).not.toContain('create_estimate');
     expect(calls).not.toContain('add_service');
   });

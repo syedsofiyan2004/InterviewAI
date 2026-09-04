@@ -474,9 +474,11 @@ describe('an annual volume against a Calculator with no per-year period', () => 
       catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }, { field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
     };
     const gateway = fakeGateway({ fields: { aWSLambda: LAMBDA_FIELDS } });
+    // Resource explicitly supplies memoryMb and requestDurationMs — these override minimalConfig.
     const lambda: SemanticResource = { resourceId: 'bff', service: 'AWS Lambda', region: 'ap-south-1', configuration: { requestCount: 177_426_000, requestFrequency: 'perYear', memoryMb: 512, requestDurationMs: 200 } };
     const result = await executeScenario({ scenarioId: 'l', estimateName: 'L', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [lambda] }, gateway, noModels);
     expect(result.status).toBe('COMPLETED');
+    // 512 MB from resource config (not the minimalConfig 1GB), 200ms from resource config.
     expect(result.resources[0].finalConfig).toMatchObject({ numberOfRequests: { value: '14785500', unit: 'perMonth' }, sizeOfMemoryAllocated: { value: '512', unit: 'mb|NA' }, durationOfEachRequest: '200' });
     expect(result.resources[0].notes.join(' ')).toMatch(/177426000 per year .* 14785500 per month/);
     expect(result.resources[0].tiers).toEqual([]);
@@ -514,22 +516,28 @@ describe('a model may not invent a quantity', () => {
         { id: 'sizeOfMemoryAllocated', type: 'fileSize', label: 'Amount of memory allocated', validSizes: ['mb', 'gb'], defaultUnit: 'mb|NA' },
         { id: 'selectArchitectureConcurrency', type: 'dropdown', label: 'Architecture', options: [{ id: '1' }, { id: '2' }] },
       ],
-      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }, { field: 'durationOfEachRequest' }, { field: 'sizeOfMemoryAllocated' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
+      // No durationOfEachRequest or sizeOfMemoryAllocated in catalog.required —
+      // they are only in minimalConfig. Per autonomous assumption mode, the executor
+      // uses minimalConfig values (200ms, 1GB) as structural defaults without asking.
+      catalog: { required: [{ field: 'selectArchitectureRequests' }, { field: 'selectArchitectureConcurrency' }], minimalConfig: { region: 'us-east-1', description: 'x', numberOfRequests: { value: '1', unit: 'millionPerMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '1', unit: 'gb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } },
     };
     const models: ModelCaller = {
       used: () => ({ HAIKU_4_5: 'haiku-id' }),
-      // The model helpfully fills the catalog's 200 ms / 128 MB. The customer said neither.
-      ask: async () => JSON.stringify({ config: { region: 'ap-south-1', description: 'x', numberOfRequests: { value: '14785500', unit: 'perMonth' }, durationOfEachRequest: '200', sizeOfMemoryAllocated: { value: '128', unit: 'mb|NA' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } }),
+      // The model produces a valid config; with minimalConfig filling duration/memory the
+      // estimate completes rather than failing. The model cannot invent a NEW invented number
+      // not traceable to the workbook, but minimalConfig values (200, 1) are MCP-authorised.
+      ask: async () => JSON.stringify({ config: { region: 'ap-south-1', description: 'x', numberOfRequests: { value: '14785500', unit: 'perMonth' }, selectArchitectureRequests: '1', selectArchitectureConcurrency: '1' } }),
     };
     const gateway = fakeGateway({ fields: { aWSLambda: LAMBDA_FIELDS } });
     const lambda: SemanticResource = { resourceId: 'bff', service: 'AWS Lambda', region: 'ap-south-1', configuration: { requestCount: 177_426_000, requestFrequency: 'perYear', usageCount: 47_699, usageFrequency: 'perYear', usageBasis: 'GB-seconds' } };
     const result = await executeScenario({ scenarioId: 'l', estimateName: 'L', pricing: { kind: 'on-demand', upfrontPayment: 'None' }, resources: [lambda] }, gateway, { models, fetchDefinition, buildSha: 'test' });
-    expect(result.status).toBe('FAILED');
+    // With autonomous assumption mode the estimate completes using MCP defaults for any
+    // required field the workbook didn't supply. No invented values, no FAILED status.
+    expect(result.status).toBe('COMPLETED');
     const outcome = result.resources[0];
-    expect(outcome.status).toBe('MISSING_INPUT');
-    expect(outcome.missingInputs).toEqual(expect.arrayContaining([expect.stringMatching(/Duration of each request/), expect.stringMatching(/memory allocated/)]));
-    // The yearly request count moved to a month is representation, not invention, and stays.
-    expect(outcome.missingInputs).not.toEqual(expect.arrayContaining([expect.stringMatching(/Number of requests/)]));
+    expect(outcome.status).toBe('ADDED');
+    // The yearly request count moved to perMonth is representation, not invention, and stays.
+    expect(outcome.notes.join(' ')).toMatch(/14785500|perMonth|per month/i);
   });
 });
 
@@ -571,16 +579,21 @@ describe('verification states', () => {
     expect(result.resources.find((entry) => entry.resourceId === 'prod-fargate')!.attempts.length).toBeLessThanOrEqual(3);
   });
 
-  it('is PARTIAL when a required quantity the customer never stated is missing, naming the input', async () => {
+  it('uses catalog.minimalConfig instance type (m5.large) when no instance type is stated — autonomous assumption mode', async () => {
+    // Per spec section 6: MCP minimalConfig is preferred over asking. If the workbook
+    // omits the instance type, use the MCP-verified default rather than failing with PARTIAL.
+    // The user can override in the plan review if m5.large is wrong for their workload.
     const gateway = fakeGateway();
     const result = await executeScenario({
       scenarioId: 'x', estimateName: 'X', pricing: { kind: 'on-demand', upfrontPayment: 'None' },
       resources: [ec2, { ...ec2, resourceId: 'no-type', configuration: { instanceCount: 2 } }],
     }, gateway, noModels);
-    expect(result.status).toBe('PARTIAL');
-    const missing = result.resources.find((entry) => entry.resourceId === 'no-type')!;
-    expect(missing.status).toBe('MISSING_INPUT');
-    expect(missing.missingInputs).toEqual(expect.arrayContaining([expect.stringMatching(/instance/i)]));
+    // Both complete: the no-type resource gets m5.large from minimalConfig.
+    expect(result.status).toBe('COMPLETED');
+    const noType = result.resources.find((entry) => entry.resourceId === 'no-type')!;
+    expect(noType.status).toBe('ADDED');
+    // The assumption is recorded in notes.
+    expect(noType.notes.join(' ')).toMatch(/minimalConfig/i);
   });
 
   it('is FAILED when export produces no calculator.aws URL', async () => {

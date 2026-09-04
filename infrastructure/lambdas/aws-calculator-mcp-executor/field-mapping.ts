@@ -540,9 +540,22 @@ export function mapDeterministically(
     }
     const isQuantity = !type || QUANTITY_TYPES.has(type);
     if (isQuantity) {
-      // A number the customer did not state is a question for the customer, not a default:
-      // a default count or duration is a cost that came from nowhere.
-      result.missingInputs.push(label);
+      // Resolution order (spec section 6 — Autonomous Assumption Mode):
+      //   A. canonical workload value — already handled above (would be in result.config)
+      //   B. catalog.minimalConfig — MCP-verified structural default
+      //   C. ask user only as last resort
+      //
+      // Examples: SageMaker modelsDeployed=1, EventBridge payload=1KB are verified MCP
+      // defaults that an AI agent (Claude, Codex) would use autonomously. Ask only when
+      // no MCP-provided default exists for a genuinely workload-specific dimension.
+      if (fieldId in minimal) {
+        result.config[fieldId] = minimal[fieldId];
+        result.defaultsApplied[fieldId] = minimal[fieldId];
+        result.notes.push(`${label}: used MCP catalog.minimalConfig default (${JSON.stringify(minimal[fieldId])}); override in plan if this workload requires a different value`);
+      } else {
+        // No MCP default — this is genuinely customer-specific.
+        result.missingInputs.push(label);
+      }
       continue;
     }
     if (fieldId in minimal) {

@@ -96,9 +96,13 @@ export function parseFieldsPayload(text: string): McpFieldsPayload {
  *   4. field.defaultValue
  */
 export function requiredFieldIds(payload: McpFieldsPayload): string[] {
+  // Deduplicated: the live MCP occasionally lists the same field twice in catalog.required
+  // (observed for EventBridge's Size_of_the_payload), which would cause it to appear twice
+  // in missingInputs and twice in the user-facing error message.
+  const seen = new Set<string>();
   return (payload.catalog?.required || [])
     .map((entry) => entry.field)
-    .filter(Boolean);
+    .filter((field): field is string => Boolean(field) && !seen.has(field) && !!seen.add(field));
 }
 
 /** Option token for a value: by id, by value, by label, numerically, case-insensitively. */
