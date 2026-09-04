@@ -411,3 +411,94 @@ export function intentFromRequest(request: PricingModelRequest | string | undefi
     default: return undefined; // 'sheet-specified' and unknown: each resource carries its own
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CanonicalWorkloadIR converter
+//
+// Converts the pipeline's resource groups to the CanonicalWorkloadIR semantic
+// representation. This is the layer MIMO owns — it knows the workload; MCP
+// knows the Calculator.  No Calculator field names appear below this line.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { CanonicalWorkloadIR, CanonicalWorkloadResource } from './types';
+
+/**
+ * Maps a SemanticResource's pricing kind to the CanonicalWorkloadIR pricing model.
+ */
+function pricingIntentFromKind(kind: PricingScenarioKind): CanonicalWorkloadResource['pricingIntent'] {
+  if (kind === 'on-demand') return { model: 'on-demand' };
+  if (kind.startsWith('compute-savings')) {
+    return { model: 'compute-savings-plan', term: kind.includes('3yr') ? 3 : 1 };
+  }
+  if (kind.startsWith('ec2-instance-savings')) {
+    return { model: 'ec2-instance-savings-plan', term: kind.includes('3yr') ? 3 : 1 };
+  }
+  if (kind === 'spot') return { model: 'spot' };
+  const term: 1 | 3 = kind.includes('3yr') ? 3 : 1;
+  const paymentOption: 'none' | 'partial' | 'all' = kind.includes('all') ? 'all' : kind.includes('partial') ? 'partial' : 'none';
+  return { model: 'reserved', term, paymentOption };
+}
+
+/**
+ * Converts a list of SemanticResources to a CanonicalWorkloadIR.
+ *
+ * The resulting IR is purely semantic — it carries workload facts (instance type,
+ * count, vCPU, memory, storage, runtime hours, usage metrics) but never Calculator
+ * implementation details. The executor maps from this IR to the live Calculator
+ * schema via get_service_fields + minimalConfig at runtime.
+ */
+export function toCanonicalWorkloadIR(
+  resources: import('./types').SemanticResource[],
+  options: { estimateName: string; partition?: string; defaultRegion: string },
+): CanonicalWorkloadIR {
+  return {
+    version: '1.0',
+    estimate: {
+      name: options.estimateName,
+      partition: options.partition || 'aws',
+      defaultRegion: options.defaultRegion,
+    },
+    resources: resources.map((r): CanonicalWorkloadResource => {
+      const cfg = r.configuration;
+      // Usage metrics are the named quantities the Calculator bills on.
+      const usage: CanonicalWorkloadResource['usage'] = [];
+      if (typeof cfg.storageGb === 'number') usage.push({ metric: 'storage', amount: cfg.storageGb, unit: 'GB' });
+      if (typeof cfg.storageGbPerInstance === 'number') usage.push({ metric: 'storagePerInstance', amount: cfg.storageGbPerInstance, unit: 'GB' });
+      if (typeof cfg.requestCount === 'number') usage.push({ metric: 'requests', amount: cfg.requestCount, unit: String(cfg.requestFrequency || 'perMonth') });
+      if (typeof cfg.dataTransferGb === 'number') usage.push({ metric: 'dataTransfer', amount: cfg.dataTransferGb, unit: 'GB' });
+      if (typeof cfg.usageCount === 'number') usage.push({ metric: String(cfg.usageBasis || 'usage'), amount: cfg.usageCount, unit: String(cfg.usageFrequency || 'perMonth') });
+      if (typeof cfg.memoryMb === 'number') usage.push({ metric: 'memory', amount: cfg.memoryMb, unit: 'MB' });
+      if (typeof cfg.rpuCapacity === 'number') usage.push({ metric: 'RPU', amount: cfg.rpuCapacity, unit: 'RPU' });
+
+      // Extract semantic attributes (anything not captured in the standard fields).
+      const stdKeys = new Set(['instanceType', 'instanceCount', 'nodeCount', 'operatingSystem', 'engine', 'deployment', 'hoursPerDay', 'hoursPerMonth', 'diskGb', 'storageGb', 'storageGbPerInstance', 'requestCount', 'requestFrequency', 'dataTransferGb', 'usageCount', 'usageBasis', 'usageFrequency', 'memoryMb', 'vcpuPerTask', 'memoryGbPerTask', 'taskCount', 'taskFrequency', 'duration', 'durationUnit', 'queryHoursPerDay', 'rpuCapacity', 'storageType', 'tenancy', 'architecture', 'utilizationPct']);
+      const attributes: Record<string, string | number | boolean> = {};
+      for (const [key, val] of Object.entries(cfg)) {
+        if (!stdKeys.has(key) && (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')) {
+          attributes[key] = val;
+        }
+      }
+
+      return {
+        id: r.resourceId,
+        environment: r.environment,
+        serviceIntent: r.service,
+        region: r.region || options.defaultRegion,
+        sizing: {
+          ...(typeof cfg.instanceType === 'string' ? { instanceType: cfg.instanceType } : {}),
+          ...(typeof (cfg.instanceCount ?? cfg.nodeCount) === 'number' ? { count: (cfg.instanceCount ?? cfg.nodeCount) as number } : {}),
+          ...(typeof cfg.vcpuPerTask === 'number' ? { vcpu: cfg.vcpuPerTask } : {}),
+          ...(typeof cfg.memoryGbPerTask === 'number' ? { memoryGb: cfg.memoryGbPerTask } : {}),
+        },
+        runtime: {
+          ...(typeof cfg.hoursPerDay === 'number' ? { hoursPerDay: cfg.hoursPerDay } : {}),
+          ...(typeof cfg.queryHoursPerDay === 'number' ? { hoursPerDay: cfg.queryHoursPerDay } : {}),
+        },
+        usage,
+        pricingIntent: pricingIntentFromKind(r.pricing?.kind || 'on-demand'),
+        attributes,
+        sourceEvidence: [],
+      };
+    }),
+  };
+}

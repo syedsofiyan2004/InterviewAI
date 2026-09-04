@@ -65,12 +65,33 @@ export interface McpToolResult {
   isError: boolean;
 }
 
+/** Runtime audit captured at the start of every estimate run. */
+export interface McpExecutionAudit {
+  mcpUsed: boolean;
+  mcpServer?: string;
+  mcpVersion?: string;
+  toolsCalled: string[];
+  awsEstimateId?: string;
+  sharableUrlCreated: boolean;
+}
+
 export interface CalculatorGateway {
   /** The tool surface the installed MCP exposes; the executor discovers roles from it. */
   listTools(): Promise<Array<{ name: string }>>;
   /** One tool call. Tool-level refusals come back as `isError`, never thrown. */
   callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<McpToolResult>;
+  /**
+   * Returns MCP server name and version for runtime audit.
+   * Implementations must capture: name, version, capabilities.
+   */
+  getServerInfo(): Promise<McpExecutionAudit>;
   getServiceCatalog(serviceCode: string): Promise<McpToolResult>;
+  /**
+   * Convenience wrapper for the MCP build_estimate tool.
+   * For small / normal estimates, prefer build_estimate over the
+   * create→add→validate→export sequence (upstream guidance).
+   */
+  buildEstimate?(name: string, services: Array<{ service: string; group: string; config: Record<string, unknown> }>): Promise<McpToolResult>;
   saveEstimate(name: string, services: Array<{ service: string; group: string; config: Record<string, unknown> }>): Promise<McpToolResult>;
   readEstimate(savedKeyOrUrl: string): Promise<McpToolResult>;
   deleteEstimate?(savedKeyOrUrl: string): Promise<{ supported: boolean; deleted: boolean; message?: string }>;
@@ -260,6 +281,48 @@ export class McpSidecarClient implements CalculatorGateway {
     return { text: text || '(tool returned no text)', isError: Boolean(result?.isError) };
   }
 
+  /**
+   * Captures MCP server identity for the runtime audit record.
+   *
+   * A successful estimate must prove that MCP was actually used; this call
+   * records the server name and version so admin diagnostics can confirm it
+   * unambiguously. Non-fatal: a missing get_server_info tool means the audit
+   * reports "unknown" rather than failing the estimate.
+   */
+  async getServerInfo(): Promise<McpExecutionAudit> {
+    const tools = await this.listTools().catch(() => [] as Array<{ name: string }>);
+    const toolsCalled: string[] = [];
+    let mcpServer: string | undefined;
+    let mcpVersion: string | undefined;
+
+    const infoTool = tools.find((t) => ['get_server_info', 'getServerInfo', 'server_info'].includes(t.name));
+    if (infoTool) {
+      try {
+        const info = await this.callTool(infoTool.name, {}, 15_000);
+        if (!info.isError) {
+          try {
+            const parsed = JSON.parse(info.text);
+            mcpServer = parsed?.name;
+            mcpVersion = parsed?.version;
+          } catch {
+            // ignore parse errors
+          }
+          toolsCalled.push(infoTool.name);
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    return {
+      mcpUsed: true,
+      ...(mcpServer ? { mcpServer } : {}),
+      ...(mcpVersion ? { mcpVersion } : {}),
+      toolsCalled,
+      sharableUrlCreated: false,
+    };
+  }
+
   async getServiceCatalog(serviceCode: string): Promise<McpToolResult> {
     return this.callTool('get_service_fields', { service: serviceCode });
   }
@@ -283,52 +346,260 @@ export class McpSidecarClient implements CalculatorGateway {
     }
   }
 
-  async saveEstimate(
+  /**
+   * Build a named estimate using the MCP build_estimate tool when available.
+   *
+   * For small/normal estimates this is preferred over the create→add→validate→export
+   * sequence. For large estimates (many services) the caller should use the individual
+   * tools directly via callTool.
+   */
+  async buildEstimate(
     name: string,
     services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
   ): Promise<McpToolResult> {
-    const create = await this.callTool('create_estimate', { name, partition: 'aws' }, 60_000);
-    if (create.isError) return create;
-    const estimateId = this.parseEstimateId(create);
-    if (!estimateId) return {
-      text: `create_estimate returned no estimate_id: ${create.text.slice(0, 500)}`,
-      isError: true,
-    };
-
-    const add = await this.callTool('add_service', { estimate_id: estimateId, services: JSON.stringify(services) }, 180_000);
-    if (add.isError || /"error"\s*:/.test(add.text)) return {
-      text: `add_service failed for ${estimateId}: ${add.text.slice(0, 2000)}`,
-      isError: true,
-    };
-
-    const validate = await this.callTool('validate_estimate', { estimate_id: estimateId }, 120_000);
-    if (validate.isError) return validate;
-    try {
-      const parsed = JSON.parse(validate.text);
-      if (parsed?.lint_verdict && parsed.lint_verdict !== 'editable') return {
-        text: `validate_estimate refused ${estimateId}: ${validate.text.slice(0, 2000)}`,
-        isError: true,
-      };
-    } catch {
-      return { text: `validate_estimate returned invalid JSON: ${validate.text.slice(0, 500)}`, isError: true };
+    const tools = await this.listTools().catch(() => [] as Array<{ name: string }>);
+    const hasBuild = tools.some((t) => t.name === 'build_estimate');
+    if (!hasBuild) {
+      // Fall back to the create→add→validate→export sequence.
+      return this.saveEstimate(name, services);
     }
-
-    const exported = await this.callTool('export_estimate', { estimate_id: estimateId }, 180_000);
-    if (exported.isError) return exported;
-    const url = this.parseEstimateUrl(exported);
+    const result = await this.callTool('build_estimate', {
+      name,
+      partition: 'aws',
+      services: JSON.stringify(services),
+    }, 240_000);
+    if (result.isError) return result;
+    const url = this.parseEstimateUrl(result);
     if (!url) return {
-      text: `export_estimate returned no calculator.aws URL: ${exported.text.slice(0, 500)}`,
+      text: `build_estimate returned no calculator.aws URL: ${result.text.slice(0, 500)}`,
       isError: true,
     };
     return {
       text: JSON.stringify({
         sharable_url: url,
-        aws_estimate_id: this.parseEstimateId(exported) || estimateId,
-        mcp_workflow: ['create_estimate', 'add_service', 'validate_estimate', 'export_estimate'],
+        aws_estimate_id: this.parseEstimateId(result),
+        mcp_workflow: ['build_estimate'],
         services,
       }),
       isError: false,
     };
+  }
+
+  /**
+   * Creates, validates and exports an estimate with a bounded self-repair loop.
+   *
+   * When the MCP responds with recoverable grounding information
+   * (needs_field_grounding, corrections, next_step hints), this method:
+   *   1. Parses the structured MCP response to identify affected services.
+   *   2. Re-fetches live field schema for each affected service via get_service_fields.
+   *   3. Applies the MCP's own corrections/next_step guidance to those service configs.
+   *   4. Creates a fresh estimate and retries (add_service is append-only, so a new
+   *      estimate must be started on each repair attempt).
+   *   5. Stops after MAX_REPAIR_ATTEMPTS; only if still failing returns the error.
+   *
+   * Non-recoverable errors (auth, network, unknown service) fail immediately.
+   */
+  async saveEstimate(
+    name: string,
+    services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
+  ): Promise<McpToolResult> {
+    const MAX_REPAIR_ATTEMPTS = 2;
+
+    let currentServices = services;
+
+    for (let attempt = 0; attempt <= MAX_REPAIR_ATTEMPTS; attempt++) {
+      const create = await this.callTool('create_estimate', { name, partition: 'aws' }, 60_000);
+      if (create.isError) return create;
+      const estimateId = this.parseEstimateId(create);
+      if (!estimateId) return {
+        text: `create_estimate returned no estimate_id: ${create.text.slice(0, 500)}`,
+        isError: true,
+      };
+
+      const add = await this.callTool('add_service', {
+        estimate_id: estimateId,
+        services: JSON.stringify(currentServices),
+      }, 180_000);
+
+      // add_service can report per-service errors inside a success envelope.
+      // Parse them before deciding whether to continue.
+      const addError = this.parseAddServiceError(add);
+      if (addError) {
+        const repaired = await this.attemptRepair(currentServices, addError, attempt, MAX_REPAIR_ATTEMPTS);
+        if (repaired) { currentServices = repaired; continue; }
+        return { text: `add_service failed for ${estimateId}: ${add.text.slice(0, 2000)}`, isError: true };
+      }
+
+      const validate = await this.callTool('validate_estimate', { estimate_id: estimateId }, 120_000);
+      if (validate.isError) return validate;
+
+      let validateParsed: Record<string, unknown> | undefined;
+      try {
+        validateParsed = JSON.parse(validate.text);
+      } catch {
+        return { text: `validate_estimate returned invalid JSON: ${validate.text.slice(0, 500)}`, isError: true };
+      }
+
+      const verdict = validateParsed?.lint_verdict;
+      if (verdict && verdict !== 'editable') {
+        // Recoverable grounding errors: the MCP tells us exactly what is wrong.
+        // For other non-editable verdicts (e.g. "read-only"), fail immediately.
+        const isGrounding = String(verdict).toLowerCase().includes('grounding')
+          || String(validateParsed?.next_step || '').toLowerCase().includes('get_service_fields')
+          || Array.isArray(validateParsed?.lint_services);
+
+        if (isGrounding && attempt < MAX_REPAIR_ATTEMPTS) {
+          const repaired = await this.attemptRepair(
+            currentServices,
+            JSON.stringify(validateParsed),
+            attempt,
+            MAX_REPAIR_ATTEMPTS,
+          );
+          if (repaired) { currentServices = repaired; continue; }
+        }
+
+        // Apply any explicit corrections the MCP returned.
+        if (Array.isArray(validateParsed?.corrections) && attempt < MAX_REPAIR_ATTEMPTS) {
+          const repaired = this.applyMcpCorrections(
+            currentServices,
+            validateParsed.corrections as Array<Record<string, unknown>>,
+          );
+          if (repaired !== currentServices) { currentServices = repaired; continue; }
+        }
+
+        return {
+          text: `validate_estimate refused ${estimateId}: ${validate.text.slice(0, 2000)}`,
+          isError: true,
+        };
+      }
+
+      const exported = await this.callTool('export_estimate', { estimate_id: estimateId }, 180_000);
+      if (exported.isError) return exported;
+      const url = this.parseEstimateUrl(exported);
+      if (!url) return {
+        text: `export_estimate returned no calculator.aws URL: ${exported.text.slice(0, 500)}`,
+        isError: true,
+      };
+
+      return {
+        text: JSON.stringify({
+          sharable_url: url,
+          aws_estimate_id: this.parseEstimateId(exported) || estimateId,
+          mcp_workflow: ['create_estimate', 'add_service', 'validate_estimate', 'export_estimate'],
+          repair_attempts: attempt,
+          services: currentServices,
+        }),
+        isError: false,
+      };
+    }
+
+    return { text: 'saveEstimate exceeded maximum repair attempts without success.', isError: true };
+  }
+
+  /**
+   * Attempts to repair service configurations based on a structured MCP error.
+   *
+   * Re-fetches get_service_fields for each service named in the error, merges
+   * the live minimalConfig baseline with the existing user values, and returns
+   * the repaired service list. Returns null when repair is not possible.
+   */
+  private async attemptRepair(
+    services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
+    errorText: string,
+    attempt: number,
+    maxAttempts: number,
+  ): Promise<Array<{ service: string; group: string; config: Record<string, unknown> }> | null> {
+    if (attempt >= maxAttempts) return null;
+
+    // Parse which service codes need re-grounding. The MCP names them in
+    // lint_services or in the error text itself.
+    let affectedCodes: string[] = [];
+    try {
+      const parsed = JSON.parse(errorText);
+      const lintServices: string[] = Array.isArray(parsed?.lint_services)
+        ? (parsed.lint_services as unknown[]).map(String)
+        : [];
+      if (lintServices.length) affectedCodes = lintServices;
+    } catch {
+      // Extract service codes from error prose as a fallback.
+      affectedCodes = services.map((s) => s.service);
+    }
+    if (!affectedCodes.length) affectedCodes = services.map((s) => s.service);
+
+    const repaired = await Promise.all(services.map(async (svc) => {
+      if (!affectedCodes.some((code) => code === svc.service
+        || svc.service.toLowerCase().includes(code.toLowerCase()))) {
+        return svc;
+      }
+      try {
+        // Re-fetch live schema to get current minimalConfig and required fields.
+        const catalogResult = await this.callTool('get_service_fields', { service: svc.service }, 30_000);
+        if (catalogResult.isError) return svc;
+        const { parseServiceCatalog, resolveConfigAgainstCatalog } = await import('./calculator-catalog.js');
+        const catalog = parseServiceCatalog(catalogResult);
+        // Merge: minimalConfig is the fresh baseline, user values override.
+        const repairedConfig = resolveConfigAgainstCatalog(catalog, svc.config);
+        console.log(JSON.stringify({
+          event: 'mcp_catalog_repair',
+          service: svc.service,
+          attempt: attempt + 1,
+          addedFromMinimalConfig: Object.keys(repairedConfig).filter((k) => !(k in svc.config)),
+        }));
+        return { ...svc, config: repairedConfig };
+      } catch (err) {
+        console.warn(`[calculator] repair failed for ${svc.service}: ${(err as Error).message}`);
+        return svc;
+      }
+    }));
+
+    return repaired;
+  }
+
+  /**
+   * Applies explicit MCP corrections to service configurations.
+   *
+   * The MCP sometimes returns a corrections array with field-level patches.
+   * Applying them avoids a full re-discovery round trip.
+   */
+  private applyMcpCorrections(
+    services: Array<{ service: string; group: string; config: Record<string, unknown> }>,
+    corrections: Array<Record<string, unknown>>,
+  ): Array<{ service: string; group: string; config: Record<string, unknown> }> {
+    if (!corrections.length) return services;
+    return services.map((svc) => {
+      const relevant = corrections.filter(
+        (c) => !c.service || String(c.service) === svc.service,
+      );
+      if (!relevant.length) return svc;
+      const patchedConfig = { ...svc.config };
+      for (const correction of relevant) {
+        if (correction.field && correction.value !== undefined) {
+          patchedConfig[String(correction.field)] = correction.value;
+        }
+      }
+      return { ...svc, config: patchedConfig };
+    });
+  }
+
+  /** Extracts the first actionable error from an add_service response. */
+  private parseAddServiceError(result: McpToolResult): string | null {
+    if (result.isError) return result.text;
+    // add_service can return success at the HTTP level but with per-service errors.
+    try {
+      const parsed = JSON.parse(result.text);
+      const entries: unknown[] = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.results) ? parsed.results : [];
+      for (const entry of entries) {
+        const rec = entry as Record<string, unknown>;
+        if (rec?.error || rec?.success === false) {
+          return typeof rec.error === 'string' ? rec.error : JSON.stringify(rec);
+        }
+      }
+    } catch {
+      // non-JSON response — not an error by default
+    }
+    return null;
   }
 
   async readEstimate(savedKeyOrUrl: string): Promise<McpToolResult> {

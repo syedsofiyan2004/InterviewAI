@@ -248,15 +248,34 @@ export const handler = async (event: OrchestratorEvent): Promise<void> => {
     // final stage's duration, so omitting it would leave the slowest stage of a finished
     // run looking open-ended to anything that later reads the trail to explain where the
     // time went.
-    await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
-      outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
-      status: outcome.status,
-      result: inlineResult,
-      result_s3_key: resultS3Key,
-      iterations: outcome.iterations,
-      tool_call_count: outcome.toolCalls.length,
-      ...(scenarioSummaries.length ? { scenario_summaries: scenarioSummaries } : {}),
-    });
+    try {
+      await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
+        outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
+        status: outcome.status,
+        result: inlineResult,
+        result_s3_key: resultS3Key,
+        iterations: outcome.iterations,
+        tool_call_count: outcome.toolCalls.length,
+        ...(scenarioSummaries.length ? { scenario_summaries: scenarioSummaries } : {}),
+      });
+    } catch (writeError) {
+      // DynamoDB "Item size has exceeded the maximum allowed size" should not silently
+      // lose the result. Retry writing without the inline result (S3 key is still set).
+      const message = (writeError as Error).message || '';
+      if (/item size|maximum allowed size/i.test(message)) {
+        console.error(`[orchestrator] DynamoDB item too large for ${calculationId}; writing status only. Error: ${message}`);
+        await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
+          outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
+          status: outcome.status,
+          result_s3_key: resultS3Key,
+          iterations: outcome.iterations,
+          tool_call_count: outcome.toolCalls.length,
+          ...(scenarioSummaries.length ? { scenario_summaries: scenarioSummaries } : {}),
+        });
+      } else {
+        throw writeError;
+      }
+    }
     console.log(`Calculation ${calculationId} finished as ${outcome.status} with ${outcome.iterations} model call(s), ${outcome.toolCalls.length} lookups.`);
   } catch (error) {
     const message = (error as Error).message || 'Unknown failure';

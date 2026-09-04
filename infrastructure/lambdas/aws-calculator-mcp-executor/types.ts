@@ -18,6 +18,67 @@
 
 import type { PricingScenarioKind, UpfrontPayment } from '../../schema/canonical-resource';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Canonical Workload IR
+//
+// The stable semantic intermediate representation that sits between the parsed
+// workbook and the MCP executor. It deliberately contains NO Calculator
+// implementation fields (no columnFormIPM, no modelsDeployed, no Data_Written).
+// Those belong exclusively to McpEstimateIR, which is produced dynamically from
+// this IR + the live get_service_fields response.
+//
+// MIMO owns this layer. MCP owns the Calculator configuration layer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CanonicalWorkloadUsageItem {
+  metric: string;
+  amount: number;
+  unit: string;
+}
+
+export interface CanonicalWorkloadResource {
+  id: string;
+  environment?: string;
+  /** Human-readable AWS service name, never a Calculator key. */
+  serviceIntent: string;
+  region: string;
+  sizing: {
+    instanceType?: string;
+    count?: number;
+    vcpu?: number;
+    memoryGb?: number;
+    storageGb?: number;
+  };
+  runtime: {
+    hoursPerDay?: number;
+    hoursPerMonth?: number;
+    daysPerMonth?: number;
+  };
+  usage: CanonicalWorkloadUsageItem[];
+  pricingIntent: {
+    model: 'on-demand' | 'reserved' | 'compute-savings-plan' | 'ec2-instance-savings-plan' | 'spot';
+    term?: 1 | 3;
+    paymentOption?: 'none' | 'partial' | 'all';
+  };
+  attributes: Record<string, string | number | boolean>;
+  sourceEvidence: Array<{ sheet?: string; cell?: string; label?: string; value?: unknown }>;
+}
+
+/**
+ * The canonical semantic workload, independent of any Calculator implementation.
+ *
+ * Version is included so future parsers can detect and migrate older IR records.
+ */
+export interface CanonicalWorkloadIR {
+  version: '1.0';
+  estimate: {
+    name: string;
+    partition: string;
+    defaultRegion: string;
+  };
+  resources: CanonicalWorkloadResource[];
+}
+
 /**
  * One piece of infrastructure, described in the customer's terms.
  *
