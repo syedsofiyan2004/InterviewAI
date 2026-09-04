@@ -22,9 +22,19 @@ import {
 
 /** Uppercase to match InterviewStatus / the frontend StatusBadge convention. */
 export const CalculationStatus = z.enum([
+  /** File uploaded; analysis not yet started. */
+  'UPLOADED',
   'ANALYZING',
+  /** Missing critical inputs require user review before execution. */
   'REVIEW_REQUIRED',
+  /** Plan confirmed; executor not yet started. */
+  'CONFIRMED',
+  /** Legacy alias still accepted from older records. */
   'PROCESSING',
+  /** MCP executor is actively building Calculator estimates. */
+  'BUILDING',
+  /** Saved estimates are being read back and validated. */
+  'VALIDATING',
   'COMPLETED',
   'NEEDS_REVIEW',
   'PARTIAL',
@@ -796,6 +806,31 @@ export const CalculationRecordSchema = z.object({
    * ownership gates.
    */
   item_type: z.literal('PROJECT').optional(),
+
+  /**
+   * How many requirements have `impact: 'critical'` and no resolved value.
+   *
+   * Kept as a lightweight counter on the record so the "Build Estimates" button can be
+   * disabled client-side without loading the full plan from S3.
+   */
+  unresolved_critical_count: z.number().optional(),
+
+  /**
+   * Per-scenario quick summary — written when the orchestrator finishes each scenario.
+   *
+   * Stored separately from `result.scenarios` so the polling path (`GET /result`) can
+   * return per-scenario status, URL and cost totals without loading the full S3 result
+   * blob on every 3-second tick. The spec's DynamoDB lightweight principle: every
+   * dashboard-visible figure lives here; the full artifact lives in S3.
+   */
+  scenario_summaries: z.array(z.object({
+    scenarioId: z.string(),
+    status: z.enum(['BUILDING', 'VALIDATING', 'COMPLETED', 'PARTIAL', 'FAILED']),
+    calculatorUrl: z.string().nullable().optional(),
+    monthlyUsd: z.number().nullable().optional(),
+    upfrontUsd: z.number().nullable().optional(),
+    twelveMonthUsd: z.number().nullable().optional(),
+  })).optional(),
 });
 export type CalculationRecord = z.infer<typeof CalculationRecordSchema>;
 

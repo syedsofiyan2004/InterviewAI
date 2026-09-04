@@ -14,7 +14,18 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
-export type CalculationStatus = 'ANALYZING' | 'REVIEW_REQUIRED' | 'PROCESSING' | 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
+export type CalculationStatus =
+  | 'UPLOADED'
+  | 'ANALYZING'
+  | 'REVIEW_REQUIRED'
+  | 'CONFIRMED'
+  | 'PROCESSING'
+  | 'BUILDING'
+  | 'VALIDATING'
+  | 'COMPLETED'
+  | 'NEEDS_REVIEW'
+  | 'PARTIAL'
+  | 'FAILED';
 
 export interface RequirementConstraint {
   id: string;
@@ -307,6 +318,16 @@ export interface CalculationProgress {
   prose: string;
 }
 
+/** Quick per-scenario summary — returned by the polling endpoint without an S3 roundtrip. */
+export interface ScenarioSummary {
+  scenarioId: string;
+  status: 'BUILDING' | 'VALIDATING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  calculatorUrl?: string | null;
+  monthlyUsd?: number | null;
+  upfrontUsd?: number | null;
+  twelveMonthUsd?: number | null;
+}
+
 export interface CalculationResultResponse {
   calculation_id: string;
   status: CalculationStatus;
@@ -324,6 +345,14 @@ export interface CalculationResultResponse {
   input_file_name: string | null;
   /** Non-fatal notes from parsing the uploaded sheet — skipped rows and the like. */
   input_warnings: string[];
+  /**
+   * Per-scenario summaries written by the orchestrator as each scenario completes.
+   * Available without loading the full S3 result — used for live progress display.
+   * Null until at least one scenario finishes.
+   */
+  scenario_summaries?: ScenarioSummary[] | null;
+  /** How many critical requirements remain unresolved. Null until plan is ready. */
+  unresolved_critical_count?: number | null;
 }
 
 export interface CreateCalculationInput {

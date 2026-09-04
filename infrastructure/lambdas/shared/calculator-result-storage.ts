@@ -97,6 +97,47 @@ export function compactCalculationResult(result: CalculationResult): Calculation
   return CalculationResultSchema.parse(compact);
 }
 
+/**
+ * S3 key functions for per-scenario durable artifacts.
+ *
+ * Spec layout:
+ *   calculator/{ownerId}/{calculationId}/
+ *     manifests/{scenarioId}.json
+ *     mcp/{scenarioId}-request.json
+ *     mcp/{scenarioId}-response.json
+ *     mcp/{scenarioId}-saved-snapshot.json
+ *     validation/{scenarioId}.json
+ *     results/{scenarioId}.json
+ *     exports/cleaned-estimate.xlsx
+ *
+ * These keys let per-scenario debug artifacts be found, diffed, and audited after the
+ * fact without loading the monolithic result blob. The result.json is retained as the
+ * authoritative combined result; these are per-scenario supplement.
+ */
+const scenarioPrefix = (ownerUserId: string, calculationId: string, scenarioId: string) =>
+  `users/${ownerUserId}/calculator/${calculationId}`;
+
+export function scenarioResultKey(ownerUserId: string, calculationId: string, scenarioId: string): string {
+  return `${scenarioPrefix(ownerUserId, calculationId, scenarioId)}/results/${scenarioId}.json`;
+}
+
+export function scenarioMcpResponseKey(ownerUserId: string, calculationId: string, scenarioId: string): string {
+  return `${scenarioPrefix(ownerUserId, calculationId, scenarioId)}/mcp/${scenarioId}-response.json`;
+}
+
+export function scenarioMcpSnapshotKey(ownerUserId: string, calculationId: string, scenarioId: string): string {
+  return `${scenarioPrefix(ownerUserId, calculationId, scenarioId)}/mcp/${scenarioId}-saved-snapshot.json`;
+}
+
+export function scenarioValidationKey(ownerUserId: string, calculationId: string, scenarioId: string): string {
+  return `${scenarioPrefix(ownerUserId, calculationId, scenarioId)}/validation/${scenarioId}.json`;
+}
+
+/** S3 key for the cleaned Excel export — generated only after validated Calculator result exists. */
+export function calculationExportKey(ownerUserId: string, calculationId: string): string {
+  return `users/${ownerUserId}/calculator/${calculationId}/exports/cleaned-estimate.xlsx`;
+}
+
 /** Read the authoritative result, falling back to inline data for legacy estimates. */
 export async function loadFullCalculationResult(
   bucketName: string,

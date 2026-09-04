@@ -226,7 +226,22 @@ function CalculationDetailContent() {
   }
 
   const result = data?.result ?? null;
-  const isProcessing = data?.status === 'PROCESSING';
+  // BUILDING and VALIDATING are sub-states of the execution run emitted by the
+  // orchestrator since the architectural refactor; PROCESSING is the legacy alias.
+  // CONFIRMED means the plan is locked and the worker is about to start.
+  const isProcessing = ['PROCESSING', 'BUILDING', 'VALIDATING', 'CONFIRMED'].includes(data?.status || '');
+  const processingStage = data?.progress_stage ?? '';
+  const processingLabel = data?.status === 'CONFIRMED'
+    ? 'Preparing to build estimates'
+    : processingStage === 'saving' || data?.status === 'BUILDING'
+      ? 'Building AWS Pricing Calculator estimates'
+      : processingStage === 'validating' || data?.status === 'VALIDATING'
+        ? 'Validating saved estimates'
+        : processingStage === 'narrating'
+          ? 'Generating Excel workbook'
+          : processingStage === 'done' || processingStage === 'validation_failed'
+            ? 'Finishing up'
+            : 'Building your estimate';
 
   return (
     <div className="space-y-6">
@@ -256,7 +271,7 @@ function CalculationDetailContent() {
         <div className="card flex items-start gap-3 border-accent/30 bg-accent/5 p-5">
           <Loader2 size={18} className="mt-0.5 shrink-0 animate-spin text-accent" />
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">Building your estimate</p>
+            <p className="text-sm font-semibold text-text-primary">{processingLabel}</p>
             <p className="mt-1 text-sm leading-6 text-text-secondary">
               {data?.progress_message ||
                 'Looking up AWS services and pricing fields. This usually takes a minute or two.'}
@@ -270,9 +285,9 @@ function CalculationDetailContent() {
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-danger" />
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-danger">This estimate could not be built</p>
+              <p className="text-sm font-semibold text-danger">AWS Pricing Calculator estimate could not be completed</p>
               <p className="mt-1 break-words text-sm leading-6 text-text-secondary">
-                {data.error_message || result?.validationErrors?.[0] || 'The estimate failed validation.'}
+                {data.error_message || result?.validationErrors?.[0] || 'The estimate was not saved successfully by the AWS Calculator integration.'}
               </p>
               {!data.error_message && !!result?.validationErrors?.length && (
                 <ul className="mt-3 space-y-1.5">
@@ -281,12 +296,16 @@ function CalculationDetailContent() {
                   ))}
                 </ul>
               )}
+              {/* Explicit: no Excel because there is no validated Calculator result to base it on. */}
+              <p className="mt-3 text-xs font-semibold text-text-muted">
+                No final Excel has been generated because a validated AWS estimate does not yet exist.
+              </p>
               <Link
                 href="/calculator/new"
                 className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
               >
                 <RefreshCw size={14} />
-                Try again with more detail
+                Retry with more detail
               </Link>
             </div>
           </div>
@@ -394,6 +413,26 @@ function CalculationDetailContent() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {/* The AWS Calculator link is always the primary action — it is the product.
+                    Downloads are secondary; they come after. Single-scenario estimates show
+                    the link here; multi-scenario links appear in the scenario table below. */}
+                {result.url && (result.scenarios?.length || 0) <= 1 && (
+                  <a
+                    href={result.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={data?.status === 'PARTIAL'
+                      ? 'This link contains only the resources that passed deterministic read-back validation. Review the exclusions before sharing.'
+                      : undefined}
+                    className={data?.status === 'PARTIAL'
+                      ? 'btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold'
+                      : 'btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold'}
+                  >
+                    <PiggyBank size={15} />
+                    {data?.status === 'PARTIAL' ? 'Open partial AWS estimate' : 'Open AWS Pricing Calculator'}
+                    <ExternalLink size={15} />
+                  </a>
+                )}
                 {data?.status !== 'PARTIAL' && (
                   <button
                     type="button"
@@ -406,26 +445,26 @@ function CalculationDetailContent() {
                     {downloading ? 'Preparing...' : 'Download PDF'}
                   </button>
                 )}
-                {/* The workbook, not a second rendering of the PDF: its totals are live
-                    formulas, so a cost review can change a figure or type in a credit
-                    percentage and watch everything downstream move. */}
-                {data?.status !== 'PARTIAL' && (
-                  <button
-                    type="button"
-                    onClick={() => void downloadWorkbook()}
-                    disabled={downloadingWorkbook}
-                    title={DOWNLOAD_CONTENTS.Excel}
-                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
-                  >
-                    {downloadingWorkbook
-                      ? <Loader2 size={15} className="animate-spin" />
-                      : <FileSpreadsheet size={15} />}
-                    {downloadingWorkbook ? 'Preparing...' : 'Download Excel'}
-                  </button>
-                )}
-                {/* Word, because a matrix estimate is a grid of shareable links: OOXML carries
-                    real hyperlinks, so each row reads as one click instead of a 90-character
-                    URL printed as ink. */}
+                {/* Excel: the workbook is based on the validated AWS Calculator result.
+                    For PARTIAL estimates it is allowed but clearly carries that caveat. */}
+                <button
+                  type="button"
+                  onClick={() => void downloadWorkbook()}
+                  disabled={downloadingWorkbook}
+                  title={data?.status === 'PARTIAL'
+                    ? 'PRICED SUBSET ONLY — this workbook covers only the resources that passed validation.'
+                    : DOWNLOAD_CONTENTS.Excel}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                >
+                  {downloadingWorkbook
+                    ? <Loader2 size={15} className="animate-spin" />
+                    : <FileSpreadsheet size={15} />}
+                  {downloadingWorkbook
+                    ? 'Preparing...'
+                    : data?.status === 'PARTIAL'
+                      ? 'Download Excel (subset)'
+                      : 'Download Excel'}
+                </button>
                 {data?.status !== 'PARTIAL' && (
                   <button
                     type="button"
@@ -439,29 +478,6 @@ function CalculationDetailContent() {
                       : <FileText size={15} />}
                     {downloadingDocument ? 'Preparing...' : 'Download Word'}
                   </button>
-                )}
-                {result.url && ['COMPLETED', 'NEEDS_REVIEW'].includes(data?.status || '') && (result.scenarios?.length || 0) <= 1 && (
-                  <a
-                    href={result.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold"
-                  >
-                    Open in AWS Calculator
-                    <ExternalLink size={15} />
-                  </a>
-                )}
-                {result.url && data?.status === 'PARTIAL' && (result.scenarios?.length || 0) <= 1 && (
-                  <a
-                    href={result.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="This link contains only the resources that passed deterministic read-back validation. Review the exclusions before using it."
-                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold"
-                  >
-                    Open partial AWS estimate
-                    <ExternalLink size={15} />
-                  </a>
                 )}
               </div>
             </div>
