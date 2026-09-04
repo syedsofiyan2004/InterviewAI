@@ -1,4 +1,4 @@
-import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddbDocClient } from '../shared/aws.js';
 import { keys, ScheduledInterview } from '../../schema/admin.js';
 
@@ -49,6 +49,38 @@ export async function findScheduledByInterviewId(
 ): Promise<ScheduledInterview | undefined> {
   const rows = await queryScheduledForPanelist(email);
   return rows.find((r) => r.keka_interview_id === kekaInterviewId);
+}
+
+export async function findScheduledWithMeetingByKekaInterviewId(
+  kekaInterviewId: string,
+): Promise<ScheduledInterview | undefined> {
+  const id = String(kekaInterviewId || '').trim();
+  if (!id) return undefined;
+  const res = await ddbDocClient.send(new ScanCommand({
+    TableName: ADMIN_TABLE_NAME,
+    FilterExpression: '#entity = :entity AND #interview = :interview AND attribute_exists(#meeting)',
+    ExpressionAttributeNames: {
+      '#entity': 'entity_type',
+      '#interview': 'keka_interview_id',
+      '#meeting': 'meeting_url',
+    },
+    ExpressionAttributeValues: {
+      ':entity': 'SCHEDULED_INTERVIEW',
+      ':interview': id,
+    },
+    ProjectionExpression: [
+      'keka_interview_id',
+      'meeting_url',
+      'meeting_id',
+      'organizer_email',
+      'organizer_user_id',
+      'scheduled_at',
+      'panelist_email',
+    ].join(', '),
+    Limit: 5,
+  }));
+  return ((res.Items || []) as ScheduledInterview[])
+    .find((row) => row.meeting_url || row.meeting_id);
 }
 
 /**
@@ -144,4 +176,23 @@ export async function releaseScheduledProvisioning(
   } catch (err: any) {
     if (err?.name !== 'ConditionalCheckFailedException') throw err;
   }
+}
+
+export async function clearScheduledProvisioning(
+  row: Pick<ScheduledInterview, 'PK' | 'SK'>,
+): Promise<void> {
+  await ddbDocClient.send(new UpdateCommand({
+    TableName: ADMIN_TABLE_NAME,
+    Key: { PK: row.PK, SK: row.SK },
+    UpdateExpression: [
+      'REMOVE intelligence_id',
+      'workspace_id',
+      'provisioned_at',
+      'provisioned_by',
+      'provisioning_token',
+      'provisioning_expires_at',
+      'provisioning_by',
+      'provisioning_intelligence_id',
+    ].join(', '),
+  }));
 }

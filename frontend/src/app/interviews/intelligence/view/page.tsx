@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, InterviewIntelligenceRecord } from '@/lib/api';
-import { ArrowLeft, ArrowRight, BrainCircuit, BriefcaseBusiness, CheckCircle2, ClipboardCheck, Download, ExternalLink, FileText, MessageSquareText, RefreshCw, ShieldCheck, Trash2, Upload, Users, type LucideIcon } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ArrowRight, BrainCircuit, BriefcaseBusiness, CheckCircle2, ClipboardCheck, Download, ExternalLink, FileText, MessageSquareText, RefreshCw, ShieldCheck, Trash2, Upload, Users, type LucideIcon } from 'lucide-react';
 import { BackButton } from '@/components/ui/BackButton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EvidenceCard } from '@/components/ui/EvidenceCard';
@@ -27,6 +27,7 @@ export default function InterviewIntelligenceViewPage() {
   /** Whether the topic/count picker is open for regenerating an existing guide. */
   const [replanOpen, setReplanOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transcriptNotice, setTranscriptNotice] = useState<{ tone: 'info' | 'success' | 'error'; message: string } | null>(null);
   const [transcriptText, setTranscriptText] = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
   const [visibleStep, setVisibleStep] = useState(0);
@@ -73,9 +74,25 @@ export default function InterviewIntelligenceViewPage() {
   const runAction = async (label: string, action: () => Promise<InterviewIntelligenceRecord>) => {
     setBusy(label);
     setError(null);
+    if (label === 'teams transcript') {
+      setTranscriptNotice({ tone: 'info', message: 'Checking Microsoft Teams for the completed transcript now.' });
+    } else if (label === 'transcript') {
+      setTranscriptNotice({ tone: 'info', message: 'Saving the transcript into this interview workspace.' });
+    }
     try {
       const updated = await action();
       setRecord(updated);
+      if (label === 'teams transcript') {
+        if (updated.transcript) {
+          setTranscriptNotice({ tone: 'success', message: 'Transcript synced and saved. You can continue to the AI review.' });
+        } else if (updated.teams.transcriptStatus === 'transcribing') {
+          setTranscriptNotice({ tone: 'info', message: 'Teams transcript was not ready, so the recording transcription has started. This page will update when it completes.' });
+        } else {
+          setTranscriptNotice({ tone: 'info', message: 'Transcript sync has started. Keep this tab open or refresh in a few minutes.' });
+        }
+      } else if (label === 'transcript') {
+        setTranscriptNotice({ tone: 'success', message: 'Transcript saved. You can continue to the AI review.' });
+      }
     } catch (err) {
       // Question generation persists before the response returns. A dropped
       // browser/API response must not leave the workspace showing an error
@@ -91,7 +108,11 @@ export default function InterviewIntelligenceViewPage() {
           // Surface the original action error below if the verification read also fails.
         }
       }
-      setError(err instanceof Error ? err.message : 'Action failed');
+      const message = err instanceof Error ? err.message : 'Action failed';
+      setError(message);
+      if (label === 'teams transcript' || label === 'transcript') {
+        setTranscriptNotice({ tone: 'error', message });
+      }
     } finally {
       setBusy(null);
     }
@@ -177,6 +198,9 @@ export default function InterviewIntelligenceViewPage() {
         setTranscriptText(latest.transcript?.rawText || '');
         if (latest.teams.transcriptStatus === 'failed' && latest.teams.error) {
           setError(latest.teams.error);
+          setTranscriptNotice({ tone: 'error', message: latest.teams.error });
+        } else if (latest.transcript) {
+          setTranscriptNotice({ tone: 'success', message: 'Transcript synced and saved. You can continue to the AI review.' });
         }
       } catch {
         // Keep the saved transcription state visible; the next poll can recover.
@@ -198,7 +222,7 @@ export default function InterviewIntelligenceViewPage() {
   if (!record) {
     return (
       <div className="p-8">
-        <Link href="/interviews/intelligence" className="text-sm font-semibold text-accent">Back</Link>
+        <Link href="/my-interviews" className="text-sm font-semibold text-accent">Back</Link>
         <p className="mt-6 text-sm text-danger">{error || 'Record not found'}</p>
       </div>
     );
@@ -235,7 +259,7 @@ export default function InterviewIntelligenceViewPage() {
     setError(null);
     try {
       await api.deleteIntelligenceInterview(record.intelligence_id);
-      router.push('/interviews/intelligence');
+      router.push('/my-interviews');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The workspace could not be deleted');
       setBusy(null);
@@ -268,7 +292,7 @@ export default function InterviewIntelligenceViewPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <BackButton defaultHref="/interviews/intelligence" defaultLabel="Intelligence Interviews" />
+      <BackButton defaultHref="/my-interviews" defaultLabel="HireRite" />
 
       <section className="intelligence-card intelligence-workspace-header flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between md:p-7">
         <div className="min-w-0">
@@ -651,6 +675,7 @@ export default function InterviewIntelligenceViewPage() {
       </Section>
 
       <Section visible={visibleStep === 3} icon={MessageSquareText} title="Interview transcript" detail="Bring in the completed interview conversation before the evidence review starts.">
+        {transcriptNotice && <TranscriptNotice tone={transcriptNotice.tone} message={transcriptNotice.message} />}
         {!record.transcript && record.teams.transcriptStatus === 'transcribing' ? (
           <ActionBlock
             title="Recording transcription in progress"
@@ -1006,6 +1031,22 @@ function Info({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-border bg-surface p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{label}</p>
       <p className="mt-2 text-sm font-semibold text-text-primary">{value}</p>
+    </div>
+  );
+}
+
+function TranscriptNotice({ tone, message }: { tone: 'info' | 'success' | 'error'; message: string }) {
+  const styles = {
+    info: 'border-accent/25 bg-accent/10 text-text-secondary',
+    success: 'border-success/30 bg-success/10 text-success',
+    error: 'border-danger/30 bg-danger/5 text-danger',
+  }[tone];
+  const Icon = tone === 'success' ? CheckCircle2 : tone === 'error' ? AlertCircle : RefreshCw;
+
+  return (
+    <div className={`mb-4 flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${styles}`} role={tone === 'error' ? 'alert' : 'status'} aria-live="polite">
+      <Icon size={16} className={`mt-0.5 shrink-0 ${tone === 'info' ? 'text-accent' : ''}`} />
+      <span className="leading-6">{message}</span>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowRight, BrainCircuit, ClipboardList, FilePlus2, Home, ListChecks, Search, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, Home, ListChecks, Search, X } from 'lucide-react';
 
 type CommandItem = {
   title: string;
@@ -19,22 +19,10 @@ const commands: CommandItem[] = [
     icon: <Home size={17} />,
   },
   {
-    title: 'Interview evaluations',
-    detail: 'Review completed and in-progress candidate reports',
-    href: '/interviews',
-    icon: <ClipboardList size={17} />,
-  },
-  {
-    title: 'New evaluation',
-    detail: 'Create a manual interview evaluation',
-    href: '/interviews/new',
-    icon: <FilePlus2 size={17} />,
-  },
-  {
-    title: 'Connected interview workspaces',
-    detail: 'Open Keka and Teams assisted reviews inside Interview Evaluator',
-    href: '/interviews/intelligence',
-    icon: <BrainCircuit size={17} />,
+    title: 'HireRite',
+    detail: 'Open scheduled interviews and past hiring reviews',
+    href: '/my-interviews',
+    icon: <CalendarDays size={17} />,
   },
   {
     title: 'MOM projects',

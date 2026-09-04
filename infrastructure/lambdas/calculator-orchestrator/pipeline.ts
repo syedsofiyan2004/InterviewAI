@@ -8,9 +8,6 @@ import type {
 import type {
   EstimatePlanRevision,
   EstimateScenarioRequest,
-  ExecutionManifest,
-  ResourcePreflight,
-  RequirementCheck,
   RequirementConstraint,
 } from '../../schema/estimate-plan';
 import type { WorkbookInsights } from '../../schema/calculator';
@@ -43,14 +40,11 @@ import {
 import { sqlLicensing } from '../shared/sql-licence';
 import { countOf, groupResources, type ResourceGroup } from './prompt';
 import { calculatorModelId, type CalculatorModelTier } from './model-router';
-import { ADAPTER_REGISTRY_VERSION, compileWithCalculatorAdapter } from './service-adapters';
-import { parseServiceCatalog, resolveConfigAgainstCatalog, validateConfigAgainstCatalog } from './calculator-catalog';
-import {
-  createExecutionManifest,
-  parseSavedEstimateSnapshot,
-  validateSavedEstimate,
-  type SavedEstimateSnapshot,
-} from './calculator-validation';
+import { executeScenario, type ExecutorResult } from '../aws-calculator-mcp-executor/index';
+import { bedrockModelCaller } from '../aws-calculator-mcp-executor/model-calls';
+import { intentFromCommitment, intentFromRequest, toSemanticResources } from '../aws-calculator-mcp-executor/semantic-resources';
+import { SCENARIO_LABELS } from '../../schema/canonical-resource';
+import { compileWithCalculatorAdapter } from './service-adapters';
 
 /**
  * The Cost Calculator estimate pipeline.
@@ -98,7 +92,6 @@ import {
  */
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
-const MCP_PACKAGE_VERSION = 'sample-aws-pricing-calculator-mcp@1.3.0';
 
 /**
  * How many price lookups are in flight at once.
@@ -150,6 +143,59 @@ const MAX_LINE_ITEMS = 400;
  * which is complete, and an assumption says so.
  */
 const MAX_SERVER_ROWS = 400;
+
+/**
+ * Requirement fields the executor verifies by construction: each is written into the semantic
+ * resource, sent to the Calculator, and compared against the saved estimate on read-back.
+ * Anything else a plan marks critical is real work for a reviewer.
+ */
+const VERIFIABLE_REQUIREMENT_FIELDS = new Set([
+  'resource.region', 'resource.instance_type', 'resource.count', 'resource.hours_per_month',
+  'resource.purchase_model', 'scenario.purchase_model', 'resource.exclude', 'database.engine',
+  'database.multi_az', 'fargate.task_frequency', 'fargate.task_duration', 'fargate.task_frequency_per_day',
+]);
+
+/** The executor's result for a scenario that never reached the MCP. */
+function failedExecution(scenarioId: string, message: string): ExecutorResult {
+  const now = new Date().toISOString();
+  return {
+    status: 'FAILED',
+    scenarioId,
+    totals: { source: 'none' },
+    resources: [],
+    pricing: [],
+    findings: [{ check: 'mcp-validation', severity: 'critical', message }],
+    summary: message,
+    diagnostics: {
+      MIMO_BUILD_SHA: process.env.BUILD_SHA || process.env.MIMO_BUILD_SHA || 'unknown',
+      MCP_TOOL_LIST_HASH: '',
+      MCP_TOOLS: [],
+      canonicalInputHash: '',
+      scenarioId,
+      modelsUsed: {},
+      modelIds: {},
+      perResourceAttempts: {},
+      totals: { source: 'none' },
+      startedAt: now,
+      finishedAt: now,
+      durationMs: 0,
+      toolCalls: [],
+    },
+  };
+}
+
+/** One scenario as the executor saved it, in the shape the assembly step reads. */
+interface ExecutorSaved {
+  url: string | null;
+  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
+  warning?: string;
+  validationErrors: string[];
+  /** Rendered by the Calculator page; absent when the page could not be read. */
+  snapshot?: { monthly?: number; upfront?: number; total12Months?: number };
+  pricingModelLabel: string;
+  committedServices: string[];
+  executor: ExecutorResult;
+}
 
 export interface PipelineProgress {
   (update: { stage: string; message: string }): Promise<void> | void;
@@ -1553,41 +1599,6 @@ export function mixedPricing(priced: PricedGroup[]): ScenarioSummary | undefined
 }
 
 /**
- * The pricing-model fields for one scenario row: which commitment, over which services.
- *
- * Derived per segment rather than once for the estimate, because each scenario is priced
- * from its own groups and a fiscal-year sheet can state a different purchase model in
- * every column.
- */
-function segmentPricing(priced: PricedGroup[]): {
-  pricing_model?: string;
-  scope?: string;
-  pricing_mix?: string;
-} {
-  const mix = mixedPricing(priced);
-
-  // Read off the decisions rather than off `plan.term`: `plan.term` is what was asked for,
-  // and a line that asked and fell back is priced On-Demand however the request read.
-  const terms = new Set<string>();
-  for (const entry of priced) {
-    const decision = entry.pricingDecision;
-    if (!decision || entry.termFellBack) continue;
-    if (decision.pricing === 'committed') terms.add(decision.termLabel);
-  }
-
-  const model = terms.size ? [...terms].sort().join(' + ') : 'On-Demand';
-  const scope = mix?.committed.join(' + ');
-  return {
-    // Schema caps: 120, 120 and 600 characters. Truncated here rather than left to fail
-    // validation, because a long-but-true label must not be able to void a whole estimate
-    // at the parse step after the arithmetic is already done.
-    pricing_model: model.slice(0, 120),
-    scope: scope ? scope.slice(0, 120) : undefined,
-    pricing_mix: mix?.sentence ? mix.sentence.slice(0, 600) : undefined,
-  };
-}
-
-/**
  * Which side of the production line an environment scenario sits on.
  *
  * Only asked of environment bands. A fiscal-year column is not an environment, and
@@ -1822,553 +1833,6 @@ export function calculatorGroupName(environment?: string): string {
   return cleaned.slice(0, 60) || 'Estimate';
 }
 
-/**
- * One service entry for `build_estimate`, plus what it is worth.
- *
- * The money rides along only so the post-save check can price a service the calculator
- * dropped. It is stripped before the payload goes out.
- */
-interface SaveEntry {
-  service?: string;
-  serviceCode: string;
-  group: string;
-  config?: Record<string, unknown>;
-  monthly: number;
-  label: string;
-  resourceIds: string[];
-  requestedPricing: string;
-  resolvedPricing: string;
-  semanticIntent?: Record<string, unknown>;
-  pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
-  pricingReason?: string;
-  fingerprintFields?: string[];
-  preflight: ResourcePreflight;
-}
-
-interface ValidatedSaveResult {
-  url: string | null;
-  status: 'COMPLETED' | 'NEEDS_REVIEW' | 'PARTIAL' | 'FAILED';
-  warning?: string;
-  requirementChecks: RequirementCheck[];
-  validationErrors: string[];
-  snapshot?: SavedEstimateSnapshot;
-  manifest: ExecutionManifest;
-}
-
-function measurementNumber(value: unknown): number | undefined {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    for (const key of ['originalValue', 'value', 'derivedValue']) {
-      const parsed = Number(record[key]);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function semanticIntentFor(group: ResourceGroup, config?: Record<string, unknown>): Record<string, unknown> | undefined {
-  const fargate = group.configuration?.fargateTask;
-  if (fargate && typeof fargate === 'object' && !Array.isArray(fargate)) {
-    const semantic = fargate as Record<string, unknown>;
-    const duration = semantic.taskDuration && typeof semantic.taskDuration === 'object' && !Array.isArray(semantic.taskDuration)
-      ? semantic.taskDuration as Record<string, unknown>
-      : undefined;
-    const derived = duration?.derived && typeof duration.derived === 'object' && !Array.isArray(duration.derived)
-      ? duration.derived as Record<string, unknown>
-      : undefined;
-    return {
-      taskCount: measurementNumber(semantic.taskCount),
-      taskFrequency: semantic.taskFrequency,
-      vcpuPerTask: measurementNumber(semantic.vcpuPerTask),
-      memoryGbPerTask: measurementNumber(semantic.memoryGbPerTask),
-      duration: measurementNumber(derived) ?? measurementNumber(duration),
-      durationUnit: String(derived?.unit || duration?.derivedUnit || 'hours'),
-      calculatorNumberOfTasks: config?.numberOfTasks,
-      calculatorTaskDuration: config?.taskDuration,
-    };
-  }
-  return undefined;
-}
-
-function preflightFor(entry: {
-  label: string;
-  group: ResourceGroup;
-  serviceCode: string;
-  calculatorService?: string;
-  config?: Record<string, unknown>;
-  fingerprintFields?: string[];
-  pricingStatus: 'EXACT' | 'MIXED' | 'UNSUPPORTED';
-  pricingReason?: string;
-}): ResourcePreflight {
-  const checks: ResourcePreflight['checks'] = [];
-  const blockers: string[] = [];
-  const add = (check: ResourcePreflight['checks'][number]) => {
-    checks.push(check);
-    if (check.status === 'FAIL' || check.status === 'UNRESOLVED') {
-      blockers.push(`${check.field}: ${check.message || 'unresolved'}`);
-    }
-  };
-  add({
-    field: 'service',
-    status: entry.serviceCode ? 'PASS' : 'UNRESOLVED',
-    actual: entry.serviceCode || undefined,
-    source: 'workbook',
-    message: entry.serviceCode ? undefined : 'No AWS service family was mapped.',
-  });
-  add({
-    field: 'region',
-    status: (entry.group.region || entry.config?.region) ? 'PASS' : 'UNRESOLVED',
-    actual: entry.group.region || entry.config?.region,
-    source: entry.group.region ? 'workbook' : 'system_default',
-    message: (entry.group.region || entry.config?.region) ? undefined : 'No AWS region is available for this resource.',
-  });
-  add({
-    field: 'calculator.adapter',
-    status: entry.calculatorService && entry.config ? 'PASS' : 'UNRESOLVED',
-    actual: entry.calculatorService || undefined,
-    source: 'mcp',
-    message: entry.calculatorService && entry.config
-      ? undefined
-      : (entry.pricingReason || 'No verified Calculator configuration was produced.'),
-  });
-  for (const field of entry.fingerprintFields || []) {
-    if (entry.config?.[field] === undefined) continue;
-    checks.push({
-      field: `calculator.${field}`,
-      status: 'PASS',
-      actual: entry.config?.[field],
-      source: 'workbook',
-    });
-  }
-  for (const quantity of entry.group.quantities || []) {
-    checks.push({
-      field: `quantity.${quantity.basis}`,
-      status: 'PASS',
-      actual: quantity.amount,
-      source: 'workbook',
-      measurement: {
-        originalValue: quantity.originalValue ?? quantity.amount,
-        originalUnit: quantity.originalUnit ?? quantity.unit,
-        originalScale: quantity.originalScale,
-        originalPeriod: quantity.originalPeriod ?? 'month',
-        derivedValue: quantity.derivedValue ?? quantity.amount,
-        derivedUnit: quantity.derivedUnit ?? quantity.unit,
-        derivedScale: quantity.derivedScale,
-        derivedPeriod: quantity.derivedPeriod ?? 'month',
-        conversionFormula: quantity.conversionFormula,
-      },
-    });
-  }
-  if (entry.pricingStatus === 'UNSUPPORTED') {
-    blockers.push(`pricing: ${entry.pricingReason || 'requested pricing model is unsupported for this resource'}`);
-  }
-  return {
-    resourceId: entry.group.members.map(String).join(',') || entry.label,
-    label: entry.label,
-    service: entry.serviceCode,
-    environment: entry.group.environment,
-    region: entry.group.region || String(entry.config?.region || ''),
-    readiness: blockers.length ? 'NEEDS_INPUT' : 'COMPILED',
-    checks,
-    blockers: [...new Set(blockers)],
-    sourceEvidence: entry.group.sourceEvidence || [],
-  };
-}
-
-/**
- * Gives every service a description no other service in its group shares.
- *
- * The second half of the same silent-loss bug. Verified live: two services in one group
- * with the same `service` and the same `description` collapse to one in the saved
- * estimate — `build_estimate` reports `success: true` for both and warns that it
- * "appended a duplicate row", and then the earlier one is simply not there when the
- * estimate is read back. Sending the worked example's real 25 services reproduced it
- * exactly: 21 survived. Making the descriptions unique and re-sending the same nine UAT
- * services returned all nine.
- *
- * Two rows genuinely can be the same shape — "2 x m6a.large Windows" twice in UAT, one
- * with 1,406 GB attached and one with 512 GB — so the fix is to tell them apart, not to
- * merge them. A machine name is the discriminator a client can look up in their own
- * sheet; a counter is the fallback that cannot fail.
- */
-function distinctDescription(
-  taken: Map<string, Set<string>>,
-  group: string,
-  base: string,
-  names: string[],
-): string {
-  let used = taken.get(group);
-  if (!used) {
-    used = new Set<string>();
-    taken.set(group, used);
-  }
-  const candidates = [base, ...names.slice(0, 3).map((name) => `${base} - ${name}`)];
-  for (const candidate of candidates) {
-    if (!used.has(candidate)) {
-      used.add(candidate);
-      return candidate;
-    }
-  }
-  for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${base} #${suffix}`;
-    if (!used.has(candidate)) {
-      used.add(candidate);
-      return candidate;
-    }
-  }
-}
-
-/**
- * Reads the saved estimate back and reports anything the calculator did not keep.
- *
- * The guarantee this pipeline has to make is that the shareable link and the priced
- * report describe the same resources. Both bugs above were invisible from our side:
- * every service reported success and the URL came back fine. So the link is now verified
- * against what we sent, by group and description, and any shortfall is stated in dollars
- * in the report itself.
- *
- * Never throws. A verification that cannot run leaves a note saying so; it must not cost
- * the client a fully priced estimate.
- */
-async function readSaved(
-  mcp: CalculatorGateway,
-  url: string,
-  onCall: (name: string, isError: boolean) => void,
-): Promise<{ snapshot?: SavedEstimateSnapshot; error?: string }> {
-  try {
-    const result = await mcp.readEstimate(url);
-    onCall('import_estimate', result.isError);
-    if (result.isError) {
-      return { error: `The saved estimate could not be read back: ${result.text.slice(0, 300)}` };
-    }
-    try {
-      return { snapshot: parseSavedEstimateSnapshot(result.text) };
-    } catch (error) {
-      return { error: `The saved estimate read-back could not be parsed: ${(error as Error).message}` };
-    }
-  } catch (error) {
-    onCall('import_estimate', true);
-    return { error: `The saved estimate could not be read back: ${(error as Error).message.slice(0, 300)}` };
-  }
-}
-
-/**
- * Saves one calculator.aws estimate and returns its URL, or null with a reason.
- *
- * `build_estimate` is one sidecar call that creates, adds every service, lint-checks and
- * saves. Using it instead of create_estimate + N x add_service + export_estimate removes
- * an entire class of failure by construction: there is no window in which a second
- * estimate can be created, no partially-populated estimate to orphan, and no ordering
- * for a retry to get wrong. A live run created a second estimate at turn 20 and exported
- * a link covering a fraction of the workload; that cannot happen here.
- *
- * Never throws. The link is the nicer half of the output and the costs are the half the
- * client needs, so a save failure must not discard a fully priced estimate.
- *
- * The estimate is read back before this returns. Two live-verified bugs — a group name
- * containing a slash, and two services sharing a description inside one group — cause the
- * calculator to keep the URL and quietly discard the resources, which is how the link and
- * the report came to disagree by $4,601.75/month on the worked example. Both are prevented
- * above; the read-back is what stops any third variant of the same failure from ever
- * reaching a client unremarked.
- */
-async function saveEstimate(
-  mcp: CalculatorGateway,
-  name: string,
-  scenarioId: string,
-  priced: PricedGroup[],
-  context: {
-    planRevision?: EstimatePlanRevision;
-    inputHash: string;
-    requestedPricing: string;
-  },
-  onCall: (name: string, isError: boolean) => void,
-): Promise<ValidatedSaveResult> {
-  const taken = new Map<string, Set<string>>();
-  const services: SaveEntry[] = priced.map((entry) => {
-      const group = calculatorGroupName(entry.group.environment);
-      const base = String(entry.plan.calculatorConfig?.description ?? labelOf(entry.group));
-      const description = distinctDescription(taken, group, base, entry.group.names);
-      const decision = entry.pricingDecision;
-      const exact = context.requestedPricing === 'sheet-specified'
-        ? (decision?.pricing === 'committed' && !decision.substitution)
-          || (decision?.pricing === 'on-demand' && decision.because === 'requested')
-        : context.requestedPricing === 'on-demand'
-          ? decision?.pricing === 'on-demand' && decision.because === 'requested'
-          : decision?.pricing === 'committed' && !decision.substitution;
-      const resolvedPricing = exact
-        ? context.requestedPricing === 'sheet-specified'
-          ? decision?.pricing === 'committed'
-            ? `ri-${decision.term.years}yr-${decision.term.purchase === 'All Upfront'
-              ? 'all-upfront' : decision.term.purchase === 'Partial Upfront' ? 'partial-upfront' : 'no-upfront'}`
-            : 'on-demand'
-          : context.requestedPricing
-        : decision?.pricing === 'committed'
-          ? decision.termLabel
-          : decision?.pricing === 'on-demand'
-            ? 'on-demand'
-            : decision?.pricedAt || 'unresolved';
-      const intentionalOnDemandRemainder = decision?.pricing === 'on-demand'
-        && ['no-commitment-offered', 'not-instance-capacity', 'no-savings-plan-coverage']
-          .includes(decision.because);
-      const calculatorVisibleCommitmentGap = decision?.pricing === 'unpriceable-commitment';
-      const pricingStatus: SaveEntry['pricingStatus'] = exact
-        ? 'EXACT'
-        : intentionalOnDemandRemainder
-            || calculatorVisibleCommitmentGap
-            || (decision?.pricing === 'committed' && !decision.substitution)
-          ? 'MIXED'
-          : 'UNSUPPORTED';
-      const saveEntry = {
-        service: entry.plan.calculatorKey,
-        serviceCode: entry.plan.serviceCode,
-        group,
-        ...(entry.plan.calculatorConfig ? {
-          config: { ...entry.plan.calculatorConfig, description },
-        } : {}),
-        monthly: (entry.computeMonthly ?? 0) + (entry.storageMonthly ?? 0),
-        label: labelOf(entry.group),
-        resourceIds: entry.group.members.map(String),
-        requestedPricing: context.requestedPricing,
-        resolvedPricing,
-        semanticIntent: semanticIntentFor(entry.group, entry.plan.calculatorConfig),
-        pricingStatus: entry.plan.calculatorUnsupported ? 'UNSUPPORTED' : pricingStatus,
-        pricingReason: entry.plan.calculatorUnsupported
-          || (decision?.pricing === 'committed' ? decision.substitution : decision?.pricing === 'on-demand' ? decision.reason : decision?.caveat),
-        fingerprintFields: entry.plan.fingerprintFields,
-      };
-      return {
-        ...saveEntry,
-        preflight: preflightFor({
-          label: saveEntry.label,
-          group: entry.group,
-          serviceCode: saveEntry.serviceCode,
-          calculatorService: saveEntry.service,
-          config: saveEntry.config,
-          fingerprintFields: saveEntry.fingerprintFields,
-          pricingStatus: saveEntry.pricingStatus,
-          pricingReason: saveEntry.pricingReason,
-        }),
-      };
-    });
-
-  const saveable = services.filter((entry) => entry.service && entry.config);
-  const includedResourceIds = new Set(saveable.flatMap((entry) => entry.resourceIds));
-  const constraints = (context.planRevision?.requirements || []).filter((requirement) => {
-    const resourceScopes = requirement.scope.filter((scope) => scope.startsWith('resource:'));
-    if (resourceScopes.length
-      && !resourceScopes.some((scope) => includedResourceIds.has(scope.slice('resource:'.length)))) return false;
-    const serviceScopes = requirement.scope
-      .filter((scope) => scope.startsWith('service:'))
-      .map((scope) => scope.slice('service:'.length).toLowerCase().replace(/[^a-z0-9]/g, ''));
-    if (!serviceScopes.length) return true;
-    return saveable.some((entry) => {
-      const identity = `${entry.serviceCode} ${entry.label}`.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return serviceScopes.some((scope) => identity.includes(scope) || scope.includes(identity));
-    });
-  });
-  const buildManifest = () => createExecutionManifest({
-    scenarioId,
-    planRevisionId: context.planRevision?.revisionId || 'legacy',
-    inputHash: context.inputHash,
-    constraints,
-    preflight: services.map((entry) => entry.preflight),
-    services: services.map((entry) => ({
-      resourceIds: entry.resourceIds,
-      serviceCode: entry.serviceCode,
-      calculatorService: entry.service,
-      group: entry.group,
-      description: String(entry.config?.description ?? entry.label),
-      config: entry.config,
-      semanticIntent: entry.semanticIntent,
-      fingerprintFields: entry.fingerprintFields,
-      requestedPricing: entry.requestedPricing,
-      resolvedPricing: entry.resolvedPricing,
-      pricingStatus: entry.pricingStatus,
-      pricingReason: entry.pricingReason,
-    })),
-  });
-  let manifest = buildManifest();
-  const preflightBlockers = services.flatMap((entry) => entry.preflight.blockers.map((blocker) => `${entry.label}: ${blocker}`));
-  if (preflightBlockers.length) {
-    const validationErrors = [
-      'Calculator preflight failed; no AWS Pricing Calculator estimate was created.',
-      ...preflightBlockers,
-    ];
-    return {
-      url: null,
-      status: 'FAILED',
-      warning: validationErrors.join(' '),
-      requirementChecks: [],
-      validationErrors,
-      manifest,
-    };
-  }
-  if (!saveable.length) {
-    const validationErrors = [
-      'No resource has a supported AWS Pricing Calculator adapter; no partial link was created.',
-      ...services.map((entry) => entry.pricingReason).filter((reason): reason is string => Boolean(reason)),
-    ];
-    return {
-      url: null,
-      status: 'FAILED',
-      warning: validationErrors[0],
-      requirementChecks: [],
-      validationErrors,
-      manifest,
-    };
-  }
-  const compileOmissionErrors = saveable.length === services.length ? [] : [
-    `Calculator compilation omitted ${services.length - saveable.length} of ${services.length} resource group(s); the saved AWS estimate is partial.`,
-    ...services
-      .filter((entry) => !entry.service || !entry.config)
-      .map((entry) => `${entry.label}: ${entry.pricingReason || 'no Calculator adapter/configuration was produced'}`),
-  ];
-
-  const catalogs = new Map<string, ReturnType<typeof parseServiceCatalog>>();
-  const validateCatalogs = async (refresh = false): Promise<string[]> => {
-    const errors: string[] = [];
-    if (refresh) catalogs.clear();
-
-    for (const entry of saveable) {
-      if (!entry.service || !entry.config) continue;
-      let catalog = catalogs.get(entry.service);
-      if (!catalog) {
-        const response = await mcp.getServiceCatalog(entry.service);
-        onCall('get_service_fields', response.isError);
-        try {
-          catalog = parseServiceCatalog(response);
-          catalogs.set(entry.service, catalog);
-        } catch (error) {
-          errors.push(`${entry.service}: ${(error as Error).message}`);
-          continue;
-        }
-      }
-      entry.config = resolveConfigAgainstCatalog(catalog, entry.config);
-      errors.push(...validateConfigAgainstCatalog(catalog, entry.config));
-    }
-    return [...new Set(errors)];
-  };
-
-  try {
-    const catalogErrors = await validateCatalogs();
-    if (catalogErrors.length) return {
-      url: null,
-      status: 'FAILED',
-      warning: catalogErrors.join(' '),
-      requirementChecks: [],
-      validationErrors: catalogErrors,
-      manifest,
-    };
-    manifest = buildManifest();
-    const payloadForSave = () => saveable.map((entry) => ({
-      service: entry.service!,
-      group: entry.group,
-      config: entry.config!,
-    }));
-    let payload = payloadForSave();
-    let result = await mcp.saveEstimate(
-      name,
-      payload,
-    );
-    onCall('build_estimate', result.isError);
-
-    if (result.isError) {
-      // Catalog contracts can change independently of this deployment. Refresh once and
-      // retry only when the current payload still validates against the refreshed schema.
-      const refreshedErrors = await validateCatalogs(true);
-      if (!refreshedErrors.length) {
-        payload = payloadForSave();
-        result = await mcp.saveEstimate(name, payload);
-        onCall('build_estimate_retry', result.isError);
-      }
-    }
-    if (result.isError) {
-      const validationErrors = [`AWS Pricing Calculator rejected the compiled estimate: ${result.text.slice(0, 300)}`];
-      return {
-        url: null,
-        status: 'FAILED',
-        warning: validationErrors[0],
-        requirementChecks: [],
-        validationErrors,
-        manifest,
-      };
-    }
-
-    // The tool returns { sharable_url, aws_estimate_id, services }; the URL is also
-    // findable in the raw text, which is the more robust of the two given the reply is
-    // occasionally wrapped in prose.
-    const url = /https:\/\/[^\s"'\\]*calculator\.aws[^\s"'\\]*/.exec(result.text)?.[0]
-      ?? (() => {
-        try {
-          return JSON.parse(result.text)?.sharable_url ?? null;
-        } catch {
-          return null;
-        }
-      })();
-
-    if (!url) {
-      const validationErrors = ['The estimate saved but AWS Pricing Calculator returned no shareable URL.'];
-      return { url: null, status: 'FAILED', warning: validationErrors[0], requirementChecks: [], validationErrors, manifest };
-    }
-    const readBack = await readSaved(mcp, String(url), onCall);
-    if (!readBack.snapshot) {
-      const validationErrors = [readBack.error || 'The saved estimate could not be validated.'];
-      return {
-        url: String(url), status: 'PARTIAL', warning: validationErrors[0], requirementChecks: [], validationErrors, manifest,
-      };
-    }
-    let linkCheck: Awaited<ReturnType<CalculatorGateway['validateLink']>>;
-    try {
-      linkCheck = await mcp.validateLink(String(url));
-    } catch (error) {
-      linkCheck = {
-        validUrl: false,
-        reason: `AWS Pricing Calculator link browser validation could not be completed: ${(error as Error).message.slice(0, 300)}`,
-      };
-    }
-    const renderedSnapshot = {
-      ...readBack.snapshot,
-      ...(linkCheck.validUrl && linkCheck.monthly !== undefined ? { monthly: linkCheck.monthly } : {}),
-      ...(linkCheck.validUrl && linkCheck.upfront !== undefined ? { upfront: linkCheck.upfront } : {}),
-      ...(linkCheck.validUrl && linkCheck.total12Months !== undefined ? { total12Months: linkCheck.total12Months } : {}),
-    };
-    const validation = validateSavedEstimate(manifest, renderedSnapshot);
-    const validationErrors = [...new Set([
-      ...compileOmissionErrors,
-      ...validation.errors,
-      ...(!linkCheck.validUrl
-        ? [linkCheck.reason || 'AWS Pricing Calculator link browser validation could not be completed.']
-        : []),
-    ])];
-    const reviewErrors = validation.reviewRequired.map((check) => {
-      const constraint = manifest.constraints.find((entry) => entry.id === check.constraintId);
-      return `${constraint?.field || check.constraintId}: ${check.message || check.status.toLowerCase()}`;
-    });
-    return {
-      url: String(url),
-      status: validationErrors.length ? 'PARTIAL' : reviewErrors.length ? 'NEEDS_REVIEW' : 'COMPLETED',
-      ...(validationErrors.length || reviewErrors.length ? { warning: [...validationErrors, ...reviewErrors].join(' ') } : {}),
-      requirementChecks: validation.checks,
-      validationErrors: [...validationErrors, ...reviewErrors],
-      snapshot: renderedSnapshot,
-      manifest,
-    };
-  } catch (error) {
-    onCall('build_estimate', true);
-    const validationErrors = [`The shareable calculator.aws link could not be created: ${(error as Error).message.slice(0, 300)}`];
-    return {
-      url: null,
-      status: 'FAILED',
-      warning: validationErrors[0],
-      requirementChecks: [],
-      validationErrors,
-      manifest,
-    };
-  }
-}
-
 // ---------------------------------------------------------------------------
 // The narrative
 // ---------------------------------------------------------------------------
@@ -2415,7 +1879,8 @@ function deterministicNotes(
   const warnings: string[] = [];
 
   assumptions.push(
-    `Every figure is calculated from live AWS published rates read from the AWS Price List Query API on ${new Date().toISOString().slice(0, 10)}, not from any rate stated in the uploaded file.`,
+    'The headline monthly, upfront and 12-month totals are read from the saved AWS Pricing Calculator estimate behind the shareable link. '
+    + `The line-item workings are a cross-check from live AWS published rates read from the AWS Price List Query API on ${new Date().toISOString().slice(0, 10)}; neither uses any rate stated in the uploaded file.`,
   );
 
   const regions = [...new Set(priced.map((entry) => entry.group.region || defaultRegion))];
@@ -2429,31 +1894,9 @@ function deterministicNotes(
     assumptions.push(
       `${committed.length} group(s) carry a commitment in the uploaded file and are priced on that term${terms.length ? ` (${terms.join('; ')})` : ''}.`,
     );
-    // Why the shareable link names a different product for the same money: calculator.aws
-    // hides Standard and Convertible Reserved Instances unless tenancy is dedicated, so a
-    // shared-tenancy commitment can only be expressed there as an EC2 Instance Savings
-    // Plan. AWS sets the Instance Savings Plan discount to match the Standard RI discount
-    // for the same term and upfront option, so the rate is the same one either way — but a
-    // client reading both documents will see the two names and should be told they agree.
-    assumptions.push(
-      'Committed rates are read from the AWS Price List as Standard Reserved Instances and appear in the shareable calculator link as the matching EC2 Instance Savings Plan, which AWS prices identically for the same term and upfront option. Reserved Instances are not selectable on shared tenancy in calculator.aws.',
-    );
-  }
-
-  // The one discrepancy a client is guaranteed to notice: a link that totals less than the
-  // report because some priced lines have no calculator service definition to be saved as.
-  // Naming the money involved is the difference between an explained gap and a wrong figure.
-  const offLink = priced.filter((entry) => (
-    !entry.miss && !entry.plan.calculatorKey && (entry.computeMonthly ?? 0) > 0
-  ));
-  if (offLink.length) {
-    const money = offLink.reduce(
-      (total, entry) => total + (entry.computeMonthly ?? 0) + (entry.storageMonthly ?? 0),
-      0,
-    );
-    warnings.push(
-      `The shareable calculator.aws link covers the EC2 resources only. ${offLink.length} priced group(s) worth $${round2(money).toFixed(2)}/month — ${[...new Set(offLink.map((entry) => entry.plan.serviceCode).filter(Boolean))].join(', ') || 'other services'} — have no calculator service definition, so the link's total is lower than the total in this report by that amount. The figures in this report are the complete ones.`,
-    );
+    // What the Calculator actually did with each commitment is stated per service by the
+    // executor's pricing scope, appended to these assumptions by the pipeline; nothing is
+    // substituted, so there is no "appears as a different product" sentence to write here.
   }
 
   // How the committed and On-Demand halves of this estimate divide, named service by
@@ -2692,8 +2135,13 @@ export function materializePlanResources(
           resource = withConfiguration(resource, constraint.field, expected);
           break;
         default:
-          // Unknown fields remain requirements in the manifest and therefore make the run
-          // partial/unverifiable instead of being silently treated as applied.
+          // A Calculator-required input the preflight asked for by its own label. Stored on the
+          // row as stated; the semantic layer hands it to the executor under that name.
+          if (constraint.field.startsWith('calculator.')) {
+            resource = withConfiguration(resource, constraint.field, expected);
+          }
+          // Any other unknown field stays a requirement the run cannot verify, and is reported
+          // as review work rather than silently treated as applied.
           break;
       }
     }
@@ -2893,28 +2341,81 @@ export async function runEstimatePipeline(
     + `, ${Math.round(remaining() / 1000)}s budget left.`,
   );
 
-  // --- 4. Save and validate every requested scenario. ------------------------------
-  await onProgress?.({ stage: 'saving', message: `Saving ${pricedSegments.length} AWS Calculator scenario(s)` });
-  const inputHash = record.workbook_hash || record.calculation_id;
-  const savedSegments = await withConcurrency(pricedSegments.map((segment, index) => ({ segment, index })), 2, async ({ segment, index }) => saveEstimate(
-    mcp,
-    pricedSegments.length > 1 ? `${record.name} - ${segment.label}` : record.name,
-    segment.key,
-    segment.priced,
-    {
-      planRevision: planRevision ? {
-        ...planRevision,
-        requirements: planRevision.requirements.filter((requirement) => {
-          const scenarioScopes = requirement.scope.filter((scope) => scope.startsWith('scenario:'));
-          return !scenarioScopes.length || scenarioScopes.includes(`scenario:${index}`);
-        }),
-      } : undefined,
-      inputHash,
-      requestedPricing: segment.pricingModel || 'sheet-specified',
-    },
-    onCall,
-  ));
+  // --- 4. Build every scenario in the AWS Pricing Calculator through the MCP executor. ----
+  //
+  // The executor is the only path to a saved estimate: it hands the Calculator semantic
+  // resources and lets the Calculator's own schema decide the representation, then reads the
+  // saved estimate back and renders its totals. The Price List figures above are kept as the
+  // report's workings and as a cross-check; they are no longer what the client is quoted.
+  await onProgress?.({ stage: 'saving', message: `Building ${pricedSegments.length} AWS Calculator scenario(s) through the MCP` });
+  const executorModels = bedrockModelCaller(client);
+  const savedSegments: ExecutorSaved[] = await withConcurrency(pricedSegments.map((segment, index) => ({ segment, index })), 2, async ({ segment }) => {
+    // A requested scenario states one model for every row; a sheet-specified one lets each
+    // row keep the commitment its own cell states, and the scenario itself is On-Demand.
+    const requested = intentFromRequest(segment.pricingModel);
+    const scenarioIntent = requested ?? intentFromCommitment(segment.commitment);
+    const resources = toSemanticResources({
+      segmentKey: segment.key,
+      groups: segment.groups,
+      defaultRegion,
+      commitment: requested ? (segment.commitment ?? { model: 'on-demand' }) : segment.commitment,
+      scenarioLabel: segment.label,
+    });
+    let result: ExecutorResult;
+    try {
+      result = await executeScenario({
+        scenarioId: segment.key,
+        estimateName: pricedSegments.length > 1 ? `${record.name} - ${segment.label}` : record.name,
+        pricing: scenarioIntent,
+        resources,
+      }, mcp, {
+        models: executorModels,
+        buildSha: process.env.BUILD_SHA || process.env.MIMO_BUILD_SHA,
+        onProgress: ({ message }) => onProgress?.({ stage: 'saving', message: `${segment.label}: ${message}` }),
+      });
+    } catch (error) {
+      // A transport fault talking to the sidecar loses this scenario's link, never the priced
+      // estimate around it: the figures already exist and the reader is told what is missing.
+      result = failedExecution(segment.key, `The shareable calculator.aws link could not be created: ${(error as Error).message.slice(0, 300)}`);
+    }
+    for (const toolCall of result.diagnostics.toolCalls) onCall(toolCall.tool, toolCall.isError);
+    modelCalls += Object.values(result.diagnostics.modelsUsed).filter((tier) => tier === 'HAIKU_4_5' || tier === 'SONNET_4_6').length;
+    const problems = result.findings.filter((finding) => finding.severity !== 'info').map((finding) => finding.message);
+    // A critical requirement the executor has no way to read back from the saved estimate is
+    // review work for a person, and an estimate carrying one is complete but not verified.
+    const unverifiable = (planRevision?.requirements || [])
+      .filter((requirement) => requirement.impact === 'critical' && !VERIFIABLE_REQUIREMENT_FIELDS.has(requirement.field) && !requirement.field.startsWith('calculator.'))
+      .map((requirement) => `${requirement.field}: this requirement cannot be independently read back from the saved AWS Calculator estimate and needs a person to confirm it.`);
+    const status = result.status === 'COMPLETED' && unverifiable.length ? 'NEEDS_REVIEW' : result.status;
+    problems.push(...unverifiable);
+    return {
+      url: result.calculatorUrl ?? null,
+      status,
+      warning: problems.length ? problems.join(' ') : undefined,
+      validationErrors: problems,
+      snapshot: result.totals.source === 'browser'
+        ? { monthly: result.totals.monthly, upfront: result.totals.upfront, total12Months: result.totals.total12Months }
+        : undefined,
+      pricingModelLabel: requested ? SCENARIO_LABELS[scenarioIntent.kind] : 'As the sheet states',
+      committedServices: [...new Set(result.pricing.filter((entry) => entry.resolved !== 'on-demand').map((entry) => entry.service))],
+      executor: result,
+    };
+  });
   const saved = savedSegments[0];
+
+  // The Price List cross-check. The two figures are computed from different sources and
+  // will differ by a little; a large gap means one side has misread the workload, and a
+  // reader deserves to be told rather than to discover it against the invoice.
+  const crossChecks: string[] = [];
+  savedSegments.forEach((entry, index) => {
+    const local = pricedSegments[index].monthly;
+    const calculator = entry.snapshot?.monthly;
+    if (calculator === undefined || !(local > 0) || !(calculator > 0)) return;
+    const gap = Math.abs(calculator - local) / calculator;
+    if (gap > 0.25) crossChecks.push(
+      `${pricedSegments[index].label}: the AWS Pricing Calculator total is ${round2(calculator)}/month and the Price List cross-check is ${round2(local)}/month, a ${Math.round(gap * 100)}% gap. The Calculator figure is the quoted one; the gap is worth a look before the estimate is shared.`,
+    );
+  });
 
   // --- 5. Narrate. Bounded, optional, and last. ------------------------------------
   const notes = deterministicNotes(priced, record, defaultRegion);
@@ -2986,7 +2487,9 @@ export async function runEstimatePipeline(
 
   for (const scenario of savedSegments) {
     if (scenario.warning) notes.warnings.push(scenario.warning);
+    if (scenario.executor.pricingScope) notes.assumptions.push(`${scenario.executor.scenarioId}: ${scenario.executor.pricingScope}`);
   }
+  notes.warnings.push(...crossChecks);
 
   // Per-server rows for the Excel export, allocated from the baseline groups -- the
   // committed configuration, which is what the shareable link and monthlyTotal describe.
@@ -3015,16 +2518,17 @@ export async function runEstimatePipeline(
       upfront: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.upfront ?? null : null,
       total_12_months: ['COMPLETED', 'NEEDS_REVIEW'].includes(savedSegments[index].status) ? savedSegments[index].snapshot?.total12Months ?? null : null,
       url: savedSegments[index].url,
-      requirement_checks: savedSegments[index].requirementChecks,
       validation_errors: savedSegments[index].validationErrors,
-      saved_snapshot_hash: savedSegments[index].snapshot?.hash,
-      manifest: savedSegments[index].manifest,
       detail: segment.detail,
-      // Which commitment this column was priced on, over which services. Per scenario
-      // because a fiscal-year sheet can state a different purchase model in every column,
-      // and a reader comparing two scenarios needs to know whether they differ by size,
-      // by year, or by pricing model.
-      ...segmentPricing(segment.priced),
+      // Which commitment this column was priced on, over which services — as the Calculator
+      // resolved it, per service, not as the request read. A fiscal-year sheet can state a
+      // different purchase model in every column, and a reader comparing two scenarios needs
+      // to know whether they differ by size, by year, or by pricing model.
+      pricing_model: savedSegments[index].pricingModelLabel.slice(0, 120),
+      scope: savedSegments[index].committedServices.length
+        ? savedSegments[index].committedServices.join(' + ').slice(0, 120)
+        : undefined,
+      pricing_mix: savedSegments[index].executor.pricingScope?.slice(0, 600),
       // Only for environment bands. A fiscal year is not an environment, and a guessed
       // production/lower split is worse than none: a reader would filter and subtotal on it.
       ...(segment.kind === 'environment'
@@ -3055,10 +2559,30 @@ export async function runEstimatePipeline(
     ebsRatePerGbMonth: priced.find((entry) => entry.storageRatePerGbMonth !== undefined)
       ?.storageRatePerGbMonth,
     validationErrors: [...new Set(allValidationErrors)],
+    // Everything needed to say, after the fact, whether a failure came from parsing, a missing
+    // input, a model's interpretation, the MCP's configuration or the Calculator itself.
     diagnostics: {
-      BUILD_SHA: process.env.BUILD_SHA || process.env.CODEBUILD_RESOLVED_SOURCE_VERSION || 'unknown',
-      ADAPTER_REGISTRY_VERSION,
-      MCP_PACKAGE_VERSION,
+      MIMO_BUILD_SHA: saved.executor.diagnostics.MIMO_BUILD_SHA,
+      MCP_VERSION: saved.executor.diagnostics.MCP_VERSION,
+      MCP_TOOL_LIST_HASH: saved.executor.diagnostics.MCP_TOOL_LIST_HASH,
+      MCP_TOOLS: saved.executor.diagnostics.MCP_TOOLS,
+      PRICE_LIST_CROSS_CHECK_MONTHLY: round2(baselineTotal),
+      scenarios: savedSegments.map((entry) => ({
+        scenarioId: entry.executor.scenarioId,
+        status: entry.executor.status,
+        canonicalInputHash: entry.executor.diagnostics.canonicalInputHash,
+        estimateId: entry.executor.diagnostics.estimateId,
+        calculatorUrl: entry.executor.diagnostics.calculatorUrl,
+        totals: entry.executor.diagnostics.totals,
+        modelsUsed: entry.executor.diagnostics.modelsUsed,
+        modelIds: entry.executor.diagnostics.modelIds,
+        perResourceAttempts: entry.executor.diagnostics.perResourceAttempts,
+        mcpValidationOutput: entry.executor.diagnostics.mcpValidationOutput,
+        pricing: entry.executor.pricing,
+        findings: entry.executor.findings,
+        toolCalls: entry.executor.diagnostics.toolCalls.length,
+        durationMs: entry.executor.diagnostics.durationMs,
+      })),
     },
   };
 

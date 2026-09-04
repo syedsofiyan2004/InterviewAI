@@ -168,9 +168,11 @@ describe('Deleting an estimate', () => {
 
     expect(response.statusCode).toBe(200);
     // All generated files, and an undefined input key must not become "undefined".
+    // The new exports/ path is included alongside the legacy estimate.xlsx path.
     const keys = s3Mock.commandCalls(DeleteObjectCommand).map((call) => call.args[0].input.Key);
     expect(keys).toEqual([
       ...['pdf', 'xlsx', 'docx'].map((ext) => `users/${OWNER}/calculator/${ID}/estimate.${ext}`),
+      `users/${OWNER}/calculator/${ID}/exports/cleaned-estimate.xlsx`,
       `users/${OWNER}/calculator/${ID}/result.json`,
     ]);
   });

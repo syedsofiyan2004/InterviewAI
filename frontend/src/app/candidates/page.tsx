@@ -2,15 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { format } from 'date-fns';
+import { ArrowRight, CalendarClock, FolderOpen } from 'lucide-react';
 import { api, type CandidateWorkspace } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceStatusBadge } from '@/components/workspace/WorkspaceStatusBadge';
 import { SkeletonList } from '@/components/ui/Skeleton';
-import { ArrowRight, FolderOpen, ClipboardList, BrainCircuit, CalendarClock } from 'lucide-react';
-import { format } from 'date-fns';
 
 export default function CandidatesPage() {
-  const { hasTier } = useAuth();
   const [items, setItems] = useState<CandidateWorkspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +32,7 @@ export default function CandidatesPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">Reviews</p>
         <h1 className="mt-2 text-xl font-semibold text-text-primary">Review workspaces</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-          These workspaces are created from real manual evaluations or Interview Intelligence records. Use them to discuss evidence,
+          These workspaces are created from HireRite interview records. Use them to discuss evidence,
           share access with named colleagues, and record final review decisions.
         </p>
       </div>
@@ -49,32 +47,16 @@ export default function CandidatesPage() {
             <span className="mb-3 rounded-xl bg-accent/10 p-2.5 text-accent"><FolderOpen size={20} /></span>
             <p className="text-sm font-semibold text-text-primary">No review workspaces yet</p>
             <p className="mt-1 max-w-xl text-sm leading-6 text-text-muted">
-              Start from the interview tools. MiMo will keep the candidate context and generated reports connected there.
+              Start from HireRite. MiMo will keep the candidate context and generated reports connected there.
             </p>
           </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <Link href="/interviews/new" className="rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-surface-interactive">
-              <ClipboardList size={18} className="text-accent" />
-              <p className="mt-2 text-sm font-semibold text-text-primary">Manual evaluation</p>
-              <p className="mt-1 text-xs leading-5 text-text-muted">Upload the JD, resume, and transcript yourself.</p>
-            </Link>
-            {/* Manual Intelligence creation is REVIEWER+ (Part E). Everyone else
-                reaches their rounds through My Interviews, which provisions the
-                workspace on open. */}
-            {hasTier('REVIEWER') ? (
-              <Link href="/interviews/intelligence/new" className="rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-surface-interactive">
-                <BrainCircuit size={18} className="text-accent" />
-                <p className="mt-2 text-sm font-semibold text-text-primary">Interview Intelligence</p>
-                <p className="mt-1 text-xs leading-5 text-text-muted">Create a connected workspace from Keka and Teams context.</p>
-              </Link>
-            ) : (
-              <Link href="/my-interviews" className="rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-accent/40 hover:bg-surface-interactive">
-                <CalendarClock size={18} className="text-accent" />
-                <p className="mt-2 text-sm font-semibold text-text-primary">My Interviews</p>
-                <p className="mt-1 text-xs leading-5 text-text-muted">Open a round you are on the panel for — the workspace is created for you.</p>
-              </Link>
-            )}
-          </div>
+          <Link href="/my-interviews" className="mx-auto mt-5 flex max-w-md rounded-xl border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-accent/40 hover:bg-surface-interactive">
+            <span>
+              <CalendarClock size={18} className="text-accent" />
+              <span className="mt-2 block text-sm font-semibold text-text-primary">HireRite</span>
+              <span className="mt-1 block text-xs leading-5 text-text-muted">Open scheduled interviews and continue past hiring reviews.</span>
+            </span>
+          </Link>
         </div>
       ) : (
         <div className="space-y-2">

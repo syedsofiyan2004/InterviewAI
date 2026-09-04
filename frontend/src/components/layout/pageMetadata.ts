@@ -16,33 +16,33 @@ export function getPageMetadata(pathname: string): PageMetadata {
 
   if (pathname === '/interviews/new') {
     return {
-      title: 'New evaluation',
-      description: 'Create an interview evaluation from source material.',
-      breadcrumbs: [{ label: 'Evaluations', href: '/interviews' }, { label: 'New evaluation' }],
+      title: 'HireRite',
+      description: 'Scheduled interviews and completed hiring reviews.',
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }],
     };
   }
 
   if (pathname.startsWith('/interviews/view')) {
     return {
-      title: 'Evaluation details',
+      title: 'HireRite details',
       description: 'Review source material, analysis, and the final report.',
-      breadcrumbs: [{ label: 'Evaluations', href: '/interviews' }, { label: 'Evaluation details' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Details' }],
     };
   }
 
   if (pathname === '/interviews') {
     return {
-      title: 'Evaluations',
-      description: 'Review candidate evaluations and reports.',
-      breadcrumbs: [{ label: 'Evaluations' }],
+      title: 'HireRite',
+      description: 'Scheduled interviews and completed hiring reviews.',
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }],
     };
   }
 
   if (pathname === '/my-interviews') {
     return {
-      title: 'My Interviews',
-      description: 'Scheduled Keka rounds assigned to your panel email.',
-      breadcrumbs: [{ label: 'My Interviews' }],
+      title: 'HireRite',
+      description: 'Scheduled interviews and completed hiring reviews.',
+      breadcrumbs: [{ label: 'HireRite' }],
     };
   }
 
@@ -50,7 +50,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'New connected workspace',
       description: 'Set up the connected interview record before the meeting.',
-      breadcrumbs: [{ label: 'Evaluations', href: '/interviews' }, { label: 'Connected workspaces', href: '/interviews/intelligence' }, { label: 'New workspace' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'New workspace' }],
     };
   }
 
@@ -58,15 +58,15 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Interview workspace',
       description: 'Prepare, review, approve, and export the interview record.',
-      breadcrumbs: [{ label: 'Evaluations', href: '/interviews' }, { label: 'Connected workspaces', href: '/interviews/intelligence' }, { label: 'Workspace' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Workspace' }],
     };
   }
 
   if (pathname === '/interviews/intelligence') {
     return {
-      title: 'Connected workspaces',
+      title: 'HireRite workspaces',
       description: 'Manage connected interview workspaces and reviews.',
-      breadcrumbs: [{ label: 'Evaluations', href: '/interviews' }, { label: 'Connected workspaces' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Workspaces' }],
     };
   }
 
@@ -277,7 +277,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
   if (pathname === '/candidates/new') {
     return {
       title: 'Create from interview',
-      description: 'Start a review workspace from manual evaluation or Interview Intelligence.',
+      description: 'Start from HireRite interview records.',
       breadcrumbs: [{ label: 'Review workspaces', href: '/candidates' }, { label: 'Create from interview' }],
     };
   }

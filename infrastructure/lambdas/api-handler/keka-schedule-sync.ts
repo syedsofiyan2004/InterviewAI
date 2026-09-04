@@ -11,9 +11,12 @@ import {
 } from '../../schema/admin.js';
 import {
   createKekaIntegration,
+  createTeamsIntegration,
   KekaCandidate,
   KekaJob,
   KekaScheduledInterview,
+  TeamsIntegration,
+  TeamsIntegrationError,
 } from './intelligence-integrations.js';
 
 const ADMIN_TABLE_NAME = process.env.ADMIN_TABLE_NAME!;
@@ -400,6 +403,38 @@ async function upsertScheduledInterview(input: {
   return rowsSuperseded;
 }
 
+async function resolveMeetingUrlFromPanelCalendar(input: {
+  teams: TeamsIntegration;
+  job: KekaJob;
+  candidate: KekaCandidate;
+  interview: KekaScheduledInterview;
+  panelistEmail: string;
+}): Promise<{ meetingUrl?: string; organizerEmail?: string }> {
+  const { teams, job, candidate, interview, panelistEmail } = input;
+  if (interview.meetingUrl) {
+    return { meetingUrl: interview.meetingUrl, organizerEmail: interview.organizerEmail };
+  }
+  if (String(process.env.TEAMS_INTEGRATION_MODE || '').trim().toLowerCase() !== 'live') return {};
+  try {
+    const result = await teams.findMeetingLink({
+      calendarEmail: panelistEmail,
+      scheduledAt: interview.scheduledAt,
+      candidateName: candidate.name,
+      candidateEmail: candidate.email,
+      jobTitle: job.title,
+    });
+    return { meetingUrl: result.meetingUrl, organizerEmail: result.organizerEmail };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    if (err instanceof TeamsIntegrationError) {
+      console.warn('[Keka Sync] Could not resolve Teams meeting link from panel calendar:', message);
+    } else {
+      console.warn('[Keka Sync] Unexpected Teams meeting link lookup failure:', message);
+    }
+    return {};
+  }
+}
+
 /**
  * Rows whose scheduled_at falls inside the sweep window.
  *
@@ -518,6 +553,7 @@ export async function runKekaScheduleSyncWorker(triggeredBy = 'internal'): Promi
     }, leaseOwner);
 
     const keka = createKekaIntegration('live');
+    const teams = createTeamsIntegration(process.env.TEAMS_INTEGRATION_MODE);
     const jobs = await keka.listJobs();
     counters = { ...counters, jobsTotal: jobs.length };
     await updateSyncState({ jobs_total: jobs.length }, leaseOwner);
@@ -557,10 +593,23 @@ export async function runKekaScheduleSyncWorker(triggeredBy = 'internal'): Promi
 
           counters = { ...counters, interviewsIndexed: counters.interviewsIndexed + 1 };
           for (const panelistEmail of panelistEmails) {
-            const rowsSuperseded = await upsertScheduledInterview({
+            const meeting = await resolveMeetingUrlFromPanelCalendar({
+              teams,
               job,
               candidate,
               interview,
+              panelistEmail,
+            });
+            const rowsSuperseded = await upsertScheduledInterview({
+              job,
+              candidate,
+              interview: meeting.meetingUrl || meeting.organizerEmail
+                ? {
+                  ...interview,
+                  meetingUrl: meeting.meetingUrl || interview.meetingUrl,
+                  organizerEmail: meeting.organizerEmail || interview.organizerEmail,
+                }
+                : interview,
               panelistEmail,
               scheduledAt,
               syncRunId,

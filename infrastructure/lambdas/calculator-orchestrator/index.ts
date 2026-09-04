@@ -8,7 +8,14 @@ import {
 } from '../../schema/calculator';
 import type { CanonicalWorkbook } from '../shared/canonical-workbook';
 import { appendProgress, type ProgressEvent } from '../shared/progress-eta';
-import { calculationResultKey, compactCalculationResult } from '../shared/calculator-result-storage';
+import {
+  calculationResultKey,
+  compactCalculationResult,
+  scenarioMcpResponseKey,
+  scenarioMcpSnapshotKey,
+  scenarioValidationKey,
+  scenarioResultKey,
+} from '../shared/calculator-result-storage';
 import { McpSidecarClient } from './mcp-client';
 import { runEstimatePipeline } from './pipeline';
 
@@ -160,28 +167,115 @@ export const handler = async (event: OrchestratorEvent): Promise<void> => {
     }
 
     const outcome = await runEstimatePipeline(record, resources, mcp, async update => {
-      await recordStage(update.stage, update.message);
+      // Emit BUILDING when the MCP executor starts, VALIDATING when read-back runs.
+      const statusOverride: Record<string, string> = {
+        saving: 'BUILDING',
+        validating: 'VALIDATING',
+      };
+      const extra = statusOverride[update.stage] ? { status: statusOverride[update.stage] } : {};
+      await recordStage(update.stage, update.message, extra);
     }, canonicalModel);
 
     // Parsed rather than trusted: the pipeline builds this object itself, so validation
     // here is a guard against a future edit drifting from the stored contract.
     const parsed = CalculationResultSchema.parse(outcome.result);
+
+    // Spec section 36: explicit empty-result detection. An MCP run that produced no usable
+    // Calculator output must be FAILED, not COMPLETED or PARTIAL. This is a defense-in-depth
+    // check on top of the executor's own status — the pipeline may produce a result object
+    // even when the MCP save failed, and "got a result object" is not "got a valid estimate".
+    const hasAnyUrl = parsed.url || (parsed.scenarios || []).some((s) => s.url);
+    if (!hasAnyUrl && outcome.status !== 'FAILED') {
+      console.warn(JSON.stringify({
+        event: 'calculator_empty_mcp_result',
+        calculationId,
+        outcomeStatus: outcome.status,
+        scenarioCount: parsed.scenarios?.length ?? 0,
+      }));
+      // Demote to FAILED: no validated Calculator URL means no useful output exists.
+      outcome.status = 'FAILED';
+    }
     const resultS3Key = calculationResultKey(record.owner_user_id, calculationId);
     await saveFileContent(BUCKET_NAME, resultS3Key, JSON.stringify(parsed), 'application/json');
     const inlineResult = compactCalculationResult(parsed);
+
+    // Per-scenario durable artifacts: MCP response, saved snapshot and validation report
+    // stored at per-scenario S3 keys so they are findable and auditable without loading the
+    // monolithic result blob. Best-effort — a write failure here must not take the whole
+    // run down, because the combined result.json is already saved and is what matters.
+    for (const scenario of parsed.scenarios || []) {
+      const scenarioId = scenario.key;
+      const execDiag = (parsed.diagnostics?.scenarios as Array<{ scenarioId: string; mcpValidationOutput?: unknown; findings?: unknown; resources?: unknown; totals?: unknown }> | undefined)
+        ?.find((d) => d.scenarioId === scenarioId);
+      if (!execDiag) continue;
+      const base = [
+        execDiag.findings ? saveFileContent(
+          BUCKET_NAME,
+          scenarioValidationKey(record.owner_user_id, calculationId, scenarioId),
+          JSON.stringify({ scenarioId, findings: execDiag.findings, mcpValidationOutput: execDiag.mcpValidationOutput }),
+          'application/json',
+        ) : null,
+        execDiag.mcpValidationOutput ? saveFileContent(
+          BUCKET_NAME,
+          scenarioMcpResponseKey(record.owner_user_id, calculationId, scenarioId),
+          JSON.stringify({ scenarioId, mcpValidationOutput: execDiag.mcpValidationOutput }),
+          'application/json',
+        ) : null,
+        saveFileContent(
+          BUCKET_NAME,
+          scenarioResultKey(record.owner_user_id, calculationId, scenarioId),
+          JSON.stringify({ scenarioId, url: scenario.url, monthly: scenario.monthly, upfront: scenario.upfront, total_12_months: scenario.total_12_months, status: scenario.status, totals: execDiag.totals }),
+          'application/json',
+        ),
+      ].filter(Boolean);
+      await Promise.allSettled(base as Promise<void>[]);
+    }
+
+    // Per-scenario summaries written to DynamoDB so the polling endpoint returns
+    // Calculator URLs and cost totals without loading the full S3 result blob.
+    const scenarioSummaries = (parsed.scenarios || []).map((scenario) => ({
+      scenarioId: scenario.key,
+      status: (['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED'].includes(scenario.status || '')
+        ? (scenario.status as 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'VALIDATING' | 'BUILDING')
+        : outcome.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED') as 'BUILDING' | 'VALIDATING' | 'COMPLETED' | 'PARTIAL' | 'FAILED',
+      calculatorUrl: scenario.url ?? null,
+      monthlyUsd: typeof scenario.monthly === 'number' ? scenario.monthly : null,
+      upfrontUsd: typeof scenario.upfront === 'number' ? scenario.upfront : null,
+      twelveMonthUsd: typeof scenario.total_12_months === 'number' ? scenario.total_12_months : null,
+    }));
 
     // Terminal stages go on the trail too. The last entry's timestamp is what closes the
     // final stage's duration, so omitting it would leave the slowest stage of a finished
     // run looking open-ended to anything that later reads the trail to explain where the
     // time went.
-    await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
-      outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
-      status: outcome.status,
-      result: inlineResult,
-      result_s3_key: resultS3Key,
-      iterations: outcome.iterations,
-      tool_call_count: outcome.toolCalls.length,
-    });
+    try {
+      await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
+        outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
+        status: outcome.status,
+        result: inlineResult,
+        result_s3_key: resultS3Key,
+        iterations: outcome.iterations,
+        tool_call_count: outcome.toolCalls.length,
+        ...(scenarioSummaries.length ? { scenario_summaries: scenarioSummaries } : {}),
+      });
+    } catch (writeError) {
+      // DynamoDB "Item size has exceeded the maximum allowed size" should not silently
+      // lose the result. Retry writing without the inline result (S3 key is still set).
+      const message = (writeError as Error).message || '';
+      if (/item size|maximum allowed size/i.test(message)) {
+        console.error(`[orchestrator] DynamoDB item too large for ${calculationId}; writing status only. Error: ${message}`);
+        await recordStage(outcome.status === 'COMPLETED' ? 'done' : 'validation_failed',
+          outcome.status === 'COMPLETED' ? 'Validated estimate ready' : 'Estimate did not pass saved-link validation', {
+          status: outcome.status,
+          result_s3_key: resultS3Key,
+          iterations: outcome.iterations,
+          tool_call_count: outcome.toolCalls.length,
+          ...(scenarioSummaries.length ? { scenario_summaries: scenarioSummaries } : {}),
+        });
+      } else {
+        throw writeError;
+      }
+    }
     console.log(`Calculation ${calculationId} finished as ${outcome.status} with ${outcome.iterations} model call(s), ${outcome.toolCalls.length} lookups.`);
   } catch (error) {
     const message = (error as Error).message || 'Unknown failure';

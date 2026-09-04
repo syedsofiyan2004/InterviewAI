@@ -17,7 +17,6 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  PlusCircle,
   Settings,
   Shield,
   Sun,
@@ -52,16 +51,9 @@ interface NavSection {
  */
 const BASE_SECTIONS: NavSection[] = [
   {
-    name: 'Interviews',
+    name: 'HireRite',
     items: [
       { name: 'My Interviews', href: '/my-interviews', icon: CalendarDays },
-      { name: 'Evaluations', href: '/interviews', icon: LayoutDashboard },
-      { name: 'New Evaluation', href: '/interviews/new', icon: PlusCircle },
-    ],
-  },
-  {
-    name: 'Workspaces',
-    items: [
       { name: 'My Candidates', href: '/candidates', icon: Users },
       { name: 'Shared with Me', href: '/shared', icon: Share2 },
     ],
@@ -141,6 +133,14 @@ function roleLabel(
   // base_role ADMIN with no active grant is a real state: fail closed and say so.
   if (baseRole === 'ADMIN') return 'Admin - no tier';
   return 'Member';
+}
+
+function isActiveNavItem(pathname: string, href: string): boolean {
+  if (pathname === href) return true;
+  if (href === '/my-interviews') {
+    return pathname.startsWith('/interviews/intelligence') || pathname.startsWith('/interviews/view') || pathname === '/interviews';
+  }
+  return false;
 }
 
 interface SidebarProps {
@@ -305,7 +305,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
             )}
             <div className="space-y-1">
               {section.items.map((item) => {
-                const isActive = pathname === item.href;
+                const isActive = isActiveNavItem(pathname, item.href);
                 const Icon = item.icon;
                 return (
                   <Link

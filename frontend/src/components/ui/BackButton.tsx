@@ -35,9 +35,9 @@ export function BackButton({ defaultHref, defaultLabel, className }: BackButtonP
     } else if (fromParam.includes('/admin')) {
       label = 'Admin Overview';
     } else if (fromParam.includes('/interviews/intelligence')) {
-      label = 'Intelligence Interviews';
+      label = 'HireRite';
     } else if (fromParam.includes('/interviews')) {
-      label = 'Evaluations';
+      label = 'HireRite';
     } else if (fromParam.includes('/mom')) {
       label = 'Meetings';
     } else if (fromParam.includes('/candidates')) {

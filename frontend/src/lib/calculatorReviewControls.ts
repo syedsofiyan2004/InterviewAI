@@ -1,6 +1,6 @@
 export type ReviewValue = string | number | Record<string, string | number>;
 
-export type ReviewSource = 'Detected from workbook' | 'Recommended' | 'Default';
+export type ReviewSource = 'Detected from workbook' | 'Recommended' | 'Default' | 'Required by AWS Calculator';
 
 export interface ReviewControlOption {
   value: string;

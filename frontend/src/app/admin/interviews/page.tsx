@@ -14,7 +14,7 @@ export default function AdminInterviewsPage() {
     api.adminListInterviews()
       .then((data) => {
         const mapped: AdminRow[] = (data.items ?? []).map((item: any) => {
-          const sourceLabel = item.source_label || (item.record_type === 'intelligence' ? 'Interview Intelligence' : 'Manual Evaluation');
+          const sourceLabel = item.source_label || (item.record_type === 'intelligence' ? 'HireRite' : 'Legacy evaluation');
           const route = item.href || (item.record_type === 'intelligence'
             ? `/interviews/intelligence/view?id=${encodeURIComponent(item.interview_id)}`
             : `/interviews/view?id=${encodeURIComponent(item.interview_id)}`);

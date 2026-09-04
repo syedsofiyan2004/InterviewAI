@@ -101,7 +101,7 @@ export default function InterviewIntelligenceDashboard() {
     <div className="space-y-8 pb-10">
       <section className="intelligence-hero intelligence-dashboard-hero">
         <div className="min-w-0">
-          <p className="page-kicker">Interview Evaluator / Connected mode</p>
+          <p className="page-kicker">HireRite</p>
           <h1 className="mt-3 max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-text-primary md:text-4xl">
             Interview work, kept in context.
           </h1>
@@ -119,7 +119,7 @@ export default function InterviewIntelligenceDashboard() {
             ) : (
               <Link href="/my-interviews" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
                 <CalendarClock size={16} />
-                My scheduled interviews
+                Scheduled interviews
               </Link>
             )}
             <span className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 py-2.5 text-xs font-semibold text-text-muted">
@@ -167,7 +167,7 @@ export default function InterviewIntelligenceDashboard() {
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
             <p className="page-kicker">Records</p>
-            <h2 className="mt-1 text-xl font-semibold text-text-primary">Interview workspaces</h2>
+            <h2 className="mt-1 text-xl font-semibold text-text-primary">Past interviews</h2>
           </div>
           <label className="flex items-center gap-2 text-xs font-semibold text-text-muted">
             <span className="hidden sm:inline">Show</span>

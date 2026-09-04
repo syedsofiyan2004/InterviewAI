@@ -14,11 +14,13 @@ import {
   generateCalculatorExportWorkbook,
   type CalculatorExportLine,
 } from '../shared/calculator-export-workbook';
+import { calculationExportKey } from '../shared/calculator-result-storage';
 import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../shared/calculator-docx';
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { analyseWorkbook } from './calculator-workbook';
 import { McpSidecarClient } from '../calculator-orchestrator/mcp-client';
+import { enrichPlanWithCalculatorPreflight } from './calculator-preflight';
 import { parseServiceCatalog } from '../calculator-orchestrator/calculator-catalog';
 import {
   applyRequirementPatches,
@@ -182,6 +184,17 @@ function splitResourcesForItem(resources: CalculationResource[]): {
   return { sample, spilled: false };
 }
 
+/**
+ * How many high-impact questions in a plan are still unresolved.
+ *
+ * Stored on the record so the "Build Estimates" button can be disabled without loading
+ * the full plan on every poll. Zero means the plan is executable; any positive number
+ * blocks execution until the reviewer supplies values.
+ */
+function countUnresolvedCritical(plan: { unresolved?: Array<{ impact: string; resolved: boolean }> } | undefined): number {
+  return (plan?.unresolved || []).filter((q) => q.impact === 'high' && !q.resolved).length;
+}
+
 /** Submitted hours, cleaned; falls back to the documented defaults. */
 function resolveEnvironmentHours(input: EnvironmentHours[] | undefined): EnvironmentHours[] {
   const cleaned = (input || [])
@@ -321,13 +334,34 @@ async function createCalculationInternal(
   }
 
   const now = Date.now();
-  const planV2 = buildInitialPlan({
+  const initialPlan = buildInitialPlan({
     workbookId: workbookHash || `manual:${calculationId}`,
     resources: planResources.length ? planResources : resources,
     workbook,
     requestedPlan: input.plan,
     defaultRegion: input.region,
   });
+  // Before a review, the Calculator's own schema is asked what each resource still lacks, so
+  // the reviewer answers those questions here rather than reading them off a PARTIAL estimate.
+  // Time-boxed and non-fatal: a slow or unreachable sidecar costs the extra questions only.
+  let planV2 = initialPlan;
+  if (!startWorker && SIDECAR_FUNCTION_NAME) {
+    try {
+      const enriched = await enrichPlanWithCalculatorPreflight(
+        initialPlan,
+        planResources.length ? planResources : resources,
+        input.region || workbook?.primary_region || 'ap-south-1',
+        new McpSidecarClient(SIDECAR_FUNCTION_NAME),
+        resolveEnvironmentHours(input.environment_hours),
+      );
+      planV2 = enriched.plan;
+      if (enriched.added || enriched.unapplied.length) {
+        console.log(`[createCalculation] calculator preflight added ${enriched.added} question(s); ${enriched.unapplied.length} Calculator input(s) have no plan field yet.`);
+      }
+    } catch (error) {
+      console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
+    }
+  }
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
@@ -361,6 +395,7 @@ async function createCalculationInternal(
     updated_at: now,
     progress_stage: startWorker ? 'queued' : 'review',
     progress_message: startWorker ? 'Starting estimate' : 'Analysis ready for review and customization',
+    unresolved_critical_count: countUnresolvedCritical(planV2),
   };
 
   await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: record }));
@@ -482,22 +517,26 @@ const CALCULATION_STALE_AFTER_MS = 11 * 60 * 1000;
  * caller simply reports what it already read.
  */
 async function failIfStale(item: CalculationRecord): Promise<CalculationRecord> {
-  if (item.status !== 'PROCESSING') return item;
+  // BUILDING and VALIDATING are sub-states of the execution run; they go stale for
+  // the same reason PROCESSING does (worker killed or timed out).
+  if (!['PROCESSING', 'BUILDING', 'VALIDATING'].includes(item.status)) return item;
   const lastTouched = Number(item.updated_at || item.created_at || 0);
   if (!lastTouched || Date.now() - lastTouched <= CALCULATION_STALE_AFTER_MS) return item;
 
   const error_message = 'The estimate worker stopped before finishing. Please retry.';
   try {
+    // Condition: only flip when updated_at matches what was read. A worker that just wrote
+    // COMPLETED (and a new updated_at) will not be overwritten by this stale detection.
+    // The status is NOT in the condition because BUILDING and VALIDATING must also be caught.
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item.calculation_id },
       UpdateExpression: 'SET #status = :failed, error_message = :error, progress_stage = :stage, '
         + 'progress_message = :message, updated_at = :now',
-      ConditionExpression: '#status = :processing AND updated_at = :lastTouched',
+      ConditionExpression: 'updated_at = :lastTouched',
       ExpressionAttributeNames: { '#status': 'status' },
       ExpressionAttributeValues: {
         ':failed': 'FAILED',
-        ':processing': 'PROCESSING',
         ':error': error_message,
         ':stage': 'failed',
         ':message': 'Estimate failed',
@@ -645,12 +684,13 @@ export async function createCalculationPlanRevision(
   }
   try {
     const plan = EstimatePlanV2Schema.parse(applyPlanProposal(item!.plan_v2, proposal));
+    const unresolvedCriticalCount = countUnresolvedCritical(plan);
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
-      UpdateExpression: 'SET plan_v2 = :plan, #status = :status, updated_at = :now',
+      UpdateExpression: 'SET plan_v2 = :plan, #status = :status, unresolved_critical_count = :count, updated_at = :now',
       ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { ':plan': plan, ':status': 'REVIEW_REQUIRED', ':now': Date.now() },
+      ExpressionAttributeValues: { ':plan': plan, ':status': 'REVIEW_REQUIRED', ':count': unresolvedCriticalCount, ':now': Date.now() },
     }));
     return createdResponse({ calculation_id: item!.calculation_id, plan });
   } catch (applyError) {
@@ -682,11 +722,16 @@ export async function confirmCalculationPlan(
   }
   try {
     const plan = EstimatePlanV2Schema.parse(confirmPlan(item!.plan_v2, revisionId));
+    // A confirmed plan has no unresolved critical inputs — confirmPlan throws PLAN_NEEDS_INPUT
+    // when any remain, so reaching here means count is definitively 0.
+    // Status transitions to CONFIRMED: plan is locked and execution can start. This lets
+    // the UI show a clear "plan confirmed, ready to build" state before runPlan is called.
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
-      UpdateExpression: 'SET plan_v2 = :plan, confirmed_plan_revision_id = :revision, updated_at = :now',
-      ExpressionAttributeValues: { ':plan': plan, ':revision': revisionId, ':now': Date.now() },
+      UpdateExpression: 'SET plan_v2 = :plan, confirmed_plan_revision_id = :revision, unresolved_critical_count = :zero, #status = :confirmed, updated_at = :now',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':plan': plan, ':revision': revisionId, ':zero': 0, ':confirmed': 'CONFIRMED', ':now': Date.now() },
     }));
     return successResponse({ calculation_id: item!.calculation_id, plan });
   } catch (confirmError) {
@@ -709,12 +754,14 @@ export async function runCalculationPlan(
   if (!plan || plan.status !== 'CONFIRMED' || item!.confirmed_plan_revision_id !== plan.currentRevisionId) {
     return errorResponse(409, 'CONFLICT', 'Confirm the current plan revision before building estimates.');
   }
-  if (item!.status === 'PROCESSING') return errorResponse(409, 'CONFLICT', 'This estimate is already running.');
+  if (['PROCESSING', 'BUILDING', 'VALIDATING'].includes(item!.status)) {
+    return errorResponse(409, 'CONFLICT', 'This estimate is already running.');
+  }
 
   await ddbDocClient.send(new UpdateCommand({
     TableName: CALCULATOR_TABLE_NAME,
     Key: { calculation_id: item!.calculation_id },
-    UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, updated_at = :now REMOVE #result, result_s3_key, error_message',
+    UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, updated_at = :now REMOVE #result, result_s3_key, error_message, scenario_summaries',
     ExpressionAttributeNames: { '#status': 'status', '#result': 'result' },
     ExpressionAttributeValues: {
       ':status': 'PROCESSING', ':stage': 'queued', ':message': 'Building confirmed plan', ':now': Date.now(),
@@ -759,7 +806,11 @@ export async function runCalculationPlan(
 function generatedArtifactKeys(userId: string, calculationId: string): string[] {
   const prefix = `users/${userId}/calculator/${calculationId}`;
   return [
+    // Legacy paths (pre-spec-refactor) and current paths — both tried so cleanup
+    // succeeds regardless of when the estimate was created.
     ...['pdf', 'xlsx', 'docx'].map((extension) => `${prefix}/estimate.${extension}`),
+    // Spec-compliant export path (post-refactor)
+    calculationExportKey(userId, calculationId),
     calculationResultKey(userId, calculationId),
   ];
 }
@@ -835,6 +886,11 @@ export async function getCalculationResult(
     environment_hours: item!.environment_hours ?? [],
     input_file_name: item!.input_file_name ?? null,
     input_warnings: item!.input_warnings ?? [],
+    // Per-scenario summaries available without S3 roundtrip — written by the orchestrator
+    // when each scenario completes. Used by the frontend to show per-scenario Calculator
+    // URLs and cost totals while polling, before the full result is loaded.
+    scenario_summaries: item!.scenario_summaries ?? null,
+    unresolved_critical_count: item!.unresolved_critical_count ?? null,
   });
 }
 
@@ -917,9 +973,18 @@ async function loadDownloadable(
   const { item, error } = await loadOwned(id, userId);
   if (error) return { error };
 
-  if (!['COMPLETED', 'NEEDS_REVIEW'].includes(item!.status) || (!item!.result && !item!.result_s3_key)) {
+  // PARTIAL is allowed because a partial estimate still has a validated AWS Calculator
+  // result for the services that were successfully configured — the Excel is just clearly
+  // marked as a subset. COMPLETED and NEEDS_REVIEW are the normal happy-path states.
+  // Any other state (PROCESSING, BUILDING, VALIDATING, FAILED, REVIEW_REQUIRED) has no
+  // validated Calculator result to export from.
+  const downloadableStatuses = ['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL'];
+  if (!downloadableStatuses.includes(item!.status) || (!item!.result && !item!.result_s3_key)) {
     return {
-      error: errorResponse(409, 'VALIDATION_ERROR', 'This estimate has not finished yet, so there is nothing to download.'),
+      error: errorResponse(409, 'VALIDATION_ERROR',
+        item!.status === 'FAILED'
+          ? 'No Excel was generated because the AWS Pricing Calculator estimate failed. Retry the estimate first.'
+          : 'This estimate has not finished yet, so there is nothing to download.'),
     };
   }
 
@@ -1032,7 +1097,9 @@ export async function getCalculationWorkbook(
     lines: exportLinesFromResult(result),
   });
 
-  const key = `users/${userId}/calculator/${item.calculation_id}/estimate.xlsx`;
+  // Use the spec-compliant exports/ prefix so all generated artifacts are under one
+  // path and can be lifecycle-managed together. Falls back gracefully for old records.
+  const key = calculationExportKey(userId, item.calculation_id);
   await saveFileContent(
     BUCKET_NAME,
     key,

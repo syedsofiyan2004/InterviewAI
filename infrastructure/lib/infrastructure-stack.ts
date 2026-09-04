@@ -16,7 +16,21 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import { execSync } from 'child_process';
 import * as path from 'path';
+
+/**
+ * The commit this deployment was synthesised from, stamped into the calculator's diagnostics
+ * so a failed estimate can be tied to the exact code that produced it. 'unknown' outside a
+ * git checkout rather than a synth failure: the stamp is diagnostic, not load-bearing.
+ */
+const MIMO_BUILD_SHA = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 
 /**
  * How often the Keka schedule sweep runs. An operator lever rather than a
@@ -501,6 +515,7 @@ export class IepStack extends cdk.Stack {
         BUCKET_NAME: filesBucket.bucketName,
         BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
         PLATFORM_VERSION: `v1.0.0-calculator-${Date.now()}`,
+        MIMO_BUILD_SHA,
       },
       bundling: {
         minify: true,

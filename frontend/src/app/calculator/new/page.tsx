@@ -297,7 +297,10 @@ function NewCalculationForm() {
       label: 'Value',
       kind: question.options?.length ? 'searchable-select' as const : 'text' as const,
       options: question.options?.map((option) => ({ value: option, label: option })),
-      source: question.options?.length ? 'Recommended' as const : 'Detected from workbook' as const,
+      // A question with no spec and no recommendation is one the Calculator itself requires
+      // and the workbook did not state; saying "detected from workbook" over an empty box is
+      // the opposite of the truth.
+      source: question.options?.length ? 'Recommended' as const : 'Required by AWS Calculator' as const,
       recommended: defaultAnswerFor(question.field, question.options) as string,
       required: true,
     }];
