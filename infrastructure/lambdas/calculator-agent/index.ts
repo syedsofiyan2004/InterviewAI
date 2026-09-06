@@ -166,11 +166,32 @@ function buildUserMessage(input: AgentCalculatorInput): string {
   return lines.join('\n');
 }
 
+function extractJson(text: string): string | undefined {
+  // Try fenced code block first (``` json ... ```)
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
+  if (fenced) return fenced[1].trim();
+  // Find the outermost balanced JSON object
+  const start = text.indexOf('{');
+  if (start < 0) return undefined;
+  let depth = 0, inStr = false, escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inStr) { escape = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (!inStr) {
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1); }
+    }
+  }
+  return undefined;
+}
+
 function parseAgentResponse(text: string, toolsUsed: string[]): AgentCalculatorResult {
-  const jsonMatch = [...text.matchAll(/\{[\s\S]*?\}/g)].at(-1);
-  if (!jsonMatch) return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: `Agent response contained no JSON: ${text.slice(0, 300)}` };
+  const jsonStr = extractJson(text);
+  if (!jsonStr) return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: `Agent response contained no JSON: ${text.slice(0, 300)}` };
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<AgentCalculatorResult & { mcpToolsUsed?: string[] }>;
+    const parsed = JSON.parse(jsonStr) as Partial<AgentCalculatorResult & { mcpToolsUsed?: string[] }>;
     if (parsed.status === 'COMPLETED') {
       if (!parsed.calculatorUrl?.includes('calculator.aws')) return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: 'Agent returned COMPLETED without a valid calculator.aws URL.' };
       return {
