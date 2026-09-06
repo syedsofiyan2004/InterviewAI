@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import { CalculatorAgentCore } from './calculator-agentcore';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -553,6 +554,36 @@ export class IepStack extends cdk.Stack {
     apiHandler.addEnvironment('CALCULATOR_SIDECAR_FUNCTION_NAME', calculatorSidecar.functionName);
     calculatorOrchestrator.grantInvoke(apiHandler);
     calculatorSidecar.grantInvoke(apiHandler);
+
+    // ─── AgentCore Calculator (Phase 1–2) ─────────────────────────────────────
+    //
+    // Provisions the new AgentCore-based execution path alongside the existing
+    // Lambda orchestrator. Production traffic stays on the old path until Phase 5
+    // acceptance tests pass and the CALCULATOR_EXECUTION_MODE feature flag is
+    // set to 'agentcore-harness'.
+    //
+    // CfnHarness is not yet available in aws-cdk-lib 2.250.0; the "Harness" is
+    // implemented as a Lambda calling Bedrock InvokeInlineAgent (the managed agent
+    // loop). CDK will be updated to use CfnHarness when the construct ships.
+    const calculatorAgentCore = new CalculatorAgentCore(this, 'CalculatorAgentCore', {
+      envName,
+      account,
+      region,
+      existingSidecar: calculatorSidecar,
+      estimatesTable: calculatorEstimatesTable,
+      filesBucket,
+      calculatorTable,
+      agentModelId: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6',
+      maxIterations: 40,
+    });
+
+    // Wire the agent Lambda into the API handler for the new execution path.
+    calculatorAgentCore.agentLambda.grantInvoke(apiHandler);
+    apiHandler.addEnvironment('CALCULATOR_AGENT_LAMBDA_ARN', calculatorAgentCore.agentLambda.functionArn);
+    apiHandler.addEnvironment('CALCULATOR_AGENT_GATEWAY_ARN', calculatorAgentCore.gateway.attrGatewayArn);
+    // Feature flag: set to 'agentcore-harness' after Phase 5 acceptance tests pass.
+    // Until then, existing traffic continues through the old orchestrator.
+    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'legacy');
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
     //
