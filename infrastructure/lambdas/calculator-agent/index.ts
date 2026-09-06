@@ -1,30 +1,24 @@
 /**
- * MIMO Calculator Agent — AgentCore Harness client.
+ * MIMO Calculator Agent — AgentCore-aligned Harness client.
  *
- * This Lambda is MIMO's entry point for the new AgentCore architecture.
- * It:
- *   1. Receives a WorkbookEvidence payload (no Calculator field IDs).
- *   2. Invokes Bedrock's InvokeInlineAgent API to run Claude with the
- *      Calculator MCP tools (via the action group proxy Lambda).
- *   3. Bedrock manages the entire Claude + tool-use loop.
- *   4. Parses the agent's final structured JSON response.
- *   5. Returns an AgentCalculatorResult to MIMO.
+ * Uses Bedrock InvokeModel with tool use to drive Claude through the AWS Pricing
+ * Calculator MCP workflow. Claude selects and calls tools freely; MIMO only supplies
+ * workbook evidence and the system prompt. No service-adapters.ts logic is involved.
  *
- * What this Lambda does NOT do:
- *   - It does NOT manually call MCP tools.
- *   - It does NOT run a model → tool → model loop itself.
- *   - It does NOT use service-adapters.ts or compileWithCalculatorAdapter.
- *   - All Calculator knowledge stays inside Claude + the MCP tools.
+ * Why InvokeModel instead of InvokeInlineAgent:
+ *   InvokeInlineAgent (Bedrock Agents) requires prior service activation that may not
+ *   be available on all accounts. InvokeModel achieves the same agent behaviour —
+ *   Claude + tools in a bounded loop — without that dependency.
+ *
+ * The AgentCore Gateway and Runtime are deployed (Runtime hosts the MCP server).
+ * This Lambda invokes the Calculator MCP tools through the proxy Lambda (action group
+ * executor) which forwards calls to the existing MCP sidecar.
  */
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import {
-  BedrockAgentRuntimeClient,
-  InvokeInlineAgentCommand,
-  ParameterType,
-  type ActionGroupExecutor,
-} from '@aws-sdk/client-bedrock-agent-runtime';
+import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import type { AgentCalculatorInput, AgentCalculatorResult } from './workbook-evidence.js';
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
@@ -32,156 +26,119 @@ const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID
   || process.env.BEDROCK_SONNET_46_PROFILE_ARN
   || 'global.anthropic.claude-sonnet-4-6';
 const MCP_PROXY_LAMBDA_ARN = process.env.CALCULATOR_MCP_PROXY_LAMBDA_ARN!;
-const GATEWAY_ARN = process.env.CALCULATOR_GATEWAY_ARN || '';
 const MAX_ITERATIONS = Number(process.env.CALCULATOR_AGENT_MAX_ITERATIONS) || 40;
 const EXECUTION_MODE = 'agentcore-harness';
 
-/**
- * System prompt — injected as CALCULATOR_AGENT_SYSTEM_PROMPT env var by CDK,
- * which reads it from the source-controlled prompts/calculator-agent-system.txt.
- * Falls back to a local file read for non-Lambda environments (local test runs).
- */
 const SYSTEM_PROMPT = process.env.CALCULATOR_AGENT_SYSTEM_PROMPT
   || (() => {
     try { return readFileSync(join(__dirname, '../../prompts/calculator-agent-system.txt'), 'utf8'); } catch { return ''; }
   })()
   || 'You are MIMO\'s AWS Pricing Calculator agent. Use MCP tools to build estimates and return structured JSON.';
 
-/**
- * OpenAPI-style tool schema for the Calculator MCP tools.
- *
- * The Gateway auto-discovers tools via the MCP server's tools/list. This schema
- * declares the action group surface — Bedrock validates requests against it before
- * invoking the proxy Lambda. It mirrors the upstream MCP server's tool surface.
- *
- * Using a single "pass-through" action group with a generic tool definition keeps
- * the schema stable across upstream MCP version bumps.
- */
-const MCP_TOOLS_FUNCTION_SCHEMA = {
-  functions: [
-    { name: 'search_services', description: 'Search for AWS Pricing Calculator services by name or keyword.', parameters: { query: { type: 'string', description: 'Service name or keyword to search for.', required: true } } },
-    { name: 'get_service_fields', description: 'Get the field schema, minimalConfig, required fields, traps and sub-services for a Calculator service.', parameters: { service: { type: 'string', description: 'Calculator service code (e.g. awsFargate, ec2Enhancement).', required: true } } },
-    { name: 'create_estimate', description: 'Create a new AWS Pricing Calculator estimate.', parameters: { name: { type: 'string', description: 'Estimate name.', required: true }, partition: { type: 'string', description: 'AWS partition (default: aws).', required: false } } },
-    { name: 'add_service', description: 'Add one or more configured services to an estimate.', parameters: { estimate_id: { type: 'string', description: 'Estimate ID from create_estimate.', required: true }, services: { type: 'string', description: 'JSON array of service configuration objects.', required: true } } },
-    { name: 'build_estimate', description: 'Create and populate an estimate in a single call for simple estimates.', parameters: { name: { type: 'string', description: 'Estimate name.', required: true }, services: { type: 'string', description: 'JSON array of service configuration objects.', required: true }, partition: { type: 'string', description: 'AWS partition.', required: false } } },
-    { name: 'validate_estimate', description: 'Validate the current state of an estimate.', parameters: { estimate_id: { type: 'string', description: 'Estimate ID.', required: true } } },
-    { name: 'export_estimate', description: 'Export and save an estimate to get a shareable calculator.aws URL.', parameters: { estimate_id: { type: 'string', description: 'Estimate ID.', required: true } } },
-    { name: 'import_estimate', description: 'Import/read back a saved estimate to verify its configuration.', parameters: { estimate_id: { type: 'string', description: 'Estimate ID or shareable URL.', required: true }, format: { type: 'string', description: 'Response format (json).', required: false } } },
-    { name: 'get_server_info', description: 'Get MCP server version and capabilities.', parameters: {} },
-  ],
-};
+const bedrockClient = new BedrockRuntimeClient({ region: REGION });
+const lambdaClient = new LambdaClient({ region: REGION });
 
-const client = new BedrockAgentRuntimeClient({ region: REGION });
+// ─── Calculator MCP tool definitions for Claude tool use ─────────────────────
+
+const CALCULATOR_TOOLS = [
+  { name: 'search_services', description: 'Search for AWS Pricing Calculator services by name or keyword.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Service name or keyword' } }, required: ['query'] } },
+  { name: 'get_service_fields', description: 'Get the field schema, minimalConfig, required fields, traps and sub-services for a Calculator service. ALWAYS call this before configuring a service.', input_schema: { type: 'object', properties: { service: { type: 'string', description: 'Calculator service code (e.g. awsFargate, ec2Enhancement)' } }, required: ['service'] } },
+  { name: 'create_estimate', description: 'Create a new AWS Pricing Calculator estimate.', input_schema: { type: 'object', properties: { name: { type: 'string' }, partition: { type: 'string' } }, required: ['name'] } },
+  { name: 'add_service', description: 'Add one or more configured services to an estimate.', input_schema: { type: 'object', properties: { estimate_id: { type: 'string' }, services: { type: 'string', description: 'JSON array of service configuration objects' } }, required: ['estimate_id', 'services'] } },
+  { name: 'build_estimate', description: 'Create and populate an estimate in a single call for simple estimates.', input_schema: { type: 'object', properties: { name: { type: 'string' }, services: { type: 'string' }, partition: { type: 'string' } }, required: ['name', 'services'] } },
+  { name: 'validate_estimate', description: 'Validate the current state of an estimate and get any required-field errors.', input_schema: { type: 'object', properties: { estimate_id: { type: 'string' } }, required: ['estimate_id'] } },
+  { name: 'export_estimate', description: 'Export and save an estimate to get a shareable calculator.aws URL.', input_schema: { type: 'object', properties: { estimate_id: { type: 'string' } }, required: ['estimate_id'] } },
+  { name: 'import_estimate', description: 'Import/read back a saved estimate to verify its configuration.', input_schema: { type: 'object', properties: { estimate_id: { type: 'string' }, format: { type: 'string' } }, required: ['estimate_id'] } },
+  { name: 'get_server_info', description: 'Get MCP server version and capabilities.', input_schema: { type: 'object', properties: {} } },
+];
+
+// ─── Tool execution via MCP proxy Lambda ─────────────────────────────────────
+
+async function executeTool(toolName: string, toolInput: Record<string, unknown>): Promise<string> {
+  if (!MCP_PROXY_LAMBDA_ARN) throw new Error('CALCULATOR_MCP_PROXY_LAMBDA_ARN not configured');
+  const event = { actionGroup: 'CalculatorMcpTools', function: toolName, parameters: Object.entries(toolInput).map(([name, value]) => ({ name, type: typeof value === 'number' ? 'integer' : 'string', value: String(value) })) };
+  const r = await lambdaClient.send(new InvokeCommand({ FunctionName: MCP_PROXY_LAMBDA_ARN, Payload: new TextEncoder().encode(JSON.stringify(event)) }));
+  if (r.FunctionError) throw new Error(`MCP proxy error: ${new TextDecoder().decode(r.Payload).slice(0, 300)}`);
+  const response = JSON.parse(new TextDecoder().decode(r.Payload));
+  return response?.functionResponse?.responseBody?.TEXT?.body || JSON.stringify(response);
+}
+
+// ─── Agent loop (InvokeModel + tool use) ─────────────────────────────────────
 
 export const handler = async (input: AgentCalculatorInput): Promise<AgentCalculatorResult> => {
   const startedAt = Date.now();
-  const sessionId = `calc-${input.calculationId}-${Date.now()}`;
+  const toolsUsed: string[] = [];
 
-  console.log(JSON.stringify({
-    event: 'agent_invoke_start',
-    executionMode: EXECUTION_MODE,
-    calculationId: input.calculationId,
-    scenarioLabel: input.scenarioLabel,
-    modelId: MODEL_ID,
-    sessionId,
-  }));
+  console.log(JSON.stringify({ event: 'agent_invoke_start', executionMode: EXECUTION_MODE, calculationId: input.calculationId, scenarioLabel: input.scenarioLabel, modelId: MODEL_ID }));
 
-  // Build the user message from WorkbookEvidence — no Calculator field IDs.
-  const userMessage = buildUserMessage(input);
-
-  const actionGroupExecutor: ActionGroupExecutor = MCP_PROXY_LAMBDA_ARN
-    ? { lambda: MCP_PROXY_LAMBDA_ARN }
-    : { customControl: 'RETURN_CONTROL' };
+  const messages: Array<{ role: string; content: unknown }> = [
+    { role: 'user', content: buildUserMessage(input) },
+  ];
 
   try {
-    const command = new InvokeInlineAgentCommand({
-      sessionId,
-      inputText: userMessage,
-      foundationModel: MODEL_ID,
-      instruction: SYSTEM_PROMPT,
-      enableTrace: true,
-      endSession: false,
-      actionGroups: [
-        {
-          actionGroupName: 'CalculatorMcpTools',
-          description: 'AWS Pricing Calculator MCP tools. Use these to discover services, get field schemas, create and save estimates.',
-          actionGroupExecutor,
-          functionSchema: {
-            functions: MCP_TOOLS_FUNCTION_SCHEMA.functions.map((fn) => ({
-              name: fn.name,
-              description: fn.description,
-              parameters: Object.fromEntries(
-                Object.entries(fn.parameters || {}).map(([k, v]) => {
-                  const vTyped = v as { type: string; description: string; required?: boolean };
-                  // Map JSON schema type strings to ParameterType enum values.
-                  const typeMap: Record<string, ParameterType> = {
-                    string: ParameterType.STRING,
-                    integer: ParameterType.INTEGER,
-                    number: ParameterType.NUMBER,
-                    boolean: ParameterType.BOOLEAN,
-                    array: ParameterType.ARRAY,
-                    object: ParameterType.STRING,  // objects pass as JSON string
-                  };
-                  return [k, {
-                    type: typeMap[vTyped.type] ?? ParameterType.STRING,
-                    description: vTyped.description,
-                    required: vTyped.required ?? false,
-                  }];
-                }),
-              ),
-            })),
-          },
-        },
-      ],
-    });
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      const body = {
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 8192,
+        system: SYSTEM_PROMPT,
+        tools: CALCULATOR_TOOLS,
+        messages,
+      };
 
-    const response = await client.send(command);
+      const response = await bedrockClient.send(new InvokeModelCommand({
+        modelId: MODEL_ID,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify(body),
+      }));
 
-    // Collect streamed event chunks and extract the final response.
-    let finalText = '';
-    const toolsUsed: string[] = [];
-    let iterationCount = 0;
+      const payload = JSON.parse(new TextDecoder().decode(response.body));
+      const stopReason: string = payload.stop_reason;
+      const content: Array<{ type: string; id?: string; name?: string; input?: unknown; text?: string }> = payload.content || [];
 
-    for await (const event of response.completion!) {
-      if (event.chunk?.bytes) {
-        finalText += new TextDecoder().decode(event.chunk.bytes);
+      // Add assistant response to conversation
+      messages.push({ role: 'assistant', content });
+
+      if (stopReason === 'end_turn') {
+        // Claude is done — extract the structured JSON result
+        const finalText = content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+        console.log(JSON.stringify({ event: 'agent_invoke_complete', executionMode: EXECUTION_MODE, calculationId: input.calculationId, durationMs: Date.now() - startedAt, iterations: iteration + 1, toolsUsed }));
+        return parseAgentResponse(finalText, toolsUsed);
       }
-      if (event.trace?.trace?.orchestrationTrace?.invocationInput?.actionGroupInvocationInput?.function) {
-        const toolName = event.trace.trace.orchestrationTrace.invocationInput.actionGroupInvocationInput.function;
-        if (!toolsUsed.includes(toolName)) toolsUsed.push(toolName);
-        iterationCount++;
+
+      if (stopReason === 'tool_use') {
+        // Execute all tool calls in parallel
+        const toolUseBlocks = content.filter(b => b.type === 'tool_use');
+        const toolResults = await Promise.all(toolUseBlocks.map(async (block) => {
+          const toolName = block.name!;
+          const toolInput = (block.input || {}) as Record<string, unknown>;
+          if (!toolsUsed.includes(toolName)) toolsUsed.push(toolName);
+          console.log(JSON.stringify({ event: 'mcp_tool_call', tool: toolName, calculationId: input.calculationId }));
+          try {
+            const result = await executeTool(toolName, toolInput);
+            return { type: 'tool_result', tool_use_id: block.id!, content: result };
+          } catch (error) {
+            return { type: 'tool_result', tool_use_id: block.id!, content: `Error: ${(error as Error).message}`, is_error: true };
+          }
+        }));
+        messages.push({ role: 'user', content: toolResults });
+        continue;
       }
+
+      // Unexpected stop reason
+      break;
     }
 
-    console.log(JSON.stringify({
-      event: 'agent_invoke_complete',
-      executionMode: EXECUTION_MODE,
-      calculationId: input.calculationId,
-      durationMs: Date.now() - startedAt,
-      iterationCount,
-      toolsUsed,
-    }));
-
-    return parseAgentResponse(finalText, toolsUsed);
+    return { status: 'FAILED', errorCategory: 'AGENT_TIMEOUT', message: `Agent did not return a result after ${MAX_ITERATIONS} iterations.` };
   } catch (error) {
-    const message = (error as Error).message || 'Unknown agent error';
-    console.error(JSON.stringify({
-      event: 'agent_invoke_error',
-      executionMode: EXECUTION_MODE,
-      calculationId: input.calculationId,
-      error: message,
-      durationMs: Date.now() - startedAt,
-    }));
+    const message = (error as Error).message || 'Unknown error';
+    console.error(JSON.stringify({ event: 'agent_invoke_error', executionMode: EXECUTION_MODE, calculationId: input.calculationId, error: message, durationMs: Date.now() - startedAt }));
     return { status: 'FAILED', errorCategory: 'AGENT_TIMEOUT', message };
   }
 };
 
-/**
- * Build a concise user message from WorkbookEvidence.
- *
- * For large workbooks, only the first EVIDENCE_ROW_LIMIT rows per sheet are
- * included inline. All sheets are summarised; the full evidence stays in S3.
- */
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 const EVIDENCE_ROW_LIMIT = 200;
 
 function buildUserMessage(input: AgentCalculatorInput): string {
@@ -191,52 +148,31 @@ function buildUserMessage(input: AgentCalculatorInput): string {
     `Source file: ${workbookEvidence.fileName}`,
     '',
   ];
-
   if (userInstructions?.length) {
     lines.push('User instructions:');
     for (const instruction of userInstructions) lines.push(`  - ${instruction}`);
     lines.push('');
   }
-
   lines.push('Workbook evidence:');
   for (const sheet of workbookEvidence.sheets) {
     lines.push(`\nSheet: ${sheet.name} (${sheet.rows.length} rows)`);
-    const rows = sheet.rows.slice(0, EVIDENCE_ROW_LIMIT);
-    for (const row of rows) {
-      const cells = Object.entries(row.values)
-        .filter(([, v]) => v !== null && v !== undefined && v !== '')
-        .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-        .join(', ');
+    for (const row of sheet.rows.slice(0, EVIDENCE_ROW_LIMIT)) {
+      const cells = Object.entries(row.values).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(', ');
       if (cells) lines.push(`  Row ${row.rowNumber}: ${cells}`);
     }
-    if (sheet.rows.length > EVIDENCE_ROW_LIMIT) {
-      lines.push(`  ... and ${sheet.rows.length - EVIDENCE_ROW_LIMIT} more rows (summarised)`);
-    }
+    if (sheet.rows.length > EVIDENCE_ROW_LIMIT) lines.push(`  ... and ${sheet.rows.length - EVIDENCE_ROW_LIMIT} more rows`);
   }
-
   lines.push('', 'Use the Calculator MCP tools to configure and save an accurate estimate. Return structured JSON when done.');
   return lines.join('\n');
 }
 
-/**
- * Parse the agent's final text response as an AgentCalculatorResult.
- *
- * The agent is instructed to return one of three JSON shapes.
- * If parsing fails we return FAILED so MIMO can surface a clean error.
- */
 function parseAgentResponse(text: string, toolsUsed: string[]): AgentCalculatorResult {
-  // Extract the last JSON block from the agent's response.
   const jsonMatch = [...text.matchAll(/\{[\s\S]*?\}/g)].at(-1);
-  if (!jsonMatch) {
-    return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: `Agent response contained no JSON: ${text.slice(0, 300)}` };
-  }
-
+  if (!jsonMatch) return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: `Agent response contained no JSON: ${text.slice(0, 300)}` };
   try {
     const parsed = JSON.parse(jsonMatch[0]) as Partial<AgentCalculatorResult & { mcpToolsUsed?: string[] }>;
     if (parsed.status === 'COMPLETED') {
-      if (!parsed.calculatorUrl?.includes('calculator.aws')) {
-        return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: 'Agent returned COMPLETED without a valid calculator.aws URL.' };
-      }
+      if (!parsed.calculatorUrl?.includes('calculator.aws')) return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: 'Agent returned COMPLETED without a valid calculator.aws URL.' };
       return {
         status: 'COMPLETED',
         estimateId: String(parsed.estimateId || ''),
@@ -247,17 +183,11 @@ function parseAgentResponse(text: string, toolsUsed: string[]): AgentCalculatorR
         assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions : [],
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         servicesConfigured: Array.isArray(parsed.servicesConfigured) ? parsed.servicesConfigured : [],
-        mcpToolsUsed: toolsUsed.length ? toolsUsed : (Array.isArray(parsed.mcpToolsUsed) ? parsed.mcpToolsUsed : []),
+        mcpToolsUsed: toolsUsed.length ? toolsUsed : (Array.isArray((parsed as any).mcpToolsUsed) ? (parsed as any).mcpToolsUsed : []),
       };
     }
-    if (parsed.status === 'NEEDS_INPUT') {
-      return { status: 'NEEDS_INPUT', questions: Array.isArray((parsed as any).questions) ? (parsed as any).questions : [] };
-    }
-    if (parsed.status === 'FAILED') {
-      return { status: 'FAILED', errorCategory: (parsed as any).errorCategory || 'UNKNOWN', message: (parsed as any).message || 'Agent reported failure.' };
-    }
-  } catch (parseError) {
-    // fall through
-  }
+    if (parsed.status === 'NEEDS_INPUT') return { status: 'NEEDS_INPUT', questions: Array.isArray((parsed as any).questions) ? (parsed as any).questions : [] };
+    if (parsed.status === 'FAILED') return { status: 'FAILED', errorCategory: (parsed as any).errorCategory || 'UNKNOWN', message: (parsed as any).message || 'Agent reported failure.' };
+  } catch { /* fall through */ }
   return { status: 'FAILED', errorCategory: 'SCHEMA_ERROR', message: `Could not parse agent response: ${text.slice(0, 400)}` };
 }
