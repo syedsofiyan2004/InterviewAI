@@ -305,14 +305,16 @@ export class CalculatorAgentCore extends Construct {
     props.filesBucket.grantRead(this.agentLambda);
     this.mcpProxyLambda.grantInvoke(this.agentLambda);
 
-    // Bedrock InvokeInlineAgent permission
+    // Bedrock agent invocation permissions.
+    // InvokeInlineAgent uses the bedrock: namespace (not bedrock-agent-runtime:).
     this.agentLambda.addToRolePolicy(new iam.PolicyStatement({
       sid: 'BedrockInvokeInlineAgent',
       actions: [
         'bedrock:InvokeModel',
         'bedrock:InvokeModelWithResponseStream',
         'bedrock:GetInferenceProfile',
-        'bedrock-agent-runtime:InvokeInlineAgent',
+        'bedrock:InvokeInlineAgent',          // actual IAM action for InvokeInlineAgentCommand
+        'bedrock-agent-runtime:InvokeInlineAgent', // keep as fallback
         'bedrock-agentcore:InvokeAgent',
       ],
       resources: ['*'],
