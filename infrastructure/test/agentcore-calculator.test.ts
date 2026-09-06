@@ -157,12 +157,12 @@ describe('Architecture separation', () => {
     });
   });
 
-  it('CALCULATOR_EXECUTION_MODE defaults to legacy (old path)', () => {
+  it('CALCULATOR_EXECUTION_MODE defaults to agentcore-harness (Phase 5 passed)', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
       FunctionName: Match.stringLikeRegexp('api-handler'),
       Environment: Match.objectLike({
         Variables: Match.objectLike({
-          CALCULATOR_EXECUTION_MODE: 'legacy',
+          CALCULATOR_EXECUTION_MODE: 'agentcore-harness',
         }),
       }),
     });

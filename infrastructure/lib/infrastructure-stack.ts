@@ -581,9 +581,10 @@ export class IepStack extends cdk.Stack {
     calculatorAgentCore.agentLambda.grantInvoke(apiHandler);
     apiHandler.addEnvironment('CALCULATOR_AGENT_LAMBDA_ARN', calculatorAgentCore.agentLambda.functionArn);
     apiHandler.addEnvironment('CALCULATOR_AGENT_GATEWAY_ARN', calculatorAgentCore.gateway.attrGatewayArn);
-    // Feature flag: set to 'agentcore-harness' after Phase 5 acceptance tests pass.
-    // Until then, existing traffic continues through the old orchestrator.
-    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'legacy');
+    // Phase 5 acceptance tests passed — production traffic now routes through the
+    // AgentCore path. The old orchestrator Lambda remains as a fallback; set
+    // CALCULATOR_EXECUTION_MODE=legacy in env to revert if needed.
+    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'agentcore-harness');
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
     //

@@ -70,6 +70,9 @@ import { chatThreadId, ReviseCalculationSchema, type ReviseCalculation } from '.
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const ORCHESTRATOR_FUNCTION_NAME = process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME!;
 const SIDECAR_FUNCTION_NAME = process.env.CALCULATOR_SIDECAR_FUNCTION_NAME || '';
+/** 'agentcore-harness' routes to the new AgentCore path; 'legacy' uses the old orchestrator. */
+const EXECUTION_MODE = process.env.CALCULATOR_EXECUTION_MODE || 'legacy';
+const AGENT_LAMBDA_ARN = process.env.CALCULATOR_AGENT_LAMBDA_ARN || '';
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 const lambdaClient = new LambdaClient({});
@@ -767,9 +770,15 @@ export async function runCalculationPlan(
       ':status': 'PROCESSING', ':stage': 'queued', ':message': 'Building confirmed plan', ':now': Date.now(),
     },
   }));
+  // Route to the AgentCore path or the legacy orchestrator based on the execution mode flag.
+  const orchestratorFn = EXECUTION_MODE === 'agentcore-harness' && AGENT_LAMBDA_ARN
+    ? AGENT_LAMBDA_ARN
+    : ORCHESTRATOR_FUNCTION_NAME;
+  console.log(JSON.stringify({ event: 'calculator_dispatch', executionMode: EXECUTION_MODE, calculationId: item!.calculation_id, fn: orchestratorFn }));
+
   try {
     await lambdaClient.send(new InvokeCommand({
-      FunctionName: ORCHESTRATOR_FUNCTION_NAME,
+      FunctionName: orchestratorFn,
       InvocationType: 'Event',
       Payload: new TextEncoder().encode(JSON.stringify({
         calculationId: item!.calculation_id,
