@@ -25,8 +25,8 @@ beforeAll(() => {
 describe('AgentCore Runtime', () => {
   it('provisions an AgentCore Runtime with ARM64-compatible container', () => {
     template.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
-      AgentRuntimeName: Match.stringLikeRegexp('calculator-mcp'),
-      NetworkConfiguration: { NetworkMode: 'PUBLIC_INTERNET' },
+      AgentRuntimeName: Match.stringLikeRegexp('mimoCalcMcp'),
+      NetworkConfiguration: { NetworkMode: 'PUBLIC' },
     });
   });
 
@@ -53,10 +53,11 @@ describe('AgentCore Runtime', () => {
 });
 
 describe('AgentCore Gateway', () => {
-  it('provisions a Gateway with IAM authorizer', () => {
+  it('provisions a Gateway with AWS_IAM authorizer', () => {
     template.hasResourceProperties('AWS::BedrockAgentCore::Gateway', {
       Name: Match.stringLikeRegexp('calculator'),
-      AuthorizerType: 'IAM',
+      AuthorizerType: 'AWS_IAM',
+      ProtocolType: 'MCP',
     });
   });
 
