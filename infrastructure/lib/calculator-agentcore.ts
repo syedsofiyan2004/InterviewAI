@@ -287,6 +287,7 @@ export class CalculatorAgentCore extends Construct {
         CALCULATOR_AGENT_MAX_ITERATIONS: String(props.maxIterations ?? 40),
         BUCKET_NAME: props.filesBucket.bucketName,
         EXECUTION_MODE: 'agentcore-harness',
+        AWS_REGION: props.region,
         // System prompt is injected from source-controlled prompts/ dir.
         // Using an env var avoids cross-platform file-copy bundling hooks while
         // keeping the prompt text in source control exactly as the spec requires.
@@ -303,6 +304,12 @@ export class CalculatorAgentCore extends Construct {
 
     props.calculatorTable.grantReadWriteData(this.agentLambda);
     props.filesBucket.grantRead(this.agentLambda);
+    // Agent Lambda writes result.json to S3 (same as the old orchestrator Lambda).
+    this.agentLambda.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'S3WriteResult',
+      actions: ['s3:PutObject'],
+      resources: [`${props.filesBucket.bucketArn}/users/*/calculator/*`],
+    }));
     this.mcpProxyLambda.grantInvoke(this.agentLambda);
 
     // Bedrock agent invocation permissions.
