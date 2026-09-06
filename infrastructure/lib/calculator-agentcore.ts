@@ -208,6 +208,11 @@ export class CalculatorAgentCore extends Construct {
       name: getUniqueName('calculator-lambda-mcp'),
       description: 'Lambda MCP target: existing calculator sidecar (Phase 1)',
       gatewayIdentifier: this.gateway.attrGatewayIdentifier,
+      // Lambda targets require a credentialProviderConfigurations entry specifying
+      // how the Gateway authenticates when invoking the Lambda function.
+      credentialProviderConfigurations: [
+        { credentialProviderType: 'IAM' },
+      ],
       targetConfiguration: {
         mcp: {
           lambda: {
