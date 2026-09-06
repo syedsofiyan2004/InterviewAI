@@ -91,6 +91,18 @@ export class CalculatorAgentCore extends Construct {
       resources: [`arn:aws:logs:${props.region}:${props.account}:log-group:/aws/bedrock-agentcore/runtime/*`],
     }));
 
+    // AgentCore Runtime needs ECR pull permissions to launch the container image.
+    runtimeRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'EcrPull',
+      actions: [
+        'ecr:GetAuthorizationToken',
+        'ecr:BatchGetImage',
+        'ecr:GetDownloadUrlForLayer',
+        'ecr:BatchCheckLayerAvailability',
+      ],
+      resources: ['*'],
+    }));
+
     // ─── Container image for Phase 2 AgentCore Runtime ─────────────────────────
     // Built from lambdas/calculator-mcp-sidecar-agentcore/ — adapted Dockerfile
     // that listens on 0.0.0.0 (not loopback) as required by the Runtime network.
