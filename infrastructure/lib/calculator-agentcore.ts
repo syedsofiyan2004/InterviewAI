@@ -120,7 +120,7 @@ export class CalculatorAgentCore extends Construct {
       // PUBLIC_INTERNET: accessible via AgentCore's managed network.
       // For VPC isolation, switch to PRIVATE with a VpcConfigProperty.
       networkConfiguration: {
-        networkMode: 'PUBLIC_INTERNET',
+        networkMode: 'PUBLIC',
       },
       // IAW/NONE: Bedrock service-to-service auth. Gateway authenticates via SigV4.
       authorizerConfiguration: {
@@ -171,7 +171,7 @@ export class CalculatorAgentCore extends Construct {
     this.gateway = new bedrockagentcore.CfnGateway(this, 'CalculatorGateway', {
       name: getUniqueName('calculator'),
       description: 'MIMO AWS Cost Calculator — exposes Pricing Calculator MCP tools to the AgentCore agent',
-      authorizerType: 'IAM',
+      authorizerType: 'AWS_IAM',
       protocolType: 'MCP',          // Calculator MCP server
       roleArn: gatewayExecRole.roleArn,
       tags: { 'mimo:component': 'calculator-agentcore-gateway' },
