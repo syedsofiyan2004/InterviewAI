@@ -11,7 +11,7 @@ export interface PageMetadata {
 
 export function getPageMetadata(pathname: string): PageMetadata {
   if (pathname === '/') {
-    return { title: 'Dashboard', breadcrumbs: [] };
+    return { title: 'Home', breadcrumbs: [] };
   }
 
   if (pathname === '/interviews/new') {
@@ -156,7 +156,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Review workspace',
       description: 'Linked interview rounds, reports, comments, reviewers, and decision history.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'All Candidates', href: '/admin/candidates' }, { label: 'Candidate' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'All Candidates', href: '/admin/candidates' }, { label: 'Candidate' }],
     };
   }
 
@@ -164,7 +164,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'All Candidates',
       description: 'Every candidate review workspace across the organization.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Review workspaces' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'Review workspaces' }],
     };
   }
 
@@ -180,7 +180,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Interview reports',
       description: 'Every interview evaluation and downloadable report in the organisation.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Interview reports' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'Interview reports' }],
     };
   }
 
@@ -188,7 +188,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'MOM reports',
       description: 'Every meeting analysis and downloadable PDF report in the organisation.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'MOM reports' }],
+      breadcrumbs: [{ label: 'MOM Analyzer', href: '/mom' }, { label: 'Admin', href: '/admin' }, { label: 'MOM reports' }],
     };
   }
 
@@ -196,7 +196,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Cost estimates',
       description: 'Every AWS cost estimate in the organisation, with its owner and monthly total.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Cost estimates' }],
+      breadcrumbs: [{ label: 'Cost Calculator', href: '/calculator' }, { label: 'Admin', href: '/admin' }, { label: 'Cost estimates' }],
     };
   }
 
@@ -204,7 +204,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Approval Queue',
       description: 'Candidates awaiting a final approve or reject decision.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Decision queue' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'Decision queue' }],
     };
   }
 
@@ -220,7 +220,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Question Bank',
       description: 'Edit role competencies and interview questions.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Question Bank', href: '/admin/question-bank' }, { label: 'Role' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'Question Bank', href: '/admin/question-bank' }, { label: 'Role' }],
     };
   }
 
@@ -228,7 +228,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Question Bank',
       description: 'Manage role-specific competency overrides and questions.',
-      breadcrumbs: [{ label: 'Admin', href: '/admin' }, { label: 'Question Bank' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Admin', href: '/admin' }, { label: 'Question Bank' }],
     };
   }
 
@@ -270,7 +270,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Review workspace',
       description: 'Linked interview records, comments, internal reviewers, and decisions.',
-      breadcrumbs: [{ label: 'Review workspaces', href: '/candidates' }, { label: 'Workspace' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'My Candidates', href: '/candidates' }, { label: 'Workspace' }],
     };
   }
 
@@ -278,15 +278,15 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Create from interview',
       description: 'Start from HireRite interview records.',
-      breadcrumbs: [{ label: 'Review workspaces', href: '/candidates' }, { label: 'Create from interview' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'My Candidates', href: '/candidates' }, { label: 'Create from interview' }],
     };
   }
 
   if (pathname === '/candidates') {
     return {
-      title: 'Review workspaces',
-      description: 'Multi-round interview reviews you own or that colleagues shared with you.',
-      breadcrumbs: [{ label: 'Review workspaces' }],
+      title: 'My Candidates',
+      description: 'Candidate review workspaces you own, with linked interviews and decisions.',
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'My Candidates' }],
     };
   }
 
@@ -294,7 +294,7 @@ export function getPageMetadata(pathname: string): PageMetadata {
     return {
       title: 'Shared with me',
       description: 'Interview review workspaces colleagues have shared with you.',
-      breadcrumbs: [{ label: 'Shared with me' }],
+      breadcrumbs: [{ label: 'HireRite', href: '/my-interviews' }, { label: 'Shared with Me' }],
     };
   }
 
