@@ -210,8 +210,9 @@ export class CalculatorAgentCore extends Construct {
       gatewayIdentifier: this.gateway.attrGatewayIdentifier,
       // Lambda targets require a credentialProviderConfigurations entry specifying
       // how the Gateway authenticates when invoking the Lambda function.
+      // GATEWAY_IAM_ROLE: the Gateway uses its own IAM role to invoke the Lambda target.
       credentialProviderConfigurations: [
-        { credentialProviderType: 'IAM' },
+        { credentialProviderType: 'GATEWAY_IAM_ROLE' },
       ],
       targetConfiguration: {
         mcp: {
