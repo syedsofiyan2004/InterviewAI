@@ -124,12 +124,8 @@ export class CalculatorAgentCore extends Construct {
       networkConfiguration: {
         networkMode: 'PUBLIC',
       },
-      // IAW/NONE: Bedrock service-to-service auth. Gateway authenticates via SigV4.
-      authorizerConfiguration: {
-        authorizer: {
-          type: 'IAW',
-        },
-      } as any,
+      // authorizerConfiguration omitted — the Gateway authenticates with the Runtime
+      // via IAM/SigV4 at the service level. No additional inbound JWT auth needed.
       roleArn: runtimeRole.roleArn,
       environmentVariables: {
         MCP_TRANSPORT: 'http',
