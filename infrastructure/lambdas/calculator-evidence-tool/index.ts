@@ -130,13 +130,10 @@ export const handler = async (event: unknown, context: LambdaContext): Promise<u
   try {
     const { tool, args } = readInvocation(event, context);
     if (tool !== 'get_workbook_evidence') {
-      return { isError: true, content: [{ type: 'text', text: `Unknown tool "${tool}".` }] };
+      return { error: `Unknown tool "${tool}".` };
     }
     if (!args.calculationId) {
-      return {
-        isError: true,
-        content: [{ type: 'text', text: 'calculationId is required.' }],
-      };
+      return { error: 'calculationId is required.' };
     }
 
     const owner = await resolveOwner(args.calculationId);
@@ -194,43 +191,16 @@ export const handler = async (event: unknown, context: LambdaContext): Promise<u
       rows,
     };
 
-    return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+    // Returned as a plain JSON object rather than an MCP { content: [...] } envelope.
+    // The Gateway wraps a Lambda target's return value itself, and a plain object stays
+    // legible to the model either way; double-wrapping an envelope would not.
+    return payload;
   } catch (error) {
     const message = (error as Error).message || 'Unknown error';
     console.error(JSON.stringify({ event: 'evidence_tool_error', error: message }));
-    return { isError: true, content: [{ type: 'text', text: `get_workbook_evidence failed: ${message}` }] };
+    return { error: `get_workbook_evidence failed: ${message}` };
   }
 };
 
-/**
- * The tool schema advertised to the Gateway.
- *
- * Exported so the CDK construct and the tests read the same definition instead of two
- * copies drifting apart.
- */
-export const GET_WORKBOOK_EVIDENCE_TOOL = {
-  name: 'get_workbook_evidence',
-  description: [
-    'Fetch customer workbook evidence for this calculation from MIMO.',
-    'Use this whenever the evidence you hold may be incomplete: you were given an index',
-    'rather than full evidence, a sheet is referenced but not present, or a total does not',
-    'reconcile with the rows you can see.',
-    'Filter by chunkId, sheet, row range, environment or fiscal period.',
-    'If the reply says moreAvailable, call again with nextChunkId until it does not.',
-    'Rows are never discarded — anything not returned is still retrievable.',
-  ].join(' '),
-  inputSchema: {
-    type: 'object',
-    properties: {
-      calculationId: { type: 'string', description: 'The calculation id given to you in the task.' },
-      chunkId: { type: 'string', description: 'A chunkId from the evidence index, e.g. "0003".' },
-      sheet: { type: 'string', description: 'Restrict to one sheet name.' },
-      rowsFrom: { type: 'integer', description: 'First workbook row number to return, inclusive.' },
-      rowsTo: { type: 'integer', description: 'Last workbook row number to return, inclusive.' },
-      environment: { type: 'string', description: 'Restrict to an environment hint, e.g. "Production".' },
-      fiscalPeriod: { type: 'string', description: 'Restrict to a fiscal period hint, e.g. "FY27".' },
-      costRelevantOnly: { type: 'boolean', description: 'Return only rows that look like billable lines.' },
-    },
-    required: ['calculationId'],
-  },
-} as const;
+// One definition, shared with the CDK construct that advertises it to the Gateway.
+export { GET_WORKBOOK_EVIDENCE_TOOL } from './tool-schema.js';

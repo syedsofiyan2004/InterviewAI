@@ -324,6 +324,14 @@ export interface DriverStepInput {
   iteration?: number;
   /** Answer to a previous NEEDS_INPUT, for a continuation run (Phase 17). */
   userAnswer?: string;
+  /**
+   * 'fail' is the state machine's catch path. Without it a driver crash leaves the
+   * record in BUILDING for ever and the UI shows a job that is neither running nor
+   * finished — which is precisely the confusion the old staleness hack existed to paper
+   * over.
+   */
+  mode?: 'run' | 'fail';
+  errorInfo?: unknown;
 }
 
 export interface DriverStepOutput {
@@ -336,6 +344,26 @@ export interface DriverStepOutput {
 
 export const handler = async (event: DriverStepInput): Promise<DriverStepOutput> => {
   const { calculationId } = event;
+
+  if (event.mode === 'fail') {
+    // Customer-facing copy only (Phase 20). The raw cause goes to CloudWatch and S3;
+    // "Item size to update has exceeded the maximum allowed size" is not a sentence any
+    // customer should read.
+    console.error(JSON.stringify({
+      event: 'harness_execution_failed',
+      calculationId,
+      errorInfo: JSON.stringify(event.errorInfo ?? null).slice(0, 4000),
+    }));
+    await patch(calculationId, {
+      status: 'FAILED',
+      progress_stage: 'FAILED',
+      progress_message: "We couldn't complete this AWS estimate automatically.",
+      error_message: "We couldn't complete this AWS estimate automatically.",
+      agent_last_activity_at: Date.now(),
+    });
+    return { calculationId, sessionId: event.sessionId ?? '', iteration: event.iteration ?? 0, done: true, status: 'FAILED' };
+  }
+
   const iteration = event.iteration ?? 0;
   // runtimeSessionId has a MINIMUM length of 33 characters, which is easy to miss when
   // calculationIds are short:

@@ -98,16 +98,53 @@ describe('AgentCore Gateway', () => {
     });
   });
 
-  it('has NO Lambda MCP target and NO hand-written Calculator tool schema', () => {
-    // The removed target carried nine inline tool definitions — a copy of the MCP's
-    // surface that drifted from it the moment upstream changed. The Gateway now
-    // discovers tools by calling tools/list on the Runtime itself.
+  it('carries NO hand-written Calculator tool schema', () => {
+    // The removed Calculator target carried nine inline tool definitions — a copy of the
+    // MCP's surface that drifted from it the moment upstream changed. The Gateway now
+    // discovers those by calling tools/list on the Runtime itself.
+    //
+    // The evidence target is the deliberate exception and the distinction is the whole
+    // ownership rule: `get_workbook_evidence` is MIMO's tool over MIMO's data, so MIMO
+    // writes its schema. No Calculator tool may be declared here at all.
+    const calculatorToolNames = [
+      'search_services', 'get_service_fields', 'create_estimate', 'add_service',
+      'build_estimate', 'validate_estimate', 'export_estimate', 'import_estimate',
+      'get_server_info',
+    ];
     for (const target of Object.values(template.findResources('AWS::BedrockAgentCore::GatewayTarget'))) {
-      const mcp = (target as any).Properties?.TargetConfiguration?.Mcp ?? {};
-      expect(mcp.Lambda).toBeUndefined();
-      expect(JSON.stringify(mcp)).not.toContain('ToolSchema');
-      expect(JSON.stringify(mcp)).not.toContain('InlinePayload');
+      const mcp = JSON.stringify((target as any).Properties?.TargetConfiguration?.Mcp ?? {});
+      for (const toolName of calculatorToolNames) expect(mcp).not.toContain(toolName);
     }
+  });
+
+  it('routes the Calculator to the Runtime, never to a Lambda', () => {
+    const targets = Object.values(template.findResources('AWS::BedrockAgentCore::GatewayTarget'));
+    const calculatorTarget = targets.find((t: any) => t.Properties?.Name === 'calcmcp') as any;
+    expect(calculatorTarget).toBeDefined();
+    expect(calculatorTarget.Properties.TargetConfiguration.Mcp.Lambda).toBeUndefined();
+    expect(calculatorTarget.Properties.TargetConfiguration.Mcp.McpServer.Endpoint).toBeDefined();
+  });
+
+  it('exposes get_workbook_evidence as a second, MIMO-owned target', () => {
+    // Without this the agent can only reason about what fitted into one message, which is
+    // the original truncation defect wearing different clothes.
+    const targets = Object.values(template.findResources('AWS::BedrockAgentCore::GatewayTarget'));
+    const evidenceTarget = targets.find((t: any) => t.Properties?.Name === 'mimoev') as any;
+    expect(evidenceTarget).toBeDefined();
+
+    // CloudFormation renders the schema's own keys PascalCased (Name/Description/
+    // InputSchema/Properties/Type/Required); the parameter names inside Properties are
+    // data and stay as written.
+    const schema = evidenceTarget.Properties.TargetConfiguration.Mcp.ToolSchema
+      ?? evidenceTarget.Properties.TargetConfiguration.Mcp.Lambda.ToolSchema;
+    const payload = schema.InlinePayload;
+    expect(payload).toHaveLength(1);
+    expect(payload[0].Name).toBe('get_workbook_evidence');
+    for (const parameter of ['calculationId', 'chunkId', 'sheet', 'rowsFrom', 'rowsTo',
+      'environment', 'fiscalPeriod', 'costRelevantOnly']) {
+      expect(Object.keys(payload[0].InputSchema.Properties)).toContain(parameter);
+    }
+    expect(payload[0].InputSchema.Required).toEqual(['calculationId']);
   });
 
   it('signs to the Runtime with an explicit IAM credential provider', () => {

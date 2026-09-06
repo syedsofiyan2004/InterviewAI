@@ -577,14 +577,30 @@ export class IepStack extends cdk.Stack {
       maxIterations: 40,
     });
 
-    // Wire the agent Lambda into the API handler for the new execution path.
+    // ─── Production path: the API handler starts a Step Functions execution ────
+    //
+    // In agentcore-runtime mode the route does NOT invoke a Lambda to run the estimate.
+    // It writes evidence to S3, starts the state machine and returns. The only thing it
+    // needs is permission to start and describe that execution.
+    calculatorAgentCore.executionStateMachine.grantStartExecution(apiHandler);
+    calculatorAgentCore.executionStateMachine.grantRead(apiHandler);
+    apiHandler.addEnvironment(
+      'CALCULATOR_EXECUTION_STATE_MACHINE_ARN',
+      calculatorAgentCore.executionStateMachine.stateMachineArn,
+    );
+    apiHandler.addEnvironment('CALCULATOR_HARNESS_ARN', calculatorAgentCore.harnessArn);
+    apiHandler.addEnvironment('CALCULATOR_AGENT_GATEWAY_ARN', calculatorAgentCore.gateway.attrGatewayArn);
+
+    // Rollback only. The grant and the ARN stay so `legacy-invokemodel` remains reachable
+    // by changing one environment variable, but nothing routes here by default.
     calculatorAgentCore.agentLambda.grantInvoke(apiHandler);
     apiHandler.addEnvironment('CALCULATOR_AGENT_LAMBDA_ARN', calculatorAgentCore.agentLambda.functionArn);
-    apiHandler.addEnvironment('CALCULATOR_AGENT_GATEWAY_ARN', calculatorAgentCore.gateway.attrGatewayArn);
-    // Phase 5 acceptance tests passed — production traffic now routes through the
-    // AgentCore path. The old orchestrator Lambda remains as a fallback; set
-    // CALCULATOR_EXECUTION_MODE=legacy in env to revert if needed.
-    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'agentcore-harness');
+
+    // Default is the real AgentCore path. 'legacy-invokemodel' and 'legacy-compiler' are
+    // the documented rollbacks. The former default, 'agentcore-harness', is deliberately
+    // not a valid mode any more: it named a Lambda that ran its own InvokeModel loop and
+    // never called AgentCore at all, so keeping the name would keep the confusion.
+    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'agentcore-runtime');
 
     // 6. Cognito User Pool (self sign-up enabled, email-based)
     //

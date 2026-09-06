@@ -15,5 +15,11 @@ process.env.CALCULATOR_TABLE_NAME = 'test-calculations';
 process.env.CHAT_TABLE_NAME = 'test-chat';
 process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME = 'test-calculator-orchestrator';
 process.env.CALCULATOR_SIDECAR_FUNCTION_NAME = 'test-calculator-sidecar';
+// The AgentCore production path. calculator-agentcore-dispatch.ts reads these at module
+// load, and isAgentCoreMode() is false without the state machine ARN — which would make
+// the cutover tests silently exercise the legacy branch instead.
+process.env.CALCULATOR_EXECUTION_STATE_MACHINE_ARN =
+  'arn:aws:states:ap-south-1:123456789012:stateMachine:test-calculator-agentcore-exec';
+process.env.CALCULATOR_EXECUTION_MODE = 'agentcore-runtime';
 process.env.USER_POOL_ID = 'ap-south-1_test';
 process.env.SEED_ADMIN_EMAIL = 'seed.admin@minfytech.com';

@@ -731,7 +731,227 @@ that the loop belongs to AgentCore.
 - [ ] **BLOCKED — real `calculator.aws` URL not yet produced through the Harness.** See
       BLOCKER 3.
 
-## BLOCKER 3 — long-running MCP tools hang through the AgentCore Gateway
+## SESSION 2 — the MIMO cutover
+
+### BLOCKER 3, re-diagnosed: the stall is intermittent and not tool-specific
+
+Session 1 recorded this as "long-running MCP tools hang through the Gateway" and blamed
+`build_estimate`. That was wrong, and the correction matters: it changes the fix from
+"avoid one tool" to "bound and retry every tool".
+
+`scripts/live-gateway-sequential-calls.mjs` makes N sequential `tools/call`s through the
+Gateway with a per-call timeout. Two identical runs, minutes apart:
+
+| call | run A | run B |
+|---|---|---|
+| 1 `get_server_info` | OK 760ms | OK 852ms |
+| 2 `search_services` | OK 781ms | OK 878ms |
+| 3 `get_service_fields` | OK 785ms | OK 875ms |
+| 4 `create_estimate` | OK 727ms | OK 1018ms |
+| 5 `add_service` | OK 877ms | **TIMEOUT 60s** |
+| 6 `validate_estimate` | OK 889ms | — |
+| 7 `export_estimate` | **TIMEOUT 45s** | — |
+
+Different call index, different tool. And `scripts/live-gateway-add-service-probe.mjs`
+shows `add_service` itself is fine through the Gateway — 973ms for an empty list, 99ms for
+a schema rejection, 976ms for a real 100 GB S3 service returning `success: true`.
+
+So: not tool-specific, not duration-specific. The Gateway→Runtime hop stalls
+intermittently, roughly once in five to seven calls. One clue: `initialize` through the
+Gateway returns **no** `mcp-session-id`, while the AgentCore Runtime is session-affine — the
+Gateway does not appear to hold MCP session affinity with the Runtime behind it.
+
+**It is bounded, though.** AgentCore terminates a stalled run itself:
+
+```
+RuntimeClientError: Request timed out as the agent didn't have a response byte in last 15 mins.
+```
+
+That arrives as a `runtimeClientError` event in the InvokeHarness stream, which the driver
+already records and treats as "not finished" — so Step Functions re-enters on the same
+session and the agent retries. The mitigation is the architecture that was already there,
+plus tuning:
+
+- Harness `timeoutSeconds` 3600 → **420**, so a stall costs seven minutes rather than an hour
+- Driver `CALCULATOR_STEP_TIMEOUT_SECONDS` 600 → **420**; Lambda timeout 14 → 10 minutes
+- Up to 60 segments, so the retry budget is large without being unbounded
+
+`build_estimate` is disabled regardless: it is a convenience wrapper doing create + add +
+export in one call, so it is the longest call and the most exposed to the stall, and
+everything it does is expressible with the step-by-step tools.
+
+### Step 1 — multi-step trajectory verified LIVE
+
+After deploying the prompt, `scripts/live-agentcore-e2e-smoke.mjs`:
+
+```
+"I'll build this estimate step by step. Let me start by getting the service fields for Amazon S3."
+[tool] calcmcp___get_service_fields
+[messageStop {"stopReason":"tool_use"}]
+[messageStop {"stopReason":"tool_result"}]
+"Good. Now let me create the estimate and add the S3 service."
+[tool] calcmcp___create_estimate
+```
+
+- [x] The agent does **not** call `build_estimate`
+- [x] It uses `get_service_fields` → `create_estimate` → …
+- [x] `build_estimate` marked unsupported for the MIMO AgentCore path
+- [ ] That run then hit the intermittent stall and ended on the 15-minute no-byte error,
+      which is exactly what the bounded-segment retry now exists to absorb
+
+### Step 2 — add_service append-only repair semantics
+
+- [x] Prompt rewritten with the anti-pattern spelled out: adding a corrected service to the
+      same estimate bills the customer twice, so a repair means discarding the estimate and
+      replaying the corrected list into a fresh one
+- [x] Export only an estimate where each service was added exactly once
+- [x] `existing_entry` treated as "you are about to duplicate; start over"
+
+### Step 3 — evidence tool provisioned
+
+- [x] `get_workbook_evidence` exposed to the Harness as a **second Gateway target**
+      (`mimoev`), a Lambda MCP target — MIMO owns this tool over MIMO's data, so MIMO writes
+      its schema; no Calculator tool schema is hand-written anywhere
+- [x] Target name kept short for the same 64-char tool-name reason as `calcmcp`
+- [x] Supports `calculationId`, `chunkId`, `sheet`, `rowsFrom`, `rowsTo`, `environment`,
+      `fiscalPeriod`, `costRelevantOnly`
+- [x] Owner resolved from the calculation record, never from the agent's arguments, so a
+      prompt-injected `calculationId` cannot read another tenant's prefix — gated by test
+- [ ] Row >300 retrieval verified live
+
+### Step 4 — Runtime MCP protocol permanent in CDK
+
+- [x] `protocolConfiguration: 'MCP'` in committed CDK (`calculator-agentcore.ts:164`)
+- [x] Present in the synthesised template (`"ProtocolConfiguration": "MCP"`)
+- [x] Asserted by test, so a later deploy cannot revert the Runtime to the HTTP contract
+
+### Step 5 — async driver provisioned
+
+- [x] Step Functions **Standard** state machine `calculator-agentcore-exec`, 12-hour timeout
+- [x] `calculator-harness-driver` Lambda as the pump: one bounded `InvokeHarness` per segment
+- [x] Continues on the same `runtimeSessionId`; up to 60 segments
+- [x] No single Lambda owns the calculation lifetime
+- [x] No Claude loop in Step Functions or the Lambda — gated by test (`InvokeModelCommand`
+      and `executeTool` must not appear in the driver)
+- [x] A driver failure routes to a `fail` mode that writes a terminal customer-facing record
+
+### Step 6 — POST/run wired to the new driver
+
+- [x] `CALCULATOR_EXECUTION_MODE` default is now `agentcore-runtime`
+- [x] In that mode the route persists evidence, starts the state machine and returns
+      immediately — **no Lambda invoke of any kind**, gated by test
+- [x] Records `state_machine_execution_arn`, `agent_session_id`, `agent_started_at`,
+      `agent_last_activity_at`, evidence index key and counts
+- [x] `legacy-invokemodel` retained as rollback; `agentcore-harness` is no longer a valid
+      mode name, because it described a Lambda that never called AgentCore
+
+### Step 7 — stale detection replaced
+
+- [x] The 11-minute rule renamed `LEGACY_CALCULATION_STALE_AFTER_MS`, applying only to rows
+      with no managed execution
+- [x] AgentCore calculations judged by Step Functions status: `RUNNING` → alive regardless
+      of duration; `FAILED`/`TIMED_OUT`/`ABORTED` → failed
+- [x] A `DescribeExecution` error yields `unknown` and changes nothing
+- [x] Liveness prefers `agent_last_activity_at`, refreshed on every stream event
+- [x] Tests: long RUNNING not failed; each terminal status mapped; describe-failure benign;
+      no-ARN grace (30 min) longer than 11 minutes and the Harness's 900s idle timeout
+
+### Step 9 — DynamoDB slimmed
+
+- [x] `RESOURCE_BYTES_ON_ITEM` 120_000 → **16_000**; rows and evidence live in S3
+- [x] `DYNAMO_ITEM_TARGET_BYTES` 50 KB, `DYNAMO_ITEM_HARD_GUARD_BYTES` 100 KB
+- [x] `enforceItemSizeBudget` applied before every record write, shedding
+      `workbook` → `resources` → `plan_v2` in value-per-byte order
+- [x] Size regression tests at all six lifecycle stages
+- [x] The driver writes only small fields; result, trace and evidence are S3 keys
+
+### Step 10 — managed result contract
+
+- [x] `COMPLETED` / `NEEDS_INPUT` / `FAILED` parsed from the agent's final JSON
+- [x] `COMPLETED` without a real `calculator.aws` URL is downgraded to `FAILED`
+- [x] Full structured result to S3; only a small summary to DynamoDB
+- [x] Totals the Calculator did not give are `null`, never invented
+- [x] No local Price List parity requirement in the new path
+
+### Step 11 — NEEDS_INPUT continuation
+
+- [x] `continueAgentCoreExecution` reuses the existing `runtimeSessionId`, so AgentCore
+      continues the conversation — no workbook re-read, no recompiled plan
+- [x] Questions stored as `agent_questions` with `question_count`
+- [x] Prompt forbids internal-field questions and requires customer language
+- [ ] Continuation exercised end to end live
+
+### Step 15 — real MIMO path, and the three defects only it could find
+
+`scripts/live-mimo-e2e.mjs` drives the **deployed api-handler** with real API Gateway
+events (upload-url → PUT → create → confirm → run → poll), so the code under test is the
+production route rather than a probe. It also samples the four legacy Lambdas' invocation
+counts and greps the record's progress text for legacy fingerprints.
+
+Every one of these was invisible to the standalone Harness/Gateway/Runtime probes:
+
+1. **`createCalculation` was never cut over.** Only `runCalculationPlan` was. `POST
+   /calculator` builds immediately and dispatches its own worker, so it kept firing the
+   legacy orchestrator — and the two then raced the same record. Run 1 produced a real
+   Calculator URL and `0` legacy invocations, and it was still wrong: the progress text read
+   `"Validated estimate ready"` and `"Workbook baseline: …"`, which only
+   `calculator-orchestrator/index.ts` and `calculator-agent/index.ts` write. The legacy
+   worker won the race and stamped its result over a live AgentCore execution. Fixed: both
+   entry points now take the same AgentCore branch, gated by a test that requires an
+   `agentcore-runtime` branch on *both*.
+
+2. **My own legacy check gave a false pass.** Lambda publishes `Invocations` 1–3 minutes
+   late, and the script sampled immediately, so it confidently reported "Legacy
+   infrastructure untouched: YES" while the legacy orchestrator had just run. Fixed by
+   waiting for metric publication *and* corroborating with the progress-text fingerprint,
+   which is available instantly. A check that can only report success is worse than none.
+
+3. **The IAM action for `InvokeHarness` is `bedrock-agentcore:InvokeAgentRuntime`.** Not an
+   action named after the API. The driver was granted `InvokeHarness` and every segment
+   died with a 403 that named what it actually wanted:
+
+   ```
+   User: …/iep-dev-calculator-harness-driver-… is not authorized to perform:
+   bedrock-agentcore:InvokeAgentRuntime on resource:
+   arn:aws:bedrock-agentcore:ap-south-1:996122083346:harness/mimoCalc_dev-dAmgUcz1zg
+   ```
+
+   Step Functions retried, then failed the execution and the driver wrote the
+   customer-facing `"We couldn't complete this AWS estimate automatically."` — so the
+   failure path worked correctly even though the run did not.
+
+4. **`ANALYZING` was missing from the already-running guard**, so `create` starting an
+   execution and a following `run` starting another gave two agents on one record. Two
+   concurrent sessions were visible in the driver logs. Fixed.
+
+Run 3, after fixes 1, 2 and 4, showed the cutover itself is clean:
+
+```
+create OK  status=ANALYZING          ← the AgentCore branch, not the legacy one
+No legacy progress fingerprint in the record.
+calculator-agent-orchestrator   invocations during run: 0
+calculator-mcp-proxy            invocations during run: 0
+calculator-mcp-sidecar          invocations during run: 0
+calculator-orchestrator         invocations during run: 0
+record bytes: 4719              ← was a 400 KB item-size failure class
+```
+
+- [x] The request goes MIMO API → S3 evidence → Step Functions → Harness, with an execution
+      ARN and session id recorded
+- [x] No legacy Lambda is invoked, corroborated two ways
+- [x] DynamoDB record far under the guard (4.7 KB)
+- [x] A failed execution produces a terminal, customer-facing record
+- [ ] A real `calculator.aws` URL through the fully-clean path — pending the run after the
+      IAM fix
+
+### Steps 12–14 and 16–19 — NOT done in this session
+
+Frontend status cutover, dash-free result page, final Excel ordering, and the three
+workbook regressions plus the legacy-disabled acceptance test are **not** complete.
+
+---
+
+## BLOCKER 3 (session 1 wording, superseded above)
 
 `build_estimate` never returned. The run sat on that single tool call for **22 minutes**
 with no further stream events and no error, while the Harness's managed runtime stayed

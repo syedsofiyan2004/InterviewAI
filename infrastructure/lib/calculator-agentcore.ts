@@ -34,8 +34,14 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as cr from 'aws-cdk-lib/custom-resources';
+import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
+import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
 import * as path from 'path';
+// No `.js` suffix: lib/ is loaded by ts-node under CommonJS, which does not remap a .js
+// specifier onto a .ts file the way jest's moduleNameMapper does. With the suffix, tests
+// pass and `cdk synth` dies with MODULE_NOT_FOUND.
+import { GET_WORKBOOK_EVIDENCE_TOOL } from '../lambdas/calculator-evidence-tool/tool-schema';
 
 export interface CalculatorAgentCoreProps {
   envName: string;
@@ -64,6 +70,12 @@ export class CalculatorAgentCore extends Construct {
   public readonly gateway: bedrockagentcore.CfnGateway;
   /** The AgentCore Gateway Target — the MCP Runtime endpoint (NOT a Lambda). */
   public readonly gatewayTarget: bedrockagentcore.CfnGatewayTarget;
+  /** MIMO's own `get_workbook_evidence` tool, exposed as a second Gateway target. */
+  public readonly evidenceToolLambda: nodejs.NodejsFunction;
+  /** Gateway target for the MIMO evidence tool. */
+  public readonly evidenceGatewayTarget: bedrockagentcore.CfnGatewayTarget;
+  /** Step Functions state machine that owns a calculation's lifecycle. */
+  public readonly executionStateMachine: sfn.StateMachine;
   /** ARN of the AgentCore Harness — the AWS-managed Claude agent loop. */
   public readonly harnessArn: string;
   /** Id of the AgentCore Harness. */
@@ -304,6 +316,69 @@ export class CalculatorAgentCore extends Construct {
     // from the RoleArn reference on the Gateway.
     this.gatewayTarget.node.addDependency(gatewayExecRole);
 
+    // ─── MIMO evidence tool, as a second Gateway target (Phase 2) ──────────────
+    //
+    // `get_workbook_evidence` is what makes "chunk, never truncate" true: when a workbook
+    // is too large to inline, the agent gets the index and pulls the rows it still needs.
+    // Without this the agent can only reason about what fitted in one message, which is
+    // the original defect wearing different clothes.
+    //
+    // A Lambda MCP target, not an mcpServer one, because MIMO owns this tool. Writing its
+    // schema here is correct — the schema describes MIMO's own evidence store. That is the
+    // opposite of the Calculator tools, whose schemas belong to the Pricing Calculator MCP
+    // and must never be hand-copied into this repo.
+
+    this.evidenceToolLambda = new nodejs.NodejsFunction(this, 'EvidenceTool', {
+      functionName: getUniqueName('calculator-evidence-tool'),
+      entry: path.join(__dirname, '../lambdas/calculator-evidence-tool/index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
+      environment: {
+        BUCKET_NAME: props.filesBucket.bucketName,
+        CALCULATOR_TABLE_NAME: props.calculatorTable.tableName,
+      },
+      bundling: { minify: true, sourceMap: true },
+    });
+    props.filesBucket.grantRead(this.evidenceToolLambda);
+    // Read-only on the calculation record: it needs owner_user_id to resolve the S3
+    // prefix, and deliberately cannot resolve a prefix the agent asks for directly.
+    props.calculatorTable.grantReadData(this.evidenceToolLambda);
+
+    gatewayExecRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'InvokeEvidenceTool',
+      actions: ['lambda:InvokeFunction'],
+      resources: [this.evidenceToolLambda.functionArn],
+    }));
+
+    this.evidenceGatewayTarget = new bedrockagentcore.CfnGatewayTarget(this, 'EvidenceToolTarget', {
+      // Short for the same reason as `calcmcp`: the Gateway advertises tools as
+      // `<targetName>___<toolName>` and the Harness truncates at 64 characters.
+      name: 'mimoev',
+      description: 'MIMO-owned workbook evidence retrieval tool',
+      gatewayIdentifier: this.gateway.attrGatewayIdentifier,
+      credentialProviderConfigurations: [{ credentialProviderType: 'GATEWAY_IAM_ROLE' }],
+      targetConfiguration: {
+        mcp: {
+          lambda: {
+            lambdaArn: this.evidenceToolLambda.functionArn,
+            toolSchema: {
+              inlinePayload: ([
+                GET_WORKBOOK_EVIDENCE_TOOL,
+              ] as unknown) as bedrockagentcore.CfnGatewayTarget.ToolDefinitionProperty[],
+            },
+          },
+        },
+      },
+    });
+    this.evidenceGatewayTarget.addDependency(this.gateway);
+    this.evidenceGatewayTarget.node.addDependency(gatewayExecRole);
+    this.evidenceGatewayTarget.node.addDependency(this.evidenceToolLambda);
+    // Two targets on one Gateway are created serially: creating a target re-syncs the
+    // Gateway's tool list, and two concurrent syncs race.
+    this.evidenceGatewayTarget.addDependency(this.gatewayTarget);
+
     // ─── AgentCore Harness — the managed Claude agent loop (Phase 7) ───────────
     //
     // This is the component that owns model invocation → tool selection → Gateway
@@ -466,10 +541,17 @@ export class CalculatorAgentCore extends Construct {
         GatewayArn: this.gateway.attrGatewayArn,
         MaxIterations: String(props.maxIterations ?? 60),
         MaxTokens: '8192',
-        // One hour per InvokeHarness call. The Harness's own managed runtime allows up
-        // to maxLifetime 28800s (8h); the driver re-enters on the same session id when a
-        // run needs longer, so this bounds a single call and not the whole calculation.
-        TimeoutSeconds: '3600',
+        // Bounds ONE InvokeHarness call, not the calculation. Step Functions re-enters on
+        // the same runtimeSessionId, and the managed runtime allows maxLifetime 28800s (8h).
+        //
+        // Deliberately minutes rather than the hour it used to be, because the
+        // Gateway→Runtime hop hangs intermittently: measured over two identical sequential
+        // runs, one stalled on the 5th tool call and the next got past it and stalled on
+        // the 7th, on different tools, with every other call returning in under 1.1s. The
+        // hang is an indefinite wait rather than an error, so the only defence is to bound
+        // it. A short segment turns "this calculation is stuck for an hour" into "this
+        // segment ends in seven minutes and the agent retries the tool on the next one".
+        TimeoutSeconds: '420',
         // Forces an update when only the prompt text changed — CloudFormation would
         // otherwise see identical properties and skip the UpdateHarness call.
         ConfigHash: cdk.Fn.base64(`${agentModelId}:${harnessSystemPrompt.length}`).slice(0, 60),
@@ -477,10 +559,153 @@ export class CalculatorAgentCore extends Construct {
     });
 
     harness.node.addDependency(this.gatewayTarget);
+    harness.node.addDependency(this.evidenceGatewayTarget);
     harness.node.addDependency(harnessRole);
 
     this.harnessId = harness.getAttString('HarnessId');
     this.harnessArn = harness.getAttString('HarnessArn');
+
+    // ─── Asynchronous execution: Step Functions owns the job lifecycle ──────────
+    //
+    // Division of responsibility, and it matters:
+    //
+    //   AgentCore Harness   owns Claude ↔ tool iteration. Every model call, tool choice,
+    //                       MCP invocation, error repair and retry happens in there.
+    //   Step Functions      owns the JOB: start, continue, finish, fail, observe.
+    //   the pump Lambda     owns ONE bounded InvokeHarness call and nothing else.
+    //
+    // There is no Claude loop in Step Functions and none in the Lambda. The pump reads a
+    // stream and reports whether the agent finished; if it has not, the state machine
+    // re-enters it with the SAME runtimeSessionId, which is how AgentCore continues a
+    // conversation. That is what removes the 15-minute ceiling: no single Lambda owns the
+    // calculation's lifetime, and the Harness's managed runtime permits 8-hour sessions
+    // (maxLifetime 28800, measured).
+
+    const driverLambda = new nodejs.NodejsFunction(this, 'HarnessDriver', {
+      functionName: getUniqueName('calculator-harness-driver'),
+      entry: path.join(__dirname, '../lambdas/calculator-harness-driver/index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      // 14 minutes of Lambda for a 10-minute InvokeHarness segment: the segment budget is
+      // what bounds the call, and this leaves room to finish writing the trace and the
+      // status rather than being killed mid-write.
+      timeout: cdk.Duration.minutes(10),
+      memorySize: 1536,
+      environment: {
+        CALCULATOR_TABLE_NAME: props.calculatorTable.tableName,
+        BUCKET_NAME: props.filesBucket.bucketName,
+        CALCULATOR_HARNESS_ARN: this.harnessArn,
+        CALCULATOR_AGENT_MODEL_ID: agentModelId,
+        CALCULATOR_GATEWAY_ARN: this.gateway.attrGatewayArn,
+        CALCULATOR_MCP_RUNTIME_ARN: this.runtime.attrAgentRuntimeArn,
+        CALCULATOR_STEP_TIMEOUT_SECONDS: '420',
+        MIMO_BUILD_SHA: process.env.MIMO_BUILD_SHA || 'unknown',
+      },
+      // The Node 20 runtime's bundled SDK predates AgentCore, so InvokeHarness must be
+      // bundled in. Without this the driver fails at run time with the deeply unhelpful
+      // "InvokeHarnessCommand is not a constructor".
+      bundling: agentCoreBundling,
+    });
+
+    props.calculatorTable.grantReadWriteData(driverLambda);
+    props.filesBucket.grantRead(driverLambda);
+    driverLambda.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'WriteCalculatorArtifacts',
+      actions: ['s3:PutObject'],
+      resources: [`${props.filesBucket.bucketArn}/users/*/calculator/*`],
+    }));
+    driverLambda.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'InvokeCalculatorHarness',
+      // The InvokeHarness *API* authorizes as InvokeAgentRuntime on the harness resource,
+      // not as an action named after itself. Granting only `InvokeHarness` produced a 403
+      // that named the action it actually wanted:
+      //   "not authorized to perform: bedrock-agentcore:InvokeAgentRuntime on resource:
+      //    arn:aws:bedrock-agentcore:…:harness/mimoCalc_dev-…"
+      // Both are listed so the grant survives either naming.
+      actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:InvokeHarness'],
+      // The harness ARN is a Custom Resource attribute, so it resolves at deploy time.
+      resources: [this.harnessArn, `${this.harnessArn}/*`],
+    }));
+
+    const invokeSegment = new tasks.LambdaInvoke(this, 'InvokeHarnessSegment', {
+      lambdaFunction: driverLambda,
+      payloadResponseOnly: true,
+      // Retries cover Lambda/AgentCore transients. They do NOT retry a completed
+      // calculation: the driver is re-entered with the same session, and a finished run
+      // reports done immediately.
+      retryOnServiceExceptions: true,
+    });
+    invokeSegment.addRetry({
+      errors: ['States.TaskFailed', 'Lambda.ServiceException', 'Lambda.TooManyRequestsException'],
+      interval: cdk.Duration.seconds(20),
+      maxAttempts: 3,
+      backoffRate: 2,
+    });
+
+    const finished = new sfn.Succeed(this, 'CalculationFinished');
+
+    // Guard against a pathological non-terminating agent. 60 segments × 10 minutes is
+    // 10 hours of ceiling — deliberately far above any legitimate run, so it can only
+    // ever catch a genuine runaway rather than a large workbook.
+    const tooManySegments = new sfn.Fail(this, 'TooManySegments', {
+      error: 'AgentDidNotTerminate',
+      cause: 'The AgentCore execution did not reach a terminal result within the segment budget.',
+    });
+
+    const decide = new sfn.Choice(this, 'AgentFinished?')
+      .when(sfn.Condition.booleanEquals('$.done', true), finished)
+      .when(sfn.Condition.numberGreaterThan('$.iteration', 60), tooManySegments)
+      .otherwise(invokeSegment);
+
+    invokeSegment.next(decide);
+
+    // A failure inside the driver must still leave the customer's record in a terminal
+    // state, or the UI shows a job that is neither running nor finished for ever.
+    const markFailed = new tasks.LambdaInvoke(this, 'MarkCalculationFailed', {
+      lambdaFunction: driverLambda,
+      payloadResponseOnly: true,
+      payload: sfn.TaskInput.fromObject({
+        'calculationId.$': '$$.Execution.Input.calculationId',
+        mode: 'fail',
+        'errorInfo.$': '$.errorInfo',
+      }),
+    });
+    markFailed.next(new sfn.Fail(this, 'CalculationFailed', {
+      error: 'CalculationFailed',
+      cause: 'The AgentCore calculator execution failed. See the calculation record and S3 trace.',
+    }));
+    invokeSegment.addCatch(markFailed, { resultPath: '$.errorInfo' });
+
+    this.executionStateMachine = new sfn.StateMachine(this, 'CalculatorExecution', {
+      stateMachineName: getUniqueName('calculator-agentcore-exec'),
+      // STANDARD, not EXPRESS: Express caps at 5 minutes, which is the very limit this
+      // design exists to escape. Standard also gives durable, queryable execution status,
+      // which is what replaces the old 11-minute updated_at staleness guess.
+      stateMachineType: sfn.StateMachineType.STANDARD,
+      definitionBody: sfn.DefinitionBody.fromChainable(invokeSegment),
+      timeout: cdk.Duration.hours(12),
+      tracingEnabled: true,
+      logs: {
+        destination: new logs.LogGroup(this, 'CalculatorExecutionLogs', {
+          logGroupName: `/aws/vendedlogs/states/${getUniqueName('calculator-agentcore-exec')}`,
+          retention: logs.RetentionDays.TWO_WEEKS,
+          removalPolicy: cdk.RemovalPolicy.DESTROY,
+        }),
+        level: sfn.LogLevel.ERROR,
+      },
+    });
+
+    new cdk.CfnOutput(this, 'ExecutionStateMachineArn', {
+      description: 'Calculator AgentCore execution state machine ARN',
+      value: this.executionStateMachine.stateMachineArn,
+      exportName: `${getUniqueName('calc-exec-sm-arn')}`,
+    });
+
+    new cdk.CfnOutput(this, 'HarnessArnOutput', {
+      description: 'Calculator AgentCore Harness ARN',
+      value: this.harnessArn,
+      exportName: `${getUniqueName('calc-harness-arn')}`,
+    });
 
     // ─── MCP Proxy Lambda (action group executor) ───────────────────────────────
     // Thin proxy that Bedrock invokes when Claude calls a Calculator tool.

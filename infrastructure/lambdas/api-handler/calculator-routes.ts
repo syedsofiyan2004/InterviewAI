@@ -19,6 +19,16 @@ import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../sha
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { analyseWorkbook } from './calculator-workbook';
+import {
+  EXECUTION_MODE,
+  isAgentCoreMode,
+  persistWorkbookEvidence,
+  startAgentCoreExecution,
+  continueAgentCoreExecution,
+  newRuntimeSessionId,
+  describeExecutionLiveness,
+  NO_EXECUTION_ARN_GRACE_MS,
+} from './calculator-agentcore-dispatch';
 import { McpSidecarClient } from '../calculator-orchestrator/mcp-client';
 import { enrichPlanWithCalculatorPreflight } from './calculator-preflight';
 import { parseServiceCatalog } from '../calculator-orchestrator/calculator-catalog';
@@ -70,8 +80,17 @@ import { chatThreadId, ReviseCalculationSchema, type ReviseCalculation } from '.
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const ORCHESTRATOR_FUNCTION_NAME = process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME!;
 const SIDECAR_FUNCTION_NAME = process.env.CALCULATOR_SIDECAR_FUNCTION_NAME || '';
-/** 'agentcore-harness' routes to the new AgentCore path; 'legacy' uses the old orchestrator. */
-const EXECUTION_MODE = process.env.CALCULATOR_EXECUTION_MODE || 'legacy';
+/**
+ * Execution mode. EXECUTION_MODE itself is owned by calculator-agentcore-dispatch.ts:
+ *
+ *   agentcore-runtime  (default, production) Step Functions → AgentCore Harness →
+ *                      Gateway → Runtime MCP. No MIMO tool loop, no MIMO compiler.
+ *   legacy-invokemodel (rollback) the custom InvokeModel loop in calculator-agent.
+ *   legacy-compiler    (rollback) the original orchestrator + service-adapters compiler.
+ *
+ * The old value 'agentcore-harness' named a Lambda that ran its own InvokeModel loop and
+ * never touched AgentCore, so it is not accepted: a mode name should describe what runs.
+ */
 const AGENT_LAMBDA_ARN = process.env.CALCULATOR_AGENT_LAMBDA_ARN || '';
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
@@ -150,12 +169,72 @@ export async function getCalculationUploadUrl(event: APIGatewayProxyEvent): Prom
 /**
  * How many bytes of parsed rows may live on the DynamoDB item.
  *
- * An item is capped at 400KB in total, and this one also has to hold the workbook
- * insights (~100KB at their own ceilings), the prompt, and later the priced result
- * with all its line items. 120KB of rows leaves room for every one of those and still
- * carries a few hundred machines inline, which is the whole of most uploads.
+ * Was 120_000, chosen when the item was the primary home for the parsed landscape and
+ * the budget was the 400KB item limit. That arithmetic never left enough room: 120KB of
+ * rows plus ~100KB of workbook insights plus a plan plus a priced result with every line
+ * item is how calculations ended up dying on
+ * "Item size to update has exceeded the maximum allowed size".
+ *
+ * The item is no longer the home for any of it. Every row is in S3 under
+ * `resources_s3_key`, and the complete lossless evidence is in S3 under
+ * `evidence/`, so what stays inline is only a preview for the UI's first paint.
+ * 16KB is a few dozen rows — enough to render, small enough that no combination of
+ * fields can approach the limit.
  */
-const RESOURCE_BYTES_ON_ITEM = 120_000;
+const RESOURCE_BYTES_ON_ITEM = 16_000;
+
+/**
+ * Ceilings for the DynamoDB item, enforced rather than hoped for.
+ *
+ * DynamoDB's own limit is 400KB. `DYNAMO_ITEM_TARGET_BYTES` is what a normal record
+ * should be under; `DYNAMO_ITEM_HARD_GUARD_BYTES` is the line a regression test fails on,
+ * so a future field that quietly re-inflates the record is caught by CI rather than by a
+ * customer mid-estimate.
+ */
+export const DYNAMO_ITEM_TARGET_BYTES = 50_000;
+export const DYNAMO_ITEM_HARD_GUARD_BYTES = 100_000;
+
+/** Serialized size of a record as DynamoDB will store it. */
+export const calculationRecordBytes = (record: unknown): number =>
+  Buffer.byteLength(JSON.stringify(record), 'utf8');
+
+/**
+ * Drops the largest optional inline artifacts until the record is under the hard guard.
+ *
+ * Order matters and is by value-per-byte: workbook insights first (a UI convenience whose
+ * source is in S3), then the row preview (ditto), and `plan_v2` last because the review
+ * workflow reads it directly and a plan is bounded by its own builder.
+ *
+ * This is a backstop, not the mechanism. The mechanism is that large artifacts live in S3.
+ * It exists because "we were careful" has already failed once here, visibly, to a user.
+ */
+export function enforceItemSizeBudget<T extends Record<string, unknown>>(record: T): {
+  record: T;
+  dropped: string[];
+  bytes: number;
+} {
+  const dropped: string[] = [];
+  let current: Record<string, unknown> = { ...record };
+
+  for (const field of ['workbook', 'resources', 'plan_v2'] as const) {
+    if (calculationRecordBytes(current) <= DYNAMO_ITEM_HARD_GUARD_BYTES) break;
+    if (current[field] === undefined) continue;
+    delete current[field];
+    dropped.push(field);
+    if (field === 'resources') current.resources = [];
+  }
+
+  const bytes = calculationRecordBytes(current);
+  if (dropped.length) {
+    console.warn(JSON.stringify({
+      event: 'calculation_item_trimmed',
+      calculationId: current.calculation_id,
+      dropped,
+      bytes,
+    }));
+  }
+  return { record: current as T, dropped, bytes };
+}
 
 /** Input warnings kept on the record. Enough to explain a parse, short of a wall. */
 const MAX_INPUT_WARNINGS = 16;
@@ -401,7 +480,10 @@ async function createCalculationInternal(
     unresolved_critical_count: countUnresolvedCritical(planV2),
   };
 
-  await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: record }));
+  // Backstop before the write, not a hope after it (Step 9). Large artifacts already live
+  // in S3; this only catches a record that has re-inflated for some reason nobody predicted.
+  const sized = enforceItemSizeBudget(record as unknown as Record<string, unknown>);
+  await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
 
   if (!startWorker) {
     return createdResponse({
@@ -409,6 +491,73 @@ async function createCalculationInternal(
       status: record.status,
       plan: planV2,
     });
+  }
+
+  // POST /calculator builds immediately, with no review step, so it dispatches a worker
+  // here as well as in runCalculationPlan. Cutting over only the plan/run route left this
+  // one firing the legacy orchestrator, and the two then raced the same calculation: a live
+  // test saw the legacy worker win and stamp "Validated estimate ready" over a healthy
+  // AgentCore execution. Two workers mutating one record is exactly what the rollback
+  // design forbids, so both entry points route the same way.
+  if (isAgentCoreMode()) {
+    try {
+      const sessionId = newRuntimeSessionId(record.calculation_id);
+      const evidence = await persistWorkbookEvidence({
+        owner: userId,
+        calculationId: record.calculation_id,
+        workbookIrS3Key: workbookIrS3Key,
+        userInstructions: [
+          ...(prompt ? [prompt] : []),
+          ...(input.region ? [`Primary region: ${input.region}`] : []),
+        ],
+      });
+      const started = await startAgentCoreExecution({ calculationId: record.calculation_id, sessionId });
+
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: CALCULATOR_TABLE_NAME,
+        Key: { calculation_id: record.calculation_id },
+        UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, '
+          + 'execution_mode = :mode, state_machine_execution_arn = :arn, agent_session_id = :session, '
+          + 'agent_started_at = :now, agent_last_activity_at = :now, updated_at = :now'
+          + (evidence ? ', evidence_index_s3_key = :evidenceKey, evidence_chunk_count = :chunks, evidence_row_count = :rows' : ''),
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':status': 'ANALYZING',
+          ':stage': 'ANALYZING',
+          ':message': 'Reading your workbook...',
+          ':mode': EXECUTION_MODE,
+          ':arn': started.executionArn,
+          ':session': sessionId,
+          ':now': Date.now(),
+          ...(evidence ? {
+            ':evidenceKey': evidence.indexKey,
+            ':chunks': evidence.chunkCount,
+            ':rows': evidence.totalRows,
+          } : {}),
+        },
+      }));
+
+      return createdResponse({ calculation_id: record.calculation_id, status: 'ANALYZING' });
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'calculator_create_dispatch_failed',
+        executionMode: EXECUTION_MODE,
+        calculationId: record.calculation_id,
+        error: (error as Error).message,
+      }));
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: CALCULATOR_TABLE_NAME,
+        Key: { calculation_id: record.calculation_id },
+        UpdateExpression: 'SET #status = :status, error_message = :error, updated_at = :now',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':status': 'FAILED',
+          ':error': "We couldn't start this AWS estimate. Please retry.",
+          ':now': Date.now(),
+        },
+      }));
+      return errorResponse(502, 'INTERNAL_ERROR', "We couldn't start this AWS estimate. Please retry.");
+    }
   }
 
   try {
@@ -499,34 +648,72 @@ export async function listCalculations(event: APIGatewayProxyEvent): Promise<API
 }
 
 /**
- * How long a PROCESSING row can go untouched before it is presumed dead.
+ * How long a LEGACY PROCESSING row can go untouched before it is presumed dead.
  *
- * The loop's own budget is 8 minutes and the orchestrator Lambda is configured
- * above that, so past this point nothing will ever write to the row again: the
- * worker either finished (and would have written a terminal status) or was killed
- * by its timeout, an OOM, or a lost async invoke. Without this the row stays
- * PROCESSING forever and the view page polls it every 3s for the life of the tab.
- * Mirrors recoverStaleQuestionGeneration in index.ts, which exists for exactly the
- * same failure.
+ * This applies only to rows with no managed execution to ask about — legacy-mode
+ * calculations run by the old orchestrator Lambda, whose own budget is 8 minutes inside a
+ * 15-minute function, so past this point nothing will ever write to the row again.
+ *
+ * It must NOT be applied to an AgentCore calculation. An AgentCore session may
+ * legitimately run for hours: the Harness's managed runtime permits maxLifetime 28800s
+ * (8 hours, measured). Comparing `updated_at` to eleven minutes and announcing "The
+ * estimate worker stopped before finishing" was a statement with no evidence behind it —
+ * it happened to be right only while the worker really was a Lambda that could not
+ * outlive fifteen minutes. Applied to a managed execution it simply fails healthy
+ * long-running jobs, which is what made large workbooks look broken.
  */
-const CALCULATION_STALE_AFTER_MS = 11 * 60 * 1000;
+const LEGACY_CALCULATION_STALE_AFTER_MS = 11 * 60 * 1000;
 
 /**
- * Flips a presumed-dead PROCESSING row to FAILED, on read.
+ * Decides whether a running calculation is actually alive, and marks it FAILED only if it
+ * genuinely is not.
  *
- * Conditional on the row still being PROCESSING and still carrying the same
- * updated_at, so a worker that comes back to life a moment later cannot have its
- * genuine result overwritten by this. Best-effort: if the write loses that race the
- * caller simply reports what it already read.
+ * For an AgentCore calculation the authority is the Step Functions execution status, not
+ * elapsed time:
+ *
+ *   RUNNING                   → alive, however long it has been going
+ *   SUCCEEDED                 → the driver has already written the terminal record
+ *   FAILED/TIMED_OUT/ABORTED  → genuinely dead, and only now may MIMO say so
+ *   describe failed / unknown → say nothing; an IAM or throttling blip is not a death
+ *
+ * Conditional on `updated_at` being unchanged, so a driver that writes a real result
+ * mid-check cannot have it overwritten.
  */
 async function failIfStale(item: CalculationRecord): Promise<CalculationRecord> {
-  // BUILDING and VALIDATING are sub-states of the execution run; they go stale for
-  // the same reason PROCESSING does (worker killed or timed out).
-  if (!['PROCESSING', 'BUILDING', 'VALIDATING'].includes(item.status)) return item;
-  const lastTouched = Number(item.updated_at || item.created_at || 0);
-  if (!lastTouched || Date.now() - lastTouched <= CALCULATION_STALE_AFTER_MS) return item;
+  // BUILDING, VALIDATING and ANALYZING are sub-states of a running execution.
+  if (!['PROCESSING', 'ANALYZING', 'BUILDING', 'VALIDATING'].includes(item.status)) return item;
 
-  const error_message = 'The estimate worker stopped before finishing. Please retry.';
+  const lastTouched = Number(item.updated_at || item.created_at || 0);
+  const executionArn = (item as { state_machine_execution_arn?: string }).state_machine_execution_arn;
+  // agent_last_activity_at is refreshed on every stream event, so it is a truer liveness
+  // signal than updated_at, which any unrelated write also bumps.
+  const lastActivity = Number((item as { agent_last_activity_at?: number }).agent_last_activity_at || 0)
+    || lastTouched;
+
+  let error_message: string;
+
+  if (executionArn) {
+    const liveness = await describeExecutionLiveness(executionArn);
+    if (liveness.verdict === 'running' || liveness.verdict === 'succeeded' || liveness.verdict === 'unknown') {
+      return item;
+    }
+    error_message = "We couldn't complete this AWS estimate automatically.";
+    console.log(JSON.stringify({
+      event: 'calculation_execution_dead',
+      calculationId: item.calculation_id,
+      executionArn,
+      reason: liveness.reason,
+      ranForMs: Date.now() - Number(item.created_at || 0),
+    }));
+  } else if (isAgentCoreMode()) {
+    // AgentCore mode but no execution ARN: the start never landed, or this row predates
+    // the cutover. Given a long grace so a live agent can never be pre-empted.
+    if (!lastActivity || Date.now() - lastActivity <= NO_EXECUTION_ARN_GRACE_MS) return item;
+    error_message = "We couldn't complete this AWS estimate automatically.";
+  } else {
+    if (!lastActivity || Date.now() - lastActivity <= LEGACY_CALCULATION_STALE_AFTER_MS) return item;
+    error_message = 'The estimate worker stopped before finishing. Please retry.';
+  }
   try {
     // Condition: only flip when updated_at matches what was read. A worker that just wrote
     // COMPLETED (and a new updated_at) will not be overwritten by this stale detection.
@@ -757,8 +944,24 @@ export async function runCalculationPlan(
   if (!plan || plan.status !== 'CONFIRMED' || item!.confirmed_plan_revision_id !== plan.currentRevisionId) {
     return errorResponse(409, 'CONFLICT', 'Confirm the current plan revision before building estimates.');
   }
-  if (['PROCESSING', 'BUILDING', 'VALIDATING'].includes(item!.status)) {
+  // ANALYZING belongs here too: it is the first state an AgentCore execution enters.
+  if (['PROCESSING', 'ANALYZING', 'BUILDING', 'VALIDATING'].includes(item!.status)) {
     return errorResponse(409, 'CONFLICT', 'This estimate is already running.');
+  }
+
+  // The status check alone is not enough, because status is not the only thing that moves.
+  // Observed live: create dispatched an execution (ANALYZING), a plan confirm then reset the
+  // status, and this route happily dispatched a SECOND execution 0.3s later. Two agents on
+  // one record overwrite each other's progress and each other's result.
+  //
+  // So the authority is the execution itself: if this calculation already has a Step
+  // Functions execution and Step Functions says it is RUNNING, there is nothing to start.
+  const existingExecutionArn = (item as { state_machine_execution_arn?: string }).state_machine_execution_arn;
+  if (existingExecutionArn) {
+    const liveness = await describeExecutionLiveness(existingExecutionArn);
+    if (liveness.verdict === 'running') {
+      return errorResponse(409, 'CONFLICT', 'This estimate is already running.');
+    }
   }
 
   await ddbDocClient.send(new UpdateCommand({
@@ -770,8 +973,93 @@ export async function runCalculationPlan(
       ':status': 'PROCESSING', ':stage': 'queued', ':message': 'Building confirmed plan', ':now': Date.now(),
     },
   }));
-  // Route to the AgentCore path or the legacy orchestrator based on the execution mode flag.
-  const orchestratorFn = EXECUTION_MODE === 'agentcore-harness' && AGENT_LAMBDA_ARN
+  // ─── agentcore-runtime: the production path ────────────────────────────────
+  //
+  // Persist the complete evidence set, start a Step Functions execution, return. No
+  // Lambda is invoked to run the estimate — no calculator-agent, no calculator-mcp-proxy,
+  // no legacy sidecar, no compiler. The Harness owns Claude and its tools; Step Functions
+  // owns the job.
+  if (isAgentCoreMode()) {
+    const calculationId = item!.calculation_id;
+    const sessionId = newRuntimeSessionId(calculationId);
+
+    try {
+      const evidence = await persistWorkbookEvidence({
+        owner: userId,
+        calculationId,
+        workbookIrS3Key: item!.workbook_ir_s3_key,
+        userInstructions: [
+          ...(item!.prompt ? [item!.prompt] : []),
+          ...(item!.region ? [`Primary region: ${item!.region}`] : []),
+        ],
+      });
+
+      const started = await startAgentCoreExecution({ calculationId, sessionId });
+
+      console.log(JSON.stringify({
+        event: 'calculator_dispatch',
+        executionMode: EXECUTION_MODE,
+        calculationId,
+        executionArn: started.executionArn,
+        evidenceChunks: evidence?.chunkCount ?? 0,
+        evidenceRows: evidence?.totalRows ?? 0,
+      }));
+
+      // Only lightweight state (Step 9). The evidence itself is in S3; its S3 keys are
+      // what the record carries.
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: CALCULATOR_TABLE_NAME,
+        Key: { calculation_id: calculationId },
+        UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, '
+          + 'execution_mode = :mode, state_machine_execution_arn = :arn, agent_session_id = :session, '
+          + 'agent_started_at = :now, agent_last_activity_at = :now, updated_at = :now'
+          + (evidence ? ', evidence_index_s3_key = :evidenceKey, evidence_chunk_count = :chunks, evidence_row_count = :rows' : ''),
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':status': 'ANALYZING',
+          ':stage': 'ANALYZING',
+          ':message': 'Reading your workbook...',
+          ':mode': EXECUTION_MODE,
+          ':arn': started.executionArn,
+          ':session': sessionId,
+          ':now': Date.now(),
+          ...(evidence ? {
+            ':evidenceKey': evidence.indexKey,
+            ':chunks': evidence.chunkCount,
+            ':rows': evidence.totalRows,
+          } : {}),
+        },
+      }));
+
+      return successResponse({ calculationId, status: 'ANALYZING' });
+    } catch (startError) {
+      console.error(JSON.stringify({
+        event: 'calculator_dispatch_failed',
+        executionMode: EXECUTION_MODE,
+        calculationId,
+        error: (startError as Error).message,
+      }));
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: CALCULATOR_TABLE_NAME,
+        Key: { calculation_id: calculationId },
+        UpdateExpression: 'SET #status = :status, error_message = :error, progress_stage = :stage, '
+          + 'progress_message = :message, updated_at = :now',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':status': 'FAILED',
+          // Customer-facing only; the real cause is in CloudWatch (Phase 20).
+          ':error': "We couldn't start this AWS estimate. Please retry.",
+          ':stage': 'FAILED',
+          ':message': "We couldn't start this AWS estimate. Please retry.",
+          ':now': Date.now(),
+        },
+      }));
+      return errorResponse(502, 'INTERNAL_ERROR', "We couldn't start this AWS estimate. Please retry.");
+    }
+  }
+
+  // ─── rollback modes only ───────────────────────────────────────────────────
+  const orchestratorFn = EXECUTION_MODE === 'legacy-invokemodel' && AGENT_LAMBDA_ARN
     ? AGENT_LAMBDA_ARN
     : ORCHESTRATOR_FUNCTION_NAME;
   console.log(JSON.stringify({ event: 'calculator_dispatch', executionMode: EXECUTION_MODE, calculationId: item!.calculation_id, fn: orchestratorFn }));
@@ -1523,7 +1811,10 @@ export async function reviseCalculation(
   }
   delete record.result_s3_key;
 
-  await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: record }));
+  // Backstop before the write, not a hope after it (Step 9). Large artifacts already live
+  // in S3; this only catches a record that has re-inflated for some reason nobody predicted.
+  const sized = enforceItemSizeBudget(record as unknown as Record<string, unknown>);
+  await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
 
   try {
     await lambdaClient.send(new InvokeCommand({

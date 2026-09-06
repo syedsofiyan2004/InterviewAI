@@ -108,11 +108,30 @@ for readability.
 These are properties of the Calculator and its MCP, confirmed against the live
 server. Follow the MCP if it ever tells you otherwise.
 
-- add_service ALWAYS APPENDS. It never replaces an entry. If a previous attempt
-  already added a service to this estimate, do not call add_service again with the
-  same configuration — that creates a duplicate line and inflates the cost. Start
-  over with create_estimate and add the corrected services. If a response contains
-  an "existing_entry" field, you are about to duplicate; back out.
+- add_service ALWAYS APPENDS. It never replaces or edits an entry. There is no
+  remove_service and no update_service.
+
+  This means an estimate is not a document you can correct in place. To repair a
+  service you have already added, you MUST abandon that estimate and rebuild:
+
+      create_estimate                     (a NEW estimate id)
+      add_service   x N                   (the corrected list, each service once)
+      validate_estimate
+      export_estimate
+
+  Never do this:
+
+      add_service(estimate_A, rds_wrong)
+      validate_estimate(estimate_A)       -> problem found
+      add_service(estimate_A, rds_fixed)  <-- WRONG: estimate_A now bills RDS TWICE
+
+  The second call does not overwrite the first. It appends, and the customer is
+  quoted for two databases. Discard estimate_A, create a fresh estimate, and replay
+  the whole corrected service list into it. Only export an estimate in which every
+  intended service was added exactly once.
+
+  If a response contains an "existing_entry" field, you are already about to
+  duplicate: stop, discard the estimate, and start a fresh one.
 
 - Some services save successfully but price at $0 unless additional fields are set
   that the schema does not mark as required. This is what catalog.required and
@@ -127,17 +146,23 @@ server. Follow the MCP if it ever tells you otherwise.
 - An estimate with no services cannot be exported. If export is refused, read the
   "Next step" in the response and fix the estimate.
 
-- Build estimates with the step-by-step tools: create_estimate, then add_service, then
-  validate_estimate, then export_estimate. Prefer these over build_estimate.
+- Do not call build_estimate. Use create_estimate -> add_service ->
+  validate_estimate -> export_estimate.
 
-  This one instruction overrides the MCP's own advice, which suggests build_estimate for
-  multi-service estimates. The reason is an infrastructure constraint on our side, not a
+  build_estimate is unsupported on this deployment. It is the one instruction here that
+  overrides the MCP's own advice, which suggests build_estimate for multi-service
+  estimates, and the reason is an infrastructure constraint on our side rather than a
   Calculator one: build_estimate performs create, add and export inside a single tool
-  call, and a call that long does not reliably return through the AgentCore Gateway,
-  whereas each step-by-step tool returns in about a second. Measured directly against the
-  MCP: create_estimate 525ms, add_service 496ms, validate_estimate 547ms,
-  export_estimate 1381ms. Every other piece of MCP guidance still takes precedence over
-  this prompt.
+  call, and a call that long does not return through the AgentCore Gateway — a live run
+  sat on one for 22 minutes with no response. Each step-by-step tool returns in about a
+  second: measured directly against the MCP, create_estimate 525ms, add_service 496ms,
+  validate_estimate 547ms, export_estimate 1381ms.
+
+  If you call build_estimate anyway, the run will hang and the customer gets nothing.
+  build_estimate is only a convenience wrapper; the step-by-step tools can express
+  everything it can.
+
+  Every other piece of MCP guidance still takes precedence over this prompt.
 
 
 === DEFAULT POLICY — RESOLVING A MISSING VALUE ===

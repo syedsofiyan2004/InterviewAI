@@ -3,6 +3,7 @@ import 'aws-sdk-client-mock-jest';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { APIGatewayProxyEvent } from 'aws-lambda';
 
@@ -46,6 +47,11 @@ jest.mock('@aws-sdk/s3-request-presigner', () => ({
 const ddbMock = mockClient(ddbDocClient);
 const s3Mock = mockClient(S3Client);
 const lambdaMock = mockClient(LambdaClient);
+// The production execution mode starts a Step Functions execution rather than invoking a
+// Lambda, so the route reaches SFN on every run path. Mocked here so these tests keep
+// asserting what they are about — the DynamoDB writes — instead of failing on a real
+// StartExecution call.
+const sfnMock = mockClient(SFNClient);
 const presign = getSignedUrl as jest.MockedFunction<typeof getSignedUrl>;
 
 const OWNER = 'user-owner';
@@ -177,10 +183,14 @@ beforeEach(() => {
   ddbMock.reset();
   s3Mock.reset();
   lambdaMock.reset();
+  sfnMock.reset();
   presign.mockClear();
   ddbMock.on(PutCommand).resolves({});
   s3Mock.on(PutObjectCommand).resolves({});
   lambdaMock.on(InvokeCommand).resolves({ StatusCode: 202 });
+  sfnMock.on(StartExecutionCommand).resolves({
+    executionArn: 'arn:aws:states:ap-south-1:123456789012:execution/test-calculator-agentcore-exec/run',
+  });
 });
 
 describe('Starting a confirmed estimate plan', () => {
@@ -206,10 +216,53 @@ describe('Starting a confirmed estimate plan', () => {
     const update = ddbMock.commandCalls(UpdateCommand)[0].args[0].input;
     expect(update.UpdateExpression).toContain('REMOVE #result, result_s3_key, error_message');
     expect(update.ExpressionAttributeNames).toMatchObject({ '#status': 'status', '#result': 'result' });
-    expect(lambdaMock).toHaveReceivedCommandWith(InvokeCommand, {
-      FunctionName: expect.any(String),
-      InvocationType: 'Event',
+
+    // The production mode starts a Step Functions execution. This assertion used to
+    // require a Lambda invoke, which is exactly what the AgentCore cutover removes — a
+    // test that demands the old architecture makes its removal look like a regression.
+    expect(sfnMock).toHaveReceivedCommandTimes(StartExecutionCommand, 1);
+    const execution = sfnMock.commandCalls(StartExecutionCommand)[0].args[0].input;
+    expect(JSON.parse(execution.input as string)).toMatchObject({ calculationId: ID, iteration: 0 });
+
+    // And no Lambda is invoked to run the estimate: not calculator-agent, not the MCP
+    // proxy, not the legacy orchestrator.
+    expect(lambdaMock).toHaveReceivedCommandTimes(InvokeCommand, 0);
+  });
+
+  test('records the execution ARN and session id so liveness can be checked later', async () => {
+    // Without these the only way to judge a running calculation is elapsed time, which is
+    // what produced "The estimate worker stopped before finishing" on healthy jobs.
+    const draft = buildInitialPlan({
+      workbookId: 'generic-workbook',
+      resources: [{ service: 'Amazon S3', size: '100 GB', quantity: 1 } as never],
+      defaultRegion: 'ap-south-1',
     });
+    const plan = confirmPlan(draft, draft.currentRevisionId);
+    ddbMock.on(GetCommand).resolves({
+      Item: {
+        calculation_id: ID,
+        owner_user_id: OWNER,
+        status: 'REVIEW_REQUIRED',
+        plan_v2: plan,
+        confirmed_plan_revision_id: plan.currentRevisionId,
+        unresolved_critical_count: 0,
+      },
+    });
+    ddbMock.on(UpdateCommand).resolves({});
+
+    await runCalculationPlan(ID, event(OWNER, {}));
+
+    const writes = ddbMock.commandCalls(UpdateCommand).map((call) => call.args[0].input);
+    const started = writes.find((write) => String(write.UpdateExpression).includes('state_machine_execution_arn'));
+    expect(started).toBeDefined();
+    expect(started!.ExpressionAttributeValues).toMatchObject({
+      ':arn': expect.stringContaining('arn:aws:states:'),
+      ':session': expect.any(String),
+      ':status': 'ANALYZING',
+    });
+    // runtimeSessionId has a 33-character minimum at the AgentCore API.
+    expect(String((started!.ExpressionAttributeValues as Record<string, unknown>)[':session']).length)
+      .toBeGreaterThanOrEqual(33);
   });
 });
 
