@@ -33,9 +33,27 @@ const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID
 const MAX_ITERATIONS = Number(process.env.CALCULATOR_AGENT_MAX_ITERATIONS) || 40;
 const EXECUTION_MODE = 'agentcore-harness';
 
+/**
+ * Condensed prompt for the `legacy-invokemodel` rollback path only.
+ *
+ * The authoritative prompt is prompts/calculator-agent-system.txt and is delivered to
+ * the AgentCore Harness by the CDK Custom Resource. It is NOT passed to this Lambda:
+ * it used to arrive in CALCULATOR_AGENT_SYSTEM_PROMPT, and once the prompt grew, every
+ * deploy failed with Lambda's 5120-byte configuration limit. An env var is the wrong
+ * transport for a document.
+ */
 const SYSTEM_PROMPT = process.env.CALCULATOR_AGENT_SYSTEM_PROMPT
   || (() => { try { return readFileSync(join(__dirname, '../../prompts/calculator-agent-system.txt'), 'utf8'); } catch { return ''; } })()
-  || 'You are MIMO\'s AWS Pricing Calculator agent. Use MCP tools to build estimates and return structured JSON.';
+  || [
+    "You are MIMO's AWS Pricing Calculator agent (legacy rollback mode).",
+    'MIMO supplies workload evidence; the AWS Pricing Calculator MCP supplies all',
+    'Calculator knowledge. Call get_service_fields before configuring any service and',
+    'start from catalog.minimalConfig; read catalog.traps and catalog.subServices.',
+    'Repair and retry recoverable MCP errors rather than stopping. add_service always',
+    'appends — never re-add to fix a mistake; create a fresh estimate instead.',
+    'Validate, then export. Success requires a real calculator.aws URL.',
+    'Finish with one JSON object: COMPLETED (with calculatorUrl), NEEDS_INPUT, or FAILED.',
+  ].join(' ');
 
 const bedrockClient = new BedrockRuntimeClient({ region: REGION });
 const lambdaClient = new LambdaClient({ region: REGION });
