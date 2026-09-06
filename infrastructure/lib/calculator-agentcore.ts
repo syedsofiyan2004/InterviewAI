@@ -73,35 +73,44 @@ export class CalculatorAgentCore extends Construct {
 
     // ─── IAM execution role for the AgentCore Runtime ──────────────────────────
 
+    // All permissions are bundled into inlinePolicies at role creation — NOT added
+    // afterward via addToPolicy. This ensures the role has all permissions before
+    // AgentCore validates it during Runtime creation (IAM eventual-consistency fix).
     const runtimeRole = new iam.Role(this, 'RuntimeRole', {
       roleName: getUniqueName('calculator-agentcore-runtime'),
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
       description: 'Execution role for the MIMO Calculator AgentCore MCP Runtime',
+      inlinePolicies: {
+        DynamoMcpState: new iam.PolicyDocument({
+          statements: [new iam.PolicyStatement({
+            sid: 'DynamoMcpState',
+            actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'],
+            resources: [props.estimatesTable.tableArn, `${props.estimatesTable.tableArn}/index/*`],
+          })],
+        }),
+        CloudWatchLogs: new iam.PolicyDocument({
+          statements: [new iam.PolicyStatement({
+            sid: 'CloudWatchLogs',
+            actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+            resources: [`arn:aws:logs:${props.region}:${props.account}:log-group:/aws/bedrock-agentcore/runtime/*`],
+          })],
+        }),
+        // ECR pull permissions — required for AgentCore to launch the container image.
+        // These MUST be present before AgentCore validates the role during Runtime creation.
+        EcrPull: new iam.PolicyDocument({
+          statements: [new iam.PolicyStatement({
+            sid: 'EcrPull',
+            actions: [
+              'ecr:GetAuthorizationToken',
+              'ecr:BatchGetImage',
+              'ecr:GetDownloadUrlForLayer',
+              'ecr:BatchCheckLayerAvailability',
+            ],
+            resources: ['*'],
+          })],
+        }),
+      },
     });
-
-    runtimeRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'DynamoMcpState',
-      actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'],
-      resources: [props.estimatesTable.tableArn, `${props.estimatesTable.tableArn}/index/*`],
-    }));
-
-    runtimeRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'CloudWatchLogs',
-      actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
-      resources: [`arn:aws:logs:${props.region}:${props.account}:log-group:/aws/bedrock-agentcore/runtime/*`],
-    }));
-
-    // AgentCore Runtime needs ECR pull permissions to launch the container image.
-    runtimeRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'EcrPull',
-      actions: [
-        'ecr:GetAuthorizationToken',
-        'ecr:BatchGetImage',
-        'ecr:GetDownloadUrlForLayer',
-        'ecr:BatchCheckLayerAvailability',
-      ],
-      resources: ['*'],
-    }));
 
     // ─── Container image for Phase 2 AgentCore Runtime ─────────────────────────
     // Built from lambdas/calculator-mcp-sidecar-agentcore/ — adapted Dockerfile
