@@ -109,8 +109,10 @@ export class CalculatorAgentCore extends Construct {
     });
     void runtimeLogGroup;
 
+    // agentRuntimeName must match [a-zA-Z][a-zA-Z0-9_]{0,47} — no hyphens, max 48 chars.
+    const runtimeName = `mimoCalcMcp_${props.envName}`.slice(0, 48).replace(/-/g, '_');
     this.runtime = new bedrockagentcore.CfnRuntime(this, 'McpRuntime', {
-      agentRuntimeName: getUniqueName('calculator-mcp'),
+      agentRuntimeName: runtimeName,
       description: 'AWS Pricing Calculator MCP server hosted on AgentCore Runtime',
       agentRuntimeArtifact: {
         containerConfiguration: {
