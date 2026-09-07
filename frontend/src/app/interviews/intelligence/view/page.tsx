@@ -14,8 +14,39 @@ import { LiveProgressBanner } from '@/components/ui/LiveProgressBanner';
 import { QuestionPlanPicker } from '@/components/interview/QuestionPlanPicker';
 import { ContextChat } from '@/components/chat/ContextChat';
 
-const workspaceTabs = ['Brief', 'Panel guide', 'Case interview', 'Transcript', 'Review'];
-const steps = workspaceTabs.map((label, index) => ({ label, anchor: `workspace-${index}` }));
+const steps = [
+  {
+    label: 'Brief',
+    anchor: 'workspace-0',
+    purpose: 'Confirm the role, candidate, resume, panel, and meeting context.',
+    outcome: 'Context ready',
+  },
+  {
+    label: 'Panel guide',
+    anchor: 'workspace-1',
+    purpose: 'Generate the structured questions, follow-ups, and evidence signals.',
+    outcome: 'Guide prepared',
+  },
+  {
+    label: 'Case interview',
+    anchor: 'workspace-2',
+    purpose: 'Add a role-specific case pack only when the panel needs case-style assessment.',
+    outcome: 'Optional pack',
+  },
+  {
+    label: 'Transcript',
+    anchor: 'workspace-3',
+    purpose: 'Sync or upload the completed interview conversation.',
+    outcome: 'Evidence captured',
+  },
+  {
+    label: 'Review',
+    anchor: 'workspace-4',
+    purpose: 'Review AI findings, approve the decision, and download the final report.',
+    outcome: 'Final review',
+  },
+];
+const workspaceTabs = steps.map((step) => step.label);
 
 export default function InterviewIntelligenceViewPage() {
   const searchParams = useSearchParams();
@@ -341,7 +372,7 @@ export default function InterviewIntelligenceViewPage() {
         </button>
       </section>
 
-      <WorkspaceTabs activeTab={visibleStep} onSelect={setVisibleStep} />
+      <WorkspaceTabs activeTab={visibleStep} activeStep={activeStep} onSelect={setVisibleStep} />
 
       <div className="min-w-0">
       <Section visible={visibleStep === 0} icon={Users} title="Interview brief" detail="Review the role and candidate context before preparing the panel guide.">
@@ -973,22 +1004,51 @@ function WorkflowTabs({ activeStep, visibleStep, onSelect }: { activeStep: numbe
   );
 }
 
-function WorkspaceTabs({ activeTab, onSelect }: { activeTab: number; onSelect: (tab: number) => void }) {
+function WorkspaceTabs({ activeTab, activeStep, onSelect }: { activeTab: number; activeStep: number; onSelect: (tab: number) => void }) {
   return (
-    <nav className="card flex gap-1 overflow-x-auto p-2" aria-label="Interview workspace sections" role="tablist">
-      {workspaceTabs.map((label, index) => (
-        <button
-          type="button"
-          key={label}
-          onClick={() => onSelect(index)}
-          role="tab"
-          aria-selected={activeTab === index}
-          className={`shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${activeTab === index ? 'bg-accent text-accent-foreground' : 'text-text-muted hover:bg-surface hover:text-text-primary'}`}
-        >
-          {label}
-        </button>
-      ))}
-    </nav>
+    <section className="intelligence-card p-4" aria-label="Interview workspace sequence">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="page-kicker">Interview sequence</p>
+          <h2 className="mt-1 text-base font-semibold text-text-primary">Move through the workspace in this order</h2>
+        </div>
+        <p className="max-w-xl text-xs leading-5 text-text-muted">
+          Each step builds on the previous one, from preparation to transcript evidence and final approval.
+        </p>
+      </div>
+      <ol className="mt-4 grid gap-2 md:grid-cols-5" role="tablist">
+        {steps.map((step, index) => {
+          const complete = index < activeStep;
+          const currentWorkflowStep = index === activeStep;
+          const selected = activeTab === index;
+          const stateLabel = complete ? 'Complete' : currentWorkflowStep ? 'Current step' : 'Upcoming';
+          return (
+            <li key={step.label} className="min-w-0">
+              <button
+                type="button"
+                onClick={() => onSelect(index)}
+                role="tab"
+                aria-selected={selected}
+                aria-current={currentWorkflowStep ? 'step' : undefined}
+                className={`group relative flex h-full min-h-[9.5rem] w-full flex-col rounded-2xl border p-3 text-left transition-all ${selected ? 'border-accent/50 bg-accent/10 shadow-sm' : 'border-border bg-surface hover:border-accent/35 hover:bg-surface-elevated'} ${currentWorkflowStep ? 'ring-1 ring-accent/25' : ''}`}
+              >
+                <span className="flex items-start justify-between gap-2">
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${complete ? 'bg-success text-white' : currentWorkflowStep ? 'bg-accent text-accent-foreground' : 'bg-surface-elevated text-text-muted'}`}>
+                    {complete ? <CheckCircle2 size={16} /> : String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${complete ? 'bg-success/10 text-success' : currentWorkflowStep ? 'bg-accent/10 text-accent' : 'bg-surface-elevated text-text-muted'}`}>
+                    {stateLabel}
+                  </span>
+                </span>
+                <span className="mt-3 text-sm font-semibold text-text-primary">{step.label}</span>
+                <span className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-muted">{step.outcome}</span>
+                <span className="mt-2 text-xs leading-5 text-text-secondary">{step.purpose}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
