@@ -696,6 +696,9 @@ export const CalculationRecordSchema = z.object({
   workbook_ir_s3_key: z.string().optional(),
   workbook_hash: z.string().optional(),
   canonical_model_s3_key: z.string().optional(),
+  workbook_semantic_model_s3_key: z.string().optional(),
+  scenario_manifest_s3_key: z.string().optional(),
+  scenario_requirements_s3_key: z.string().optional(),
   /**
    * The band matrix this run was asked for, when one was stated.
    *

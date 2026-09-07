@@ -18,6 +18,7 @@ import { calculationExportKey } from '../shared/calculator-result-storage';
 import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../shared/calculator-docx';
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
+import { buildWorkbookSemanticArtifacts } from '../shared/workbook-semantic-model';
 import { analyseWorkbook } from './calculator-workbook';
 import {
   EXECUTION_MODE,
@@ -80,6 +81,7 @@ import { chatThreadId, ReviseCalculationSchema, type ReviseCalculation } from '.
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const ORCHESTRATOR_FUNCTION_NAME = process.env.CALCULATOR_ORCHESTRATOR_FUNCTION_NAME!;
 const SIDECAR_FUNCTION_NAME = process.env.CALCULATOR_SIDECAR_FUNCTION_NAME || '';
+const ENABLE_UPFRONT_MCP_PREFLIGHT = process.env.CALCULATOR_ENABLE_UPFRONT_MCP_PREFLIGHT === 'true';
 /**
  * Execution mode. EXECUTION_MODE itself is owned by calculator-agentcore-dispatch.ts:
  *
@@ -377,6 +379,9 @@ async function createCalculationInternal(
   let workbookIrS3Key: string | undefined;
   let workbookHash: string | undefined;
   let canonicalModelS3Key: string | undefined;
+  let workbookSemanticModelS3Key: string | undefined;
+  let scenarioManifestS3Key: string | undefined;
+  let scenarioRequirementsS3Key: string | undefined;
 
   if (input.input_s3_key) {
     // The key is built server-side in getCalculationUploadUrl and namespaced per
@@ -396,10 +401,23 @@ async function createCalculationInternal(
       workbookHash = analysis.workbookIR.fileHash;
       workbookIrS3Key = `users/${userId}/calculator/analysis/${workbookHash}/workbook-ir.json`;
       canonicalModelS3Key = `users/${userId}/calculator/analysis/${workbookHash}/canonical-cost-model.json`;
+      workbookSemanticModelS3Key = `users/${userId}/calculator/analysis/${workbookHash}/workbook-semantic-model.json`;
+      scenarioManifestS3Key = `users/${userId}/calculator/analysis/${workbookHash}/scenario-manifest.json`;
+      scenarioRequirementsS3Key = `users/${userId}/calculator/analysis/${workbookHash}/scenario-requirements.json`;
+      const semanticArtifacts = buildWorkbookSemanticArtifacts({
+        workbookIR: analysis.workbookIR,
+        canonicalModel: analysis.canonicalModel,
+        insights: analysis.insights,
+        resources: analysis.legacyResources,
+        requestedPlan: input.plan,
+      });
       try {
         await Promise.all([
           saveFileContent(BUCKET_NAME, workbookIrS3Key, JSON.stringify(analysis.workbookIR), 'application/json'),
           saveFileContent(BUCKET_NAME, canonicalModelS3Key, JSON.stringify(analysis.canonicalModel), 'application/json'),
+          saveFileContent(BUCKET_NAME, workbookSemanticModelS3Key, JSON.stringify(semanticArtifacts.semanticModel), 'application/json'),
+          saveFileContent(BUCKET_NAME, scenarioManifestS3Key, JSON.stringify(semanticArtifacts.scenarioManifest), 'application/json'),
+          saveFileContent(BUCKET_NAME, scenarioRequirementsS3Key, JSON.stringify(semanticArtifacts.scenarioRequirements), 'application/json'),
         ]);
       } catch (error) {
         console.error('[createCalculation] could not store analysis artifacts:', error);
@@ -458,11 +476,12 @@ async function createCalculationInternal(
     requestedPlan: input.plan,
     defaultRegion: input.region,
   });
-  // Before a review, the Calculator's own schema is asked what each resource still lacks, so
-  // the reviewer answers those questions here rather than reading them off a PARTIAL estimate.
-  // Time-boxed and non-fatal: a slow or unreachable sidecar costs the extra questions only.
+  // Legacy escape hatch only. The default product path lets the AgentCore calculator
+  // resolver start first and ask just-in-time only for genuine customer decisions.
+  // Turning every missing Calculator implementation field into a review question here
+  // recreates the giant upfront questionnaire the agent workflow is meant to avoid.
   let planV2 = initialPlan;
-  if (!startWorker && SIDECAR_FUNCTION_NAME) {
+  if (!startWorker && SIDECAR_FUNCTION_NAME && ENABLE_UPFRONT_MCP_PREFLIGHT) {
     try {
       const enriched = await enrichPlanWithCalculatorPreflight(
         initialPlan,
@@ -496,6 +515,9 @@ async function createCalculationInternal(
     ...(workbookIrS3Key ? { workbook_ir_s3_key: workbookIrS3Key } : {}),
     ...(workbookHash ? { workbook_hash: workbookHash } : {}),
     ...(canonicalModelS3Key ? { canonical_model_s3_key: canonicalModelS3Key } : {}),
+    ...(workbookSemanticModelS3Key ? { workbook_semantic_model_s3_key: workbookSemanticModelS3Key } : {}),
+    ...(scenarioManifestS3Key ? { scenario_manifest_s3_key: scenarioManifestS3Key } : {}),
+    ...(scenarioRequirementsS3Key ? { scenario_requirements_s3_key: scenarioRequirementsS3Key } : {}),
     // The bands as structure, beside the prose in `prompt` that also describes them. Both are
     // needed and neither replaces the other: the prompt is what the model reads, while this is
     // what a revision inherits and what the view page counts priced bands against. Recovering
