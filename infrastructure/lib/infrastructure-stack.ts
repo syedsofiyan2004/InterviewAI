@@ -931,6 +931,7 @@ export class IepStack extends cdk.Stack {
     // authorizer rather than on the chat's Function URL: the conversation may only ever
     // propose, and the write path keeps the same gate as every other mutation.
     singleCalculation.addResource('revise').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleCalculation.addResource('answer').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     // Estimate projects, mirroring mom-projects below: an estimate belongs to at most one
     // project and the calculator opens on the project list. A sibling of /calculator

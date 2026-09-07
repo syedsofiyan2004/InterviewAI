@@ -126,6 +126,7 @@ import {
   createCalculationPlanRevision,
   confirmCalculationPlan,
   runCalculationPlan,
+  answerCalculationQuestion,
 } from './calculator-routes.js';
 import {
   adminListConversations,
@@ -329,6 +330,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'POST' && resource === '/calculator/{id}/revise') {
       return await reviseCalculation(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/{id}/answer') {
+      return await answerCalculationQuestion(pathParameters?.id, event);
     }
     if (httpMethod === 'DELETE' && resource === '/calculator/{id}') {
       return await deleteCalculation(pathParameters?.id, event);

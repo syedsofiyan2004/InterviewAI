@@ -106,6 +106,8 @@ function CalculationDetailContent() {
   const [downloadingWorkbook, setDownloadingWorkbook] = useState(false);
   const [downloadingDocument, setDownloadingDocument] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [agentAnswer, setAgentAnswer] = useState('');
+  const [answeringAgent, setAnsweringAgent] = useState(false);
   // See the list page: window.confirm puts the CloudFront hostname above the message,
   // which reads as a browser warning instead of the app asking.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -122,6 +124,20 @@ function CalculationDetailContent() {
     } catch (err: unknown) {
       setError(errorMessage(err, 'Could not delete this estimate.'));
       setDeleting(false);
+    }
+  };
+
+  const answerAgent = async () => {
+    if (!id || !agentAnswer.trim()) return;
+    setAnsweringAgent(true);
+    try {
+      await calculatorApi.answerCalculationQuestion(id, agentAnswer.trim());
+      setAgentAnswer('');
+      await fetchResult();
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Couldn't continue the estimate with that answer."));
+    } finally {
+      setAnsweringAgent(false);
     }
   };
 
@@ -345,6 +361,28 @@ function CalculationDetailContent() {
                       )}
                     </div>
                   ))}
+                  <div className="rounded-xl border border-border bg-surface p-3">
+                    <label htmlFor="agent-answer" className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                      Answer for the calculator agent
+                    </label>
+                    <textarea
+                      id="agent-answer"
+                      value={agentAnswer}
+                      onChange={(event) => setAgentAnswer(event.target.value)}
+                      rows={4}
+                      placeholder="Example: Treat rows 185-320 as Windows Server, use 1-year no-upfront Savings Plan, and keep grouped entries acceptable for this estimate."
+                      className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void answerAgent()}
+                      disabled={answeringAgent || !agentAnswer.trim()}
+                      className="btn-primary mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                    >
+                      {answeringAgent && <Loader2 size={14} className="animate-spin" />}
+                      Continue estimate
+                    </button>
+                  </div>
                 </div>
               )}
               <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="mt-3 inline-flex text-sm font-semibold text-accent hover:underline">

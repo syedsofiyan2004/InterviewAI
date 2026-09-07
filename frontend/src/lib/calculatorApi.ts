@@ -545,6 +545,15 @@ export const calculatorApi = {
     return handleResponse(res);
   },
 
+  async answerCalculationQuestion(id: string, answer: string): Promise<{ calculation_id: string; status: CalculationStatus }> {
+    const res = await authFetch(`${API_URL}/calculator/${id}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    });
+    return handleResponse(res);
+  },
+
   /**
    * Uploads a resource sheet straight to S3 via a presigned PUT.
    *

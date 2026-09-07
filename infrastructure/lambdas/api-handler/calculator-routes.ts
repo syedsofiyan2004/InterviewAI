@@ -1146,6 +1146,60 @@ export async function runCalculationPlan(
   return successResponse({ calculation_id: item!.calculation_id, status: 'PROCESSING', plan_revision_id: plan.currentRevisionId });
 }
 
+export async function answerCalculationQuestion(
+  id: string | undefined,
+  event: APIGatewayProxyEvent,
+): Promise<APIGatewayProxyResult> {
+  const userId = getUserId(event);
+  if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Not authenticated');
+  const { item, error } = await loadOwned(id, userId);
+  if (error) return error;
+
+  const sessionId = (item as { agent_session_id?: string }).agent_session_id;
+  if (item!.status !== 'REVIEW_REQUIRED' || !sessionId) {
+    return errorResponse(409, 'CONFLICT', 'This estimate is not waiting for an agent answer.');
+  }
+
+  let answer = '';
+  try {
+    const body = JSON.parse(event.body || '{}') as { answer?: unknown };
+    answer = typeof body.answer === 'string' ? body.answer.trim() : '';
+  } catch {
+    answer = '';
+  }
+  if (!answer) return errorResponse(400, 'VALIDATION_ERROR', 'Enter an answer for the calculator agent.');
+
+  try {
+    const started = await continueAgentCoreExecution({
+      calculationId: item!.calculation_id,
+      sessionId,
+      userAnswer: answer,
+    });
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: CALCULATOR_TABLE_NAME,
+      Key: { calculation_id: item!.calculation_id },
+      UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, '
+        + 'state_machine_execution_arn = :arn, agent_last_activity_at = :now, updated_at = :now REMOVE agent_questions',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':status': 'ANALYZING',
+        ':stage': 'ANALYZING',
+        ':message': 'Continuing the estimate with your answer...',
+        ':arn': started.executionArn,
+        ':now': Date.now(),
+      },
+    }));
+    return successResponse({ calculation_id: item!.calculation_id, status: 'ANALYZING' });
+  } catch (startError) {
+    console.error(JSON.stringify({
+      event: 'calculator_agent_answer_failed',
+      calculationId: item!.calculation_id,
+      error: (startError as Error).message,
+    }));
+    return errorResponse(502, 'INTERNAL_ERROR', "We couldn't continue this AWS estimate. Please retry.");
+  }
+}
+
 /**
  * Every file an estimate generates, as one list.
  *
