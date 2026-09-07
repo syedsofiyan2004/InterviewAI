@@ -222,6 +222,8 @@ function NewCalculationForm() {
 
   const currentRevision = plan?.revisions.find((entry) => entry.revisionId === plan.currentRevisionId);
   const openQuestions = plan?.unresolved.filter((entry) => !entry.resolved) || [];
+  const blockingQuestions = openQuestions.filter((entry) => entry.impact === 'high');
+  const advisoryQuestionCount = openQuestions.length - blockingQuestions.length;
   const answerForQuestion = (question: EstimatePlanV2['unresolved'][number]) => (
     questionAnswers[question.id] ?? defaultAnswerFor(question.field, question.options)
   );
@@ -402,19 +404,19 @@ function NewCalculationForm() {
 
   const applyRequiredAnswers = async () => {
     if (!calculationId) return;
-    const missing = openQuestions.filter((question) => (
-      question.impact === 'high' && !answerIsComplete(question.field, answerForQuestion(question), question.options)
+    const missing = blockingQuestions.filter((question) => (
+      !answerIsComplete(question.field, answerForQuestion(question), question.options)
     ));
     if (missing.length) {
       setError(`Answer the ${missing.length} remaining required field${missing.length === 1 ? '' : 's'}.`);
       return;
     }
-    const optionErrors = openQuestions.flatMap((question) => validateQuestionAnswer(question, answerForQuestion(question)));
+    const optionErrors = blockingQuestions.flatMap((question) => validateQuestionAnswer(question, answerForQuestion(question)));
     if (optionErrors.length) {
       setError(optionErrors[0]);
       return;
     }
-    const answeredPatches = openQuestions
+    const answeredPatches = blockingQuestions
       .map((question) => ({ question, answer: answerForQuestion(question) }))
       .filter(({ answer, question }) => answerIsComplete(question.field, answer, question.options))
       .map(({ question, answer }): RequirementPatch => ({
@@ -480,7 +482,7 @@ function NewCalculationForm() {
   const confirmAndRun = async () => {
     if (!calculationId || !plan) return;
     const unresolvedHigh = plan.unresolved.some((entry) => !entry.resolved && entry.impact === 'high');
-    if (unresolvedHigh || plan.status === 'NEEDS_INPUT') {
+    if (unresolvedHigh) {
       setError('Resolve every high-impact requirement before building the estimate.');
       return;
     }
@@ -533,8 +535,8 @@ function NewCalculationForm() {
                 <p className="page-kicker">Review / Customize requirements</p>
                 <h2 className="mt-1 text-xl font-semibold text-text-primary">Confirm what AWS will price</h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                  The workbook has been preserved and converted into a canonical plan. Review the detected scope
-                  and resolve material gaps before any AWS Pricing Calculator estimate is created.
+                  The workbook has been preserved and converted into a canonical plan. Review the detected scope,
+                  add any customer-specific changes if needed, then build the AWS Pricing Calculator estimate.
                 </p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-xs font-semibold text-text-secondary">
@@ -603,17 +605,18 @@ function NewCalculationForm() {
               </div>
             </section>
 
-            {openQuestions.length > 0 && (
+            {blockingQuestions.length > 0 && (
               <section className="border-t border-border pt-6">
                 <div className="flex items-start gap-3">
                   <AlertCircle size={18} className="mt-0.5 shrink-0 text-warning" />
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-text-primary">Input required</h3>
                     <p className="mt-1 text-sm leading-6 text-text-secondary">
-                      High-impact gaps block generation. Answers are stored as typed resource constraints in a new plan revision.
+                      These material gaps block generation because the workbook did not contain enough information
+                      for the agent to price them safely. Answers are stored as typed resource constraints in a new plan revision.
                     </p>
                     <div className="mt-4 space-y-4">
-                      {openQuestions.map((question) => (
+                      {blockingQuestions.map((question) => (
                         <div key={question.id}>
                           <p className="block text-xs font-semibold text-text-secondary">
                             {question.prompt}
@@ -633,6 +636,13 @@ function NewCalculationForm() {
                     </button>
                   </div>
                 </div>
+              </section>
+            )}
+
+            {blockingQuestions.length === 0 && advisoryQuestionCount > 0 && (
+              <section className="rounded-lg border border-border bg-surface-elevated/40 px-4 py-3 text-sm leading-6 text-text-secondary">
+                The agent found {advisoryQuestionCount} pricing assumption{advisoryQuestionCount === 1 ? '' : 's'}
+                it can resolve while building the estimate. Add a note below only if you want to override something.
               </section>
             )}
 
@@ -708,7 +718,7 @@ function NewCalculationForm() {
               <button
                 type="button"
                 onClick={() => void confirmAndRun()}
-                disabled={running || plan.status === 'NEEDS_INPUT' || openQuestions.some((entry) => entry.impact === 'high') || !!proposal}
+                disabled={running || blockingQuestions.length > 0 || !!proposal}
                 className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold disabled:opacity-50"
               >
                 {running ? <Loader2 size={17} className="animate-spin" /> : <Calculator size={17} />}

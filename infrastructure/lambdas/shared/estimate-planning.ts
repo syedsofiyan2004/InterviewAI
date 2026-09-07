@@ -478,60 +478,60 @@ export function buildInitialPlan(input: InitialPlanInput): EstimatePlanV2 {
   if (uniqueFamilies.has('SageMaker')) addQuestion(unresolved, {
     prompt: 'Choose the SageMaker workload type and instance class for model hosting.',
     field: 'sagemaker.inference_configuration',
-    scope: ['service:SageMaker'], impact: 'high',
+    scope: ['service:SageMaker'], impact: 'medium',
   });
   if (uniqueFamilies.has('Lambda')) addQuestion(unresolved, {
     prompt: 'Provide the Lambda execution profile: memory in MB and average duration in ms. Aggregate GB-seconds will not be converted into a guessed profile.',
     field: 'lambda.execution_profile',
-    scope: ['service:Lambda'], impact: 'high',
+    scope: ['service:Lambda'], impact: 'medium',
   });
   if (uniqueFamilies.has('Bedrock')) {
     addQuestion(unresolved, {
       prompt: 'Choose the Bedrock model/provider used by this workload.',
-      field: 'bedrock.model', scope: ['service:Bedrock'], impact: 'high',
+      field: 'bedrock.model', scope: ['service:Bedrock'], impact: 'medium',
     });
     addQuestion(unresolved, {
       prompt: 'Provide average input and output tokens per Bedrock model call.',
-      field: 'bedrock.tokens_per_call', scope: ['service:Bedrock'], impact: 'high',
+      field: 'bedrock.tokens_per_call', scope: ['service:Bedrock'], impact: 'medium',
     });
   }
   if (uniqueFamilies.has('Cognito')) addQuestion(unresolved, {
     prompt: 'Choose the Cognito tier and provide monthly token requests; include federated MAU only when SAML/OIDC is used.',
-    field: 'cognito.tier', scope: ['service:Cognito'], impact: 'high',
+    field: 'cognito.tier', scope: ['service:Cognito'], impact: 'medium',
   });
   if (uniqueFamilies.has('SNS')) addQuestion(unresolved, {
     prompt: 'Choose the SNS delivery type represented by the notification volume.',
-    field: 'sns.delivery_type', scope: ['service:SNS'], impact: 'high',
+    field: 'sns.delivery_type', scope: ['service:SNS'], impact: 'medium',
     options: ['Mobile push', 'HTTP/HTTPS', 'Email', 'SQS', 'Lambda'],
   });
   if (uniqueFamilies.has('NAT Gateway')) addQuestion(unresolved, {
     prompt: 'Choose Regional NAT Gateway and provide its Availability Zone count, or explicitly request legacy NAT Gateway.',
-    field: 'nat_gateway.configuration', scope: ['service:NAT Gateway'], impact: 'high',
+    field: 'nat_gateway.configuration', scope: ['service:NAT Gateway'], impact: 'medium',
   });
   if (uniqueFamilies.has('Aurora')
     && input.resources.some((resource) => serviceFamily(resource) === 'Aurora'
       && !/mysql|postgres/i.test(`${resource.os || ''} ${resource.raw || ''}`))) {
     addQuestion(unresolved, {
       prompt: 'Choose the Aurora compatibility engine: MySQL or PostgreSQL.',
-      field: 'database.engine', scope: ['service:Aurora'], impact: 'high',
+      field: 'database.engine', scope: ['service:Aurora'], impact: 'medium',
       options: ['Aurora PostgreSQL', 'Aurora MySQL'],
     });
   }
   if (uniqueFamilies.has('Load Balancer')) addQuestion(unresolved, {
     prompt: 'Provide the load balancer capacity profile: processed GB and either connection or request/rule rates.',
-    field: 'load_balancer.capacity_profile', scope: ['service:Load Balancer'], impact: 'high',
+    field: 'load_balancer.capacity_profile', scope: ['service:Load Balancer'], impact: 'medium',
   });
   if (uniqueFamilies.has('WAF')) addQuestion(unresolved, {
     prompt: 'Provide WAF Web ACL count, rules per ACL, and monthly web requests (millions).',
-    field: 'waf.traffic_profile', scope: ['service:WAF'], impact: 'high',
+    field: 'waf.traffic_profile', scope: ['service:WAF'], impact: 'medium',
   });
   if (uniqueFamilies.has('MemoryDB')) addQuestion(unresolved, {
     prompt: 'Provide MemoryDB monthly data written (GB) and snapshot storage (GB); enter zero explicitly when neither is used.',
-    field: 'memorydb.data_profile', scope: ['service:MemoryDB'], impact: 'high',
+    field: 'memorydb.data_profile', scope: ['service:MemoryDB'], impact: 'medium',
   });
   if (uniqueFamilies.has('QuickSight')) addQuestion(unresolved, {
     prompt: 'Provide the QuickSight author billing mix (annual and monthly percentages) and SPICE capacity in GB. Author and reader counts already present in the workbook will be preserved.',
-    field: 'quicksight.subscription_profile', scope: ['service:QuickSight'], impact: 'high',
+    field: 'quicksight.subscription_profile', scope: ['service:QuickSight'], impact: 'medium',
   });
   if (uniqueFamilies.has('API Gateway')) addQuestion(unresolved, {
     prompt: 'Confirm whether API Gateway traffic is HTTP API, REST API, or WebSocket API.',
