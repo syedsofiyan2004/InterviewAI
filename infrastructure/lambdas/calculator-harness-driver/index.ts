@@ -22,6 +22,7 @@
  */
 
 import { GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import {
   BedrockAgentCoreClient,
   InvokeHarnessCommand,
@@ -45,6 +46,7 @@ const HARNESS_ARN = process.env.CALCULATOR_HARNESS_ARN!;
 const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-sonnet-4-6';
 const GATEWAY_IDENTIFIER = process.env.CALCULATOR_GATEWAY_ARN || '';
 const MCP_RUNTIME_IDENTIFIER = process.env.CALCULATOR_MCP_RUNTIME_ARN || '';
+const BROWSER_VALIDATOR_FUNCTION_NAME = process.env.CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME || '';
 export const EXECUTION_MODE = 'agentcore-runtime';
 
 /** One invocation's share of the wall clock. Step Functions re-enters for more. */
@@ -55,6 +57,7 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_TRACE_EVENTS = 4_000;
 
 const agentCore = new BedrockAgentCoreClient({});
+const lambdaClient = new LambdaClient({});
 
 // ─── Progress vocabulary (Phase 19) ──────────────────────────────────────────
 //
@@ -109,6 +112,15 @@ interface AgentFailed {
 }
 
 type AgentResult = AgentCompleted | AgentNeedsInput | AgentFailed;
+
+interface RenderedTotals {
+  validUrl: boolean;
+  reason?: string;
+  monthly?: number;
+  upfront?: number;
+  total12Months?: number;
+  services?: Array<{ service?: string; monthly?: number | null; upfront?: number | null; configSummary?: string }>;
+}
 
 // ─── DynamoDB (small fields only — Phase 22) ─────────────────────────────────
 
@@ -316,6 +328,24 @@ export function parseAgentResult(text: string): AgentResult | undefined {
 }
 
 // ─── Step Functions contract ─────────────────────────────────────────────────
+
+async function readRenderedTotals(url: string): Promise<RenderedTotals | undefined> {
+  if (!BROWSER_VALIDATOR_FUNCTION_NAME) return undefined;
+  const response = await lambdaClient.send(new InvokeCommand({
+    FunctionName: BROWSER_VALIDATOR_FUNCTION_NAME,
+    InvocationType: 'RequestResponse',
+    Payload: new TextEncoder().encode(JSON.stringify({ url })),
+  }));
+  const raw = new TextDecoder().decode(response.Payload);
+  if (response.FunctionError) {
+    return { validUrl: false, reason: `Browser validator failed: ${raw.slice(0, 500)}` };
+  }
+  try {
+    return JSON.parse(raw) as RenderedTotals;
+  } catch {
+    return { validUrl: false, reason: `Browser validator returned non-JSON: ${raw.slice(0, 500)}` };
+  }
+}
 
 export interface DriverStepInput {
   calculationId: string;
@@ -565,7 +595,33 @@ async function finalise(input: {
     }
   }
 
-  const warnings = result.status === 'COMPLETED' ? [...(result.warnings ?? [])] : [];
+  let renderedTotals: RenderedTotals | undefined;
+  if (result.status === 'COMPLETED') {
+    try {
+      renderedTotals = await readRenderedTotals(result.calculatorUrl);
+    } catch (error) {
+      renderedTotals = { validUrl: false, reason: String((error as Error).message || error).slice(0, 500) };
+    }
+  }
+
+  const monthlyTotal = result.status === 'COMPLETED'
+    ? (result.monthly ?? (renderedTotals?.validUrl && typeof renderedTotals.monthly === 'number' ? renderedTotals.monthly : null))
+    : null;
+  const upfrontTotal = result.status === 'COMPLETED'
+    ? (result.upfront ?? (renderedTotals?.validUrl && typeof renderedTotals.upfront === 'number' ? renderedTotals.upfront : null))
+    : null;
+  const total12Months = result.status === 'COMPLETED'
+    ? (result.total12Months ?? (renderedTotals?.validUrl && typeof renderedTotals.total12Months === 'number' ? renderedTotals.total12Months : null))
+    : null;
+
+  const warnings = result.status === 'COMPLETED'
+    ? [...(result.warnings ?? [])].filter((message) => (
+      !(monthlyTotal !== null && /monthly cost not available/i.test(message))
+    ))
+    : [];
+  if (result.status === 'COMPLETED' && renderedTotals && !renderedTotals.validUrl) {
+    warnings.push(renderedTotals.reason || 'The calculator.aws page could not be rendered for total read-back.');
+  }
   if (unresolvedCount > 0) {
     warnings.push(`${unresolvedCount} workbook row(s) that look billable were not reported as priced, excluded or unsupported. Open the Source Trace sheet to review them.`);
   }
@@ -573,9 +629,9 @@ async function finalise(input: {
   const calculationResult = CalculationResultSchema.parse({
     url: result.status === 'COMPLETED' ? result.calculatorUrl : null,
     currency: 'USD',
-    // Never fabricated: a total the Calculator did not give us stays null and the UI
-    // says so rather than printing a dash or a locally-computed number.
-    monthlyTotal: result.status === 'COMPLETED' ? (result.monthly ?? null) : null,
+    // Never fabricated: prefer the agent's numeric total when the MCP returns one;
+    // otherwise read the rendered calculator.aws page through the validator.
+    monthlyTotal,
     lineItems: [],
     environments: [],
     scenarios: [],
@@ -593,6 +649,7 @@ async function finalise(input: {
       mcpRuntimeIdentifier: MCP_RUNTIME_IDENTIFIER,
       toolCallCount: input.toolCallCount,
       calculatorUrlCreated: result.status === 'COMPLETED',
+      renderedTotals: renderedTotals ?? null,
       tracePath: input.traceKey,
     },
   });
@@ -616,9 +673,9 @@ async function finalise(input: {
     result: compactCalculationResult(calculationResult),
     result_s3_key: resultS3Key,
     calculator_url: result.status === 'COMPLETED' ? result.calculatorUrl : undefined,
-    monthly_total: result.status === 'COMPLETED' ? (result.monthly ?? undefined) : undefined,
-    upfront_total: result.status === 'COMPLETED' ? (result.upfront ?? undefined) : undefined,
-    total_12_months: result.status === 'COMPLETED' ? (result.total12Months ?? undefined) : undefined,
+    monthly_total: monthlyTotal ?? undefined,
+    upfront_total: upfrontTotal ?? undefined,
+    total_12_months: total12Months ?? undefined,
     warning_count: warnings.length,
     question_count: result.status === 'NEEDS_INPUT' ? result.questions.length : 0,
     // Customer-facing copy only (Phase 20). Raw diagnostics stay in S3/CloudWatch.

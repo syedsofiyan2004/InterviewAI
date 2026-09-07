@@ -55,6 +55,8 @@ export interface CalculatorAgentCoreProps {
   filesBucket: s3.IBucket;
   /** MIMO calculation status table. */
   calculatorTable: dynamodb.ITable;
+  /** Existing browser validator Lambda — reads rendered totals from calculator.aws links. */
+  browserValidator?: lambda.IFunction;
   /** Claude model ID for the agent loop. */
   agentModelId?: string;
   /** Max agent iterations (tool-use rounds). */
@@ -648,6 +650,7 @@ export class CalculatorAgentCore extends Construct {
         CALCULATOR_AGENT_MODEL_ID: agentModelId,
         CALCULATOR_GATEWAY_ARN: this.gateway.attrGatewayArn,
         CALCULATOR_MCP_RUNTIME_ARN: this.runtime.attrAgentRuntimeArn,
+        CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME: props.browserValidator?.functionName ?? '',
         CALCULATOR_STEP_TIMEOUT_SECONDS: '420',
         MIMO_BUILD_SHA: process.env.MIMO_BUILD_SHA || 'unknown',
       },
@@ -659,6 +662,7 @@ export class CalculatorAgentCore extends Construct {
 
     props.calculatorTable.grantReadWriteData(driverLambda);
     props.filesBucket.grantRead(driverLambda);
+    props.browserValidator?.grantInvoke(driverLambda);
     driverLambda.addToRolePolicy(new iam.PolicyStatement({
       sid: 'WriteCalculatorArtifacts',
       actions: ['s3:PutObject'],

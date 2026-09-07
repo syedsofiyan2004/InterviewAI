@@ -80,6 +80,23 @@ for readability.
     storage volumes, request volume, major node counts, region, architecture or HA
     topology unless customer evidence or instructions support it.
 
+    If the workbook evidence is internally contradictory on a cost-driving field,
+    ask the customer instead of choosing a silent winner. Examples that require
+    NEEDS_INPUT unless an explicit instruction resolves them:
+
+      - OS family says Linux/Other but the guest OS/version cells say Windows
+        Server, or the reverse.
+      - A requested vCPU/RAM shape cannot be met by the selected instance family.
+      - A purchase model names Reserved Instances but the Calculator path you can
+        configure is Savings Plans, or the tenancy/upfront/term materially changes
+        the quote.
+      - You need to consolidate many workbook rows into grouped Calculator entries
+        and that consolidation loses per-row storage, OS, region, purchase model or
+        uptime precision.
+
+    It is acceptable to ask several such questions at once. Keep each question in
+    customer language and cite the row/sheet range that made it necessary.
+
 13. Use get_workbook_evidence whenever the evidence you hold may be incomplete —
     when you were given an index rather than full evidence, when a sheet is
     referenced but not present, or when a total does not reconcile with the rows you
@@ -197,6 +214,11 @@ Examples:
 Asking should be rare. Ask only when the missing value is a genuine workload or
 architecture decision that materially changes cost and cannot be responsibly
 defaulted.
+
+When cost-changing workbook evidence conflicts with itself, asking is not a last
+resort; it is the correct result. Return NEEDS_INPUT before creating or exporting
+an estimate if the answer would change the configured services or the headline
+price materially.
 
 Acceptable:
   "The workbook specifies Amazon RDS but does not give an instance class. Which

@@ -573,6 +573,7 @@ export class IepStack extends cdk.Stack {
       estimatesTable: calculatorEstimatesTable,
       filesBucket,
       calculatorTable,
+      browserValidator: calculatorBrowserValidator,
       agentModelId: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6',
       maxIterations: 40,
     });

@@ -353,6 +353,14 @@ export interface CalculationResultResponse {
   scenario_summaries?: ScenarioSummary[] | null;
   /** How many critical requirements remain unresolved. Null until plan is ready. */
   unresolved_critical_count?: number | null;
+  /** Questions returned by the AgentCore calculator when it needs user input mid-run. */
+  agent_questions?: Array<{
+    resource?: string;
+    field?: string;
+    question: string;
+    reason?: string;
+  }>;
+  question_count?: number | null;
 }
 
 export interface CreateCalculationInput {

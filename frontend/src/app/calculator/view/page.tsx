@@ -324,8 +324,29 @@ function CalculationDetailContent() {
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
             <div>
-              <p className="text-sm font-semibold text-text-primary">Requirements need review</p>
-              <p className="mt-1 text-sm leading-6 text-text-secondary">No AWS estimate has been generated yet.</p>
+              <p className="text-sm font-semibold text-text-primary">
+                {data.agent_questions?.length ? 'The calculator agent needs your input' : 'Requirements need review'}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">
+                {data.agent_questions?.length
+                  ? 'These answers materially affect the AWS estimate. Resolve them before sharing or rerunning the build.'
+                  : 'No AWS estimate has been generated yet.'}
+              </p>
+              {!!data.agent_questions?.length && (
+                <div className="mt-4 space-y-3">
+                  {data.agent_questions.map((question, index) => (
+                    <div key={`${question.resource || 'question'}-${index}`} className="rounded-xl border border-warning/25 bg-surface/70 p-3">
+                      <p className="text-sm font-semibold text-text-primary">{question.question}</p>
+                      {question.reason && <p className="mt-1 text-xs leading-5 text-text-muted">{question.reason}</p>}
+                      {(question.resource || question.field) && (
+                        <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                          {[question.resource, question.field].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="mt-3 inline-flex text-sm font-semibold text-accent hover:underline">
                 Continue review
               </Link>

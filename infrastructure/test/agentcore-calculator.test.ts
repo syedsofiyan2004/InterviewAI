@@ -257,6 +257,17 @@ describe('AgentCore Harness (managed Claude loop)', () => {
     expect(actions).not.toContain('s3:GetObject');
     expect(actions).not.toContain('dynamodb:GetItem');
   });
+
+  it('passes the browser validator to the harness driver for calculator total read-back', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: Match.stringLikeRegexp('calculator-harness-driver'),
+      Environment: Match.objectLike({
+        Variables: Match.objectLike({
+          CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME: Match.anyValue(),
+        }),
+      }),
+    });
+  });
 });
 
 describe('Phase 30 — architectural hard gates', () => {
@@ -280,6 +291,14 @@ describe('Phase 30 — architectural hard gates', () => {
     expect(driver).not.toContain('calculatorConfig');
     expect(driver).not.toContain('calculatorKey');
     expect(driver).not.toContain('mcp-client');
+  });
+
+  it('the harness driver reads rendered calculator totals after AgentCore exports a link', () => {
+    const driver = readSource('lambdas/calculator-harness-driver/index.ts');
+    expect(driver).toContain('CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME');
+    expect(driver).toContain('readRenderedTotals');
+    expect(driver).toContain('result.monthly ??');
+    expect(driver).toContain('renderedTotals.monthly');
   });
 
   it('the harness driver owns no Calculator-internal field names (Phase 14/15)', () => {

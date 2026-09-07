@@ -771,6 +771,13 @@ export const CalculationRecordSchema = z.object({
   // Diagnostics: how many model turns and tool calls the estimate took.
   iterations: z.number().optional(),
   tool_call_count: z.number().optional(),
+  question_count: z.number().optional(),
+  agent_questions: z.array(z.object({
+    resource: z.string().optional(),
+    field: z.string().optional(),
+    question: z.string(),
+    reason: z.string().optional(),
+  })).optional(),
 
   /**
    * Set on an estimate created by applying a chat-proposed change.
