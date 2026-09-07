@@ -707,6 +707,8 @@ export const CalculationRecordSchema = z.object({
   requested_plan: EstimatePlanSchema.optional(),
   /** Review/customize state. Legacy requested_plan remains readable during migration. */
   plan_v2: EstimatePlanV2Schema.optional(),
+  /** Set when a large review plan is stored outside the DynamoDB item. */
+  plan_v2_s3_key: z.string().optional(),
   confirmed_plan_revision_id: z.string().optional(),
   input_s3_key: z.string().optional(),
   input_file_name: z.string().optional(),

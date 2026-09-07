@@ -236,6 +236,41 @@ export function enforceItemSizeBudget<T extends Record<string, unknown>>(record:
   return { record: current as T, dropped, bytes };
 }
 
+function reviewPlanKey(owner: string, calculationId: string): string {
+  return `users/${owner}/calculator/${calculationId}/review-plan.json`;
+}
+
+async function storeReviewPlan(item: CalculationRecord, plan: CalculationRecord['plan_v2']): Promise<string> {
+  if (!plan) throw new Error('Cannot store an empty review plan');
+  const key = item.plan_v2_s3_key || reviewPlanKey(item.owner_user_id, item.calculation_id);
+  await saveFileContent(BUCKET_NAME, key, JSON.stringify(plan), 'application/json');
+  return key;
+}
+
+async function externalizePlanIfOversized(record: CalculationRecord): Promise<CalculationRecord> {
+  if (!record.plan_v2) return record;
+  if (calculationRecordBytes(record) <= DYNAMO_ITEM_HARD_GUARD_BYTES) return record;
+  const key = await storeReviewPlan(record, record.plan_v2);
+  const slim = { ...record, plan_v2_s3_key: key };
+  delete (slim as { plan_v2?: unknown }).plan_v2;
+  return slim;
+}
+
+async function hydrateReviewPlan(item: CalculationRecord): Promise<CalculationRecord> {
+  if (item.plan_v2 || !item.plan_v2_s3_key) return item;
+  try {
+    const raw = await getFileContent(BUCKET_NAME, item.plan_v2_s3_key);
+    return { ...item, plan_v2: EstimatePlanV2Schema.parse(JSON.parse(raw)) };
+  } catch (error) {
+    console.error('[calculator] could not read review plan:', {
+      calculationId: item.calculation_id,
+      key: item.plan_v2_s3_key,
+      error: (error as Error).message,
+    });
+    return item;
+  }
+}
+
 /** Input warnings kept on the record. Enough to explain a parse, short of a wall. */
 const MAX_INPUT_WARNINGS = 16;
 
@@ -482,7 +517,8 @@ async function createCalculationInternal(
 
   // Backstop before the write, not a hope after it (Step 9). Large artifacts already live
   // in S3; this only catches a record that has re-inflated for some reason nobody predicted.
-  const sized = enforceItemSizeBudget(record as unknown as Record<string, unknown>);
+  const persistable = await externalizePlanIfOversized(record);
+  const sized = enforceItemSizeBudget(persistable as unknown as Record<string, unknown>);
   await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
 
   if (!startWorker) {
@@ -757,7 +793,7 @@ async function loadOwned(id: string | undefined, userId: string) {
   if (item.owner_user_id !== userId) {
     return { error: errorResponse(404, 'NOT_FOUND', 'Calculation not found') };
   }
-  return { item: await failIfStale(item) };
+  return { item: await hydrateReviewPlan(await failIfStale(item)) };
 }
 
 export async function getCalculation(
@@ -875,12 +911,22 @@ export async function createCalculationPlanRevision(
   try {
     const plan = EstimatePlanV2Schema.parse(applyPlanProposal(item!.plan_v2, proposal));
     const unresolvedCriticalCount = countUnresolvedCritical(plan);
+    const shouldStorePlan = Boolean(item!.plan_v2_s3_key)
+      || calculationRecordBytes({ ...item!, plan_v2: plan, plan_v2_s3_key: undefined }) > DYNAMO_ITEM_HARD_GUARD_BYTES;
+    const planS3Key = shouldStorePlan ? await storeReviewPlan(item!, plan) : undefined;
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
-      UpdateExpression: 'SET plan_v2 = :plan, #status = :status, unresolved_critical_count = :count, updated_at = :now',
+      UpdateExpression: planS3Key
+        ? 'SET plan_v2_s3_key = :planKey, #status = :status, unresolved_critical_count = :count, updated_at = :now REMOVE plan_v2'
+        : 'SET plan_v2 = :plan, #status = :status, unresolved_critical_count = :count, updated_at = :now',
       ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { ':plan': plan, ':status': 'REVIEW_REQUIRED', ':count': unresolvedCriticalCount, ':now': Date.now() },
+      ExpressionAttributeValues: {
+        ...(planS3Key ? { ':planKey': planS3Key } : { ':plan': plan }),
+        ':status': 'REVIEW_REQUIRED',
+        ':count': unresolvedCriticalCount,
+        ':now': Date.now(),
+      },
     }));
     return createdResponse({ calculation_id: item!.calculation_id, plan });
   } catch (applyError) {
@@ -912,6 +958,9 @@ export async function confirmCalculationPlan(
   }
   try {
     const plan = EstimatePlanV2Schema.parse(confirmPlan(item!.plan_v2, revisionId));
+    const shouldStorePlan = Boolean(item!.plan_v2_s3_key)
+      || calculationRecordBytes({ ...item!, plan_v2: plan, plan_v2_s3_key: undefined }) > DYNAMO_ITEM_HARD_GUARD_BYTES;
+    const planS3Key = shouldStorePlan ? await storeReviewPlan(item!, plan) : undefined;
     // A confirmed plan has no unresolved critical inputs — confirmPlan throws PLAN_NEEDS_INPUT
     // when any remain, so reaching here means count is definitively 0.
     // Status transitions to CONFIRMED: plan is locked and execution can start. This lets
@@ -919,9 +968,17 @@ export async function confirmCalculationPlan(
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
-      UpdateExpression: 'SET plan_v2 = :plan, confirmed_plan_revision_id = :revision, unresolved_critical_count = :zero, #status = :confirmed, updated_at = :now',
+      UpdateExpression: planS3Key
+        ? 'SET plan_v2_s3_key = :planKey, confirmed_plan_revision_id = :revision, unresolved_critical_count = :zero, #status = :confirmed, updated_at = :now REMOVE plan_v2'
+        : 'SET plan_v2 = :plan, confirmed_plan_revision_id = :revision, unresolved_critical_count = :zero, #status = :confirmed, updated_at = :now',
       ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { ':plan': plan, ':revision': revisionId, ':zero': 0, ':confirmed': 'CONFIRMED', ':now': Date.now() },
+      ExpressionAttributeValues: {
+        ...(planS3Key ? { ':planKey': planS3Key } : { ':plan': plan }),
+        ':revision': revisionId,
+        ':zero': 0,
+        ':confirmed': 'CONFIRMED',
+        ':now': Date.now(),
+      },
     }));
     return successResponse({ calculation_id: item!.calculation_id, plan });
   } catch (confirmError) {
@@ -1787,6 +1844,7 @@ export async function reviseCalculation(
     // See revisedPlan for why an empty request inherits rather than clears.
     requested_plan: revisedPlan(original.requested_plan, input),
     plan_v2: planV2,
+    plan_v2_s3_key: undefined,
     resources: split.spilled ? split.sample : edited.resources,
     ...(resourcesS3Key ? { resources_s3_key: resourcesS3Key } : {}),
     ...(split.spilled ? { resources_truncated: true } : {}),
@@ -1813,7 +1871,8 @@ export async function reviseCalculation(
 
   // Backstop before the write, not a hope after it (Step 9). Large artifacts already live
   // in S3; this only catches a record that has re-inflated for some reason nobody predicted.
-  const sized = enforceItemSizeBudget(record as unknown as Record<string, unknown>);
+  const persistable = await externalizePlanIfOversized(record);
+  const sized = enforceItemSizeBudget(persistable as unknown as Record<string, unknown>);
   await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
 
   try {

@@ -9,7 +9,9 @@ import type { APIGatewayProxyEvent } from 'aws-lambda';
 
 import { ddbDocClient } from '../lambdas/shared/aws';
 import {
+  confirmCalculationPlan,
   createCalculation,
+  getCalculationPlan,
   getCalculationDocument,
   reviseCalculation,
   runCalculationPlan,
@@ -194,6 +196,65 @@ beforeEach(() => {
 });
 
 describe('Starting a confirmed estimate plan', () => {
+  test('hydrates an oversized review plan from S3 before confirming it', async () => {
+    const draft = buildInitialPlan({
+      workbookId: 'large-workbook',
+      defaultRegion: 'ap-south-1',
+      resources: [{ raw: 'S3,100 GB', service: 'S3', usage_amount: 100, usage_unit: 'GB/month' }],
+    });
+    const key = 'users/user-owner/calculator/calc-1/review-plan.json';
+    s3Mock.on(GetObjectCommand, { Bucket: process.env.BUCKET_NAME, Key: key }).resolves({
+      Body: { transformToString: async () => JSON.stringify(draft) } as any,
+    });
+    ddbMock.on(GetCommand).resolves({
+      Item: record({
+        status: 'REVIEW_REQUIRED',
+        plan_v2: undefined,
+        plan_v2_s3_key: key,
+      }),
+    });
+    ddbMock.on(UpdateCommand).resolves({});
+
+    const response = await confirmCalculationPlan(ID, event(OWNER, { revision_id: draft.currentRevisionId }));
+
+    expect(response.statusCode).toBe(200);
+    const savedPlan = JSON.parse(s3Mock.commandCalls(PutObjectCommand)[0].args[0].input.Body as string);
+    expect(savedPlan.status).toBe('CONFIRMED');
+    const update = ddbMock.commandCalls(UpdateCommand)[0].args[0].input;
+    expect(update.UpdateExpression).toContain('plan_v2_s3_key = :planKey');
+    expect(update.UpdateExpression).toContain('REMOVE plan_v2');
+    expect(update.ExpressionAttributeValues).toMatchObject({
+      ':planKey': key,
+      ':confirmed': 'CONFIRMED',
+    });
+    expect(update.ExpressionAttributeValues).not.toHaveProperty(':plan');
+  });
+
+  test('returns an oversized review plan through the plan endpoint', async () => {
+    const draft = buildInitialPlan({
+      workbookId: 'large-workbook',
+      defaultRegion: 'ap-south-1',
+      resources: [{ raw: 'S3,100 GB', service: 'S3', usage_amount: 100, usage_unit: 'GB/month' }],
+    });
+    const key = 'users/user-owner/calculator/calc-1/review-plan.json';
+    s3Mock.on(GetObjectCommand, { Bucket: process.env.BUCKET_NAME, Key: key }).resolves({
+      Body: { transformToString: async () => JSON.stringify(draft) } as any,
+    });
+    ddbMock.on(GetCommand).resolves({
+      Item: record({
+        status: 'REVIEW_REQUIRED',
+        plan_v2: undefined,
+        plan_v2_s3_key: key,
+      }),
+    });
+
+    const response = await getCalculationPlan(ID, event(OWNER));
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.plan.planId).toBe(draft.planId);
+  });
+
   test('aliases reserved DynamoDB attributes while clearing an earlier result', async () => {
     const draft = buildInitialPlan({
       workbookId: 'generic-workbook',
