@@ -210,6 +210,12 @@ export async function readWorkbookDocument(buffer: Buffer, fileName: string): Pr
     // Rethrow our own sentinels untouched; wrap anything from exceljs.
     const message = (error as Error).message || '';
     if (message.startsWith('LEGACY_XLS') || message.startsWith('UNSUPPORTED_TABLE_FORMAT')) throw error;
+    try {
+      return await readWorkbookDocumentFromOpenXml(buffer, fileName, fileHash);
+    } catch (fallbackError) {
+      const fallbackMessage = (fallbackError as Error).message || '';
+      console.error('[readWorkbook] openxml fallback failed:', fallbackMessage);
+    }
     console.error('[readWorkbook] parse failed:', message);
     throw new Error('XLSX_PARSE_FAILED');
   }
@@ -297,6 +303,224 @@ function readNamedRanges(workbook: any): Array<{ name: string; ranges: string[] 
   } catch {
     return [];
   }
+}
+
+/**
+ * Fallback for valid OOXML workbooks whose XML uses legal namespace prefixes that
+ * exceljs 4.4 cannot parse. It reads the zipped workbook parts directly and returns
+ * the same document shape as the normal ExcelJS path. The fallback intentionally
+ * stays conservative: cell text, sheet names and formulas are preserved; styling,
+ * tables and workbook metadata are ignored because they are not needed for pricing.
+ */
+async function readWorkbookDocumentFromOpenXml(buffer: Buffer, fileName: string, fileHash: string): Promise<WorkbookDocument> {
+  const loaded = await import('jszip') as typeof import('jszip') & { default?: typeof import('jszip') };
+  const JSZip = loaded.default || loaded;
+  const zip = await JSZip.loadAsync(buffer);
+  const workbookXml = await readZipText(zip, 'xl/workbook.xml');
+  const relationshipXml = await readZipText(zip, 'xl/_rels/workbook.xml.rels').catch(() => '');
+  const sharedStringXml = await readZipText(zip, 'xl/sharedStrings.xml').catch(() => '');
+  const sharedStrings = parseSharedStrings(sharedStringXml);
+  const relationships = parseRelationships(relationshipXml);
+  const workbookSheets = parseWorkbookSheets(workbookXml);
+
+  const sheets: SheetGrid[] = [];
+  const sheetIrs: SheetIR[] = [];
+  const mergedRanges: MergedRangeIR[] = [];
+  const fallbackSheetCounts: string[] = [];
+
+  for (const [position, workbookSheet] of workbookSheets.slice(0, MAX_SHEETS).entries()) {
+    const target = relationships.get(workbookSheet.relationshipId);
+    const sheetPath = normaliseWorkbookPartPath(target || `worksheets/sheet${position + 1}.xml`);
+    const sheetXml = await readZipText(zip, sheetPath).catch(() => '');
+    if (!sheetXml) continue;
+    const parsed = parseWorksheetXml(sheetXml, workbookSheet.name, position + 1, sharedStrings);
+    fallbackSheetCounts.push(`${workbookSheet.name}:${parsed.rows.length}x${parsed.columnCount}`);
+    if (!parsed.rows.length) continue;
+    sheets.push({ name: workbookSheet.name, rows: parsed.rows, index: position + 1 });
+    sheetIrs.push({
+      name: workbookSheet.name,
+      index: position + 1,
+      state: workbookSheet.state,
+      rowCount: parsed.rowCount,
+      columnCount: parsed.columnCount,
+      cells: parsed.cells,
+    });
+    parsed.mergedRanges.forEach((range) => mergedRanges.push({ sheet: workbookSheet.name, range, anchor: range.split(':')[0] }));
+  }
+
+  if (!sheets.length) throw new Error(`OPENXML_NO_READABLE_SHEETS: workbookSheets=${workbookSheets.length}, relationships=${relationships.size}, parsed=${fallbackSheetCounts.join(', ')}`);
+
+  return {
+    sheets,
+    ir: {
+      workbookId: fileHash,
+      fileHash,
+      fileName,
+      sheets: sheetIrs,
+      mergedRanges,
+      namedRanges: [],
+      nonEmptyCellCount: sheetIrs.reduce((total, sheet) => total + sheet.cells.length, 0),
+    },
+  };
+}
+
+async function readZipText(zip: any, path: string): Promise<string> {
+  const file = zip.file(path.replace(/^\/+/, ''));
+  if (!file) throw new Error(`OPENXML_PART_MISSING: ${path}`);
+  const text = await file.async('string');
+  return stripBom(text);
+}
+
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+}
+
+function parseWorkbookSheets(xml: string): Array<{ name: string; relationshipId: string; state?: string }> {
+  const sheets: Array<{ name: string; relationshipId: string; state?: string }> = [];
+  for (const match of xml.matchAll(/<(?:\w+:)?sheet\b([^>]*)\/?>/gi)) {
+    const attributes = parseXmlAttributes(match[1]);
+    const name = attributes.name?.trim();
+    const relationshipId = attributes['r:id'] || attributes.id;
+    if (!name || !relationshipId) continue;
+    sheets.push({ name, relationshipId, state: attributes.state || 'visible' });
+  }
+  return sheets;
+}
+
+function parseRelationships(xml: string): Map<string, string> {
+  const relationships = new Map<string, string>();
+  for (const match of xml.matchAll(/<(?:\w+:)?Relationship\b([^>]*)\/?>/gi)) {
+    const attributes = parseXmlAttributes(match[1]);
+    if (attributes.Id && attributes.Target) relationships.set(attributes.Id, attributes.Target);
+  }
+  return relationships;
+}
+
+function normaliseWorkbookPartPath(target: string): string {
+  const withoutRoot = target.replace(/^\/+/, '');
+  return withoutRoot.startsWith('xl/') ? withoutRoot : `xl/${withoutRoot}`;
+}
+
+function parseSharedStrings(xml: string): string[] {
+  if (!xml) return [];
+  const strings: string[] = [];
+  for (const match of xml.matchAll(/<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/gi)) {
+    const parts = Array.from(match[1].matchAll(/<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/gi));
+    strings.push(parts.map((part) => decodeXmlText(part[1])).join(''));
+  }
+  return strings;
+}
+
+function parseWorksheetXml(
+  xml: string,
+  sheetName: string,
+  sheetIndex: number,
+  sharedStrings: string[],
+): { rows: string[][]; cells: CellIR[]; mergedRanges: string[]; rowCount: number; columnCount: number } {
+  const rowMap = new Map<number, Map<number, string>>();
+  const cells: CellIR[] = [];
+  let maxRow = 0;
+  let maxCol = 0;
+
+  for (const rowMatch of xml.matchAll(/<(?:\w+:)?row\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?row>/gi)) {
+    const rowAttributes = parseXmlAttributes(rowMatch[1]);
+    const rowNumber = Number(rowAttributes.r) || maxRow + 1;
+    const rowCells = rowMap.get(rowNumber) || new Map<number, string>();
+    rowMap.set(rowNumber, rowCells);
+    maxRow = Math.max(maxRow, rowNumber);
+
+    for (const cellMatch of rowMatch[2].matchAll(/<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/gi)) {
+      const attributes = parseXmlAttributes(cellMatch[1]);
+      const reference = attributes.r || a1(rowNumber, rowCells.size + 1);
+      const location = parseA1(reference);
+      const row = location?.row || rowNumber;
+      const col = location?.col || rowCells.size + 1;
+      const inner = cellMatch[2] || '';
+      const formula = firstXmlText(inner, 'f');
+      const rawValue = firstXmlText(inner, 'v');
+      const inlineText = firstXmlText(inner, 't');
+      const text = openXmlCellText(attributes.t, rawValue, inlineText, sharedStrings);
+      rowCells.set(col, text);
+      maxRow = Math.max(maxRow, row);
+      maxCol = Math.max(maxCol, col);
+      if (text === '' && !formula) continue;
+      cells.push({
+        sheet: sheetName,
+        row,
+        col,
+        a1: reference,
+        raw: openXmlRawValue(attributes.t, rawValue, inlineText, sharedStrings),
+        formatted: text,
+        ...(formula ? { formula } : {}),
+        ...(formula && rawValue !== undefined ? { calculatedValue: openXmlRawValue(attributes.t, rawValue, inlineText, sharedStrings) } : {}),
+        dataType: attributes.t || '',
+      });
+    }
+  }
+
+  const rows: string[][] = [];
+  for (let row = 1; row <= Math.min(maxRow, MAX_ROWS_PER_SHEET); row++) {
+    const rowCells = rowMap.get(row);
+    const values: string[] = [];
+    for (let col = 1; col <= Math.min(maxCol, MAX_COLUMNS_PER_SHEET); col++) {
+      values.push(rowCells?.get(col) || '');
+    }
+    rows.push(values);
+  }
+
+  const mergedRanges = Array.from(xml.matchAll(/<(?:\w+:)?mergeCell\b[^>]*\bref="([^"]+)"/gi))
+    .map((match) => decodeXmlText(match[1]));
+  const trimmed = trimGrid(rows);
+  return {
+    rows: trimmed,
+    cells,
+    mergedRanges,
+    rowCount: Math.min(maxRow, MAX_ROWS_PER_SHEET),
+    columnCount: Math.min(maxCol, MAX_COLUMNS_PER_SHEET),
+  };
+}
+
+function parseXmlAttributes(text: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  for (const match of text.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) attributes[match[1]] = decodeXmlText(match[2]);
+  return attributes;
+}
+
+function firstXmlText(xml: string, tag: string): string | undefined {
+  const match = new RegExp(`<(?:\\w+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tag}>`, 'i').exec(xml);
+  return match ? decodeXmlText(match[1]) : undefined;
+}
+
+function openXmlCellText(type: string | undefined, rawValue: string | undefined, inlineText: string | undefined, sharedStrings: string[]): string {
+  const raw = openXmlRawValue(type, rawValue, inlineText, sharedStrings);
+  return raw === null || raw === undefined ? '' : valueToText(raw);
+}
+
+function openXmlRawValue(type: string | undefined, rawValue: string | undefined, inlineText: string | undefined, sharedStrings: string[]): unknown {
+  if (type === 's') return sharedStrings[Number(rawValue)] ?? '';
+  if (type === 'inlineStr') return inlineText ?? '';
+  if (type === 'b') return rawValue === '1';
+  if (rawValue === undefined) return inlineText ?? '';
+  const numeric = Number(rawValue);
+  return Number.isFinite(numeric) && rawValue.trim() !== '' ? numeric : rawValue;
+}
+
+function parseA1(reference: string): { row: number; col: number } | undefined {
+  const match = /^([A-Z]+)(\d+)$/i.exec(reference);
+  if (!match) return undefined;
+  const col = match[1].toUpperCase().split('').reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0);
+  return { row: Number(match[2]), col };
+}
+
+function decodeXmlText(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&#x([0-9a-f]+);/gi, (_, value) => String.fromCharCode(parseInt(value, 16)))
+    .replace(/&#([0-9]+);/g, (_, value) => String.fromCharCode(parseInt(value, 10)));
 }
 
 /** Builds a rectangular grid by explicit addressing. See note 1 in the file header. */
