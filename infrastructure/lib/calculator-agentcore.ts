@@ -112,7 +112,7 @@ export class CalculatorAgentCore extends Construct {
           statements: [new iam.PolicyStatement({
             sid: 'CloudWatchLogs',
             actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
-            resources: [`arn:aws:logs:${props.region}:${props.account}:log-group:/aws/bedrock-agentcore/runtime/*`],
+            resources: [`arn:aws:logs:${props.region}:${props.account}:log-group:/aws/bedrock-agentcore/runtimes/mimoCalcMcp_${props.envName}-*`],
           })],
         }),
         // ECR pull permissions — required for AgentCore to launch the container image.
@@ -242,6 +242,41 @@ export class CalculatorAgentCore extends Construct {
       roleArn: gatewayExecRole.roleArn,
       tags: { 'mimo:component': 'calculator-agentcore-gateway' },
     });
+    // Retain the downstream Runtime MCP session across tool calls. The timeout
+    // is absolute from initialize, matching the Harness's eight-hour lifetime.
+    // CDK 2.250.0 does not yet type SessionConfiguration; emit the CFN property
+    // explicitly without changing protocol versions or inbound IAM authentication.
+    this.gateway.addPropertyOverride(
+      'ProtocolConfiguration.Mcp.SessionConfiguration.SessionTimeoutInSeconds',
+      28800,
+    );
+
+    // Gateway logs are opt-in. Keep request/target diagnostics for one week so
+    // an intermittent tool failure can be correlated with Runtime/Harness logs.
+    const gatewayLogs = new logs.LogGroup(this, 'GatewayLogGroup', {
+      logGroupName: `/aws/vendedlogs/bedrock-agentcore/gateway/${getUniqueName('calculator')}`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    const gatewayLogSource = new logs.CfnDeliverySource(this, 'GatewayLogSource', {
+      name: getUniqueName('calculator-gateway-logs'),
+      resourceArn: this.gateway.attrGatewayArn,
+      logType: 'APPLICATION_LOGS',
+    });
+    const gatewayLogDestination = new logs.CfnDeliveryDestination(this, 'GatewayLogDestination', {
+      name: getUniqueName('calculator-gateway-logs'),
+      destinationResourceArn: cdk.Stack.of(this).formatArn({
+        service: 'logs', resource: 'log-group', resourceName: gatewayLogs.logGroupName,
+        arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+      }),
+      outputFormat: 'json',
+    });
+    gatewayLogDestination.node.addDependency(gatewayLogs);
+    const gatewayLogDelivery = new logs.CfnDelivery(this, 'GatewayLogDelivery', {
+      deliverySourceName: gatewayLogSource.name,
+      deliveryDestinationArn: gatewayLogDestination.attrArn,
+    });
+    gatewayLogDelivery.addDependency(gatewayLogSource);
 
     // ─── AgentCore Gateway Target — the MCP Runtime (Phase 6) ──────────────────
     //
@@ -541,6 +576,21 @@ export class CalculatorAgentCore extends Construct {
         GatewayArn: this.gateway.attrGatewayArn,
         MaxIterations: String(props.maxIterations ?? 60),
         MaxTokens: '8192',
+        // Enforce the documented primitive-only flow at the tool boundary, not
+        // just in the prompt. Harness allowedTools uses @server/tool patterns;
+        // calculator_mcp is the Harness tool name and the Gateway supplies the
+        // calcmcp___ / mimoev___ target-prefixed MCP tool names.
+        AllowedTools: [
+          '@calculator_mcp/calcmcp___get_server_info',
+          '@calculator_mcp/calcmcp___search_services',
+          '@calculator_mcp/calcmcp___get_service_fields',
+          '@calculator_mcp/calcmcp___create_estimate',
+          '@calculator_mcp/calcmcp___add_service',
+          '@calculator_mcp/calcmcp___validate_estimate',
+          '@calculator_mcp/calcmcp___export_estimate',
+          '@calculator_mcp/calcmcp___import_estimate',
+          '@calculator_mcp/mimoev___get_workbook_evidence',
+        ],
         // Bounds ONE InvokeHarness call, not the calculation. Step Functions re-enters on
         // the same runtimeSessionId, and the managed runtime allows maxLifetime 28800s (8h).
         //

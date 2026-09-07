@@ -84,6 +84,8 @@ async function rpc(method, params, { notification = false, name } = {}) {
     qualifier: 'DEFAULT',
     contentType: 'application/json',
     accept: 'application/json, text/event-stream',
+    // Avoid the SDK generating a fresh Runtime session for each invocation.
+    runtimeSessionId: mcpSessionId,
     mcpSessionId,
     mcpProtocolVersion,
     mcpMethod: method,

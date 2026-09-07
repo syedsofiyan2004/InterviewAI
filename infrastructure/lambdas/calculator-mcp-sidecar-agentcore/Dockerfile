@@ -15,8 +15,9 @@ FROM public.ecr.aws/docker/library/node:20-slim
 
 WORKDIR /var/task
 
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+COPY http-server.mjs ./
 
 # MCP_TRANSPORT=http: upstream server listens with Express over plain HTTP.
 # HOST=0.0.0.0: required for AgentCore Runtime — it reaches the container via
@@ -29,4 +30,4 @@ ENV MCP_TRANSPORT=http \
 
 EXPOSE 8000
 
-CMD ["node", "node_modules/sample-aws-pricing-calculator-mcp/dist/mcp-server.js"]
+CMD ["node", "http-server.mjs"]

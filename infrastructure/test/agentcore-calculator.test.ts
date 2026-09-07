@@ -84,6 +84,22 @@ describe('AgentCore Runtime (MCP server)', () => {
 });
 
 describe('AgentCore Gateway', () => {
+  it('delivers Gateway diagnostic logs with bounded retention', () => {
+    template.hasResourceProperties('AWS::Logs::DeliverySource', { LogType: 'APPLICATION_LOGS' });
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: Match.stringLikeRegexp('/aws/vendedlogs/bedrock-agentcore/gateway/'),
+      RetentionInDays: 7,
+    });
+    template.resourceCountIs('AWS::Logs::Delivery', 1);
+  });
+  it('retains downstream MCP sessions for the Harness lifetime', () => {
+    template.hasResourceProperties('AWS::BedrockAgentCore::Gateway', {
+      AuthorizerType: 'AWS_IAM',
+      ProtocolConfiguration: {
+        Mcp: { SessionConfiguration: { SessionTimeoutInSeconds: 28800 } },
+      },
+    });
+  });
   it('provisions a Gateway with AWS_IAM authorizer over MCP', () => {
     template.hasResourceProperties('AWS::BedrockAgentCore::Gateway', {
       Name: Match.stringLikeRegexp('calculator'),
@@ -203,6 +219,14 @@ describe('AgentCore Harness (managed Claude loop)', () => {
     // from a provisioning Custom Resource rather than the architecture being changed to
     // suit a missing construct.
     template.resourceCountIs('Custom::AgentCoreHarness', 1);
+  });
+
+  it('prevents the Harness from calling build_estimate', () => {
+    const harness = Object.values(template.findResources('Custom::AgentCoreHarness'))[0];
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___add_service');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/mimoev___get_workbook_evidence');
+    expect(harness.Properties.AllowedTools).not.toContain('@calculator_mcp/calcmcp___build_estimate');
+    expect(harness.Properties.AllowedTools).not.toContain('*');
   });
 
   it('passes the source-controlled system prompt and the Gateway ARN to the Harness', () => {

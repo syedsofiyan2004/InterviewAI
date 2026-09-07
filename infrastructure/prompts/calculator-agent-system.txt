@@ -151,14 +151,10 @@ server. Follow the MCP if it ever tells you otherwise.
 
   build_estimate is unsupported on this deployment. It is the one instruction here that
   overrides the MCP's own advice, which suggests build_estimate for multi-service
-  estimates, and the reason is an infrastructure constraint on our side rather than a
-  Calculator one: build_estimate performs create, add and export inside a single tool
-  call, and a call that long does not return through the AgentCore Gateway — a live run
-  sat on one for 22 minutes with no response. Each step-by-step tool returns in about a
-  second: measured directly against the MCP, create_estimate 525ms, add_service 496ms,
-  validate_estimate 547ms, export_estimate 1381ms.
+  estimates. Keep the estimate flow explicit so each mutation is observable, each
+  validation result can be acted on, and an uncertain append never gets replayed into
+  the same estimate.
 
-  If you call build_estimate anyway, the run will hang and the customer gets nothing.
   build_estimate is only a convenience wrapper; the step-by-step tools can express
   everything it can.
 

@@ -4,12 +4,15 @@
   "private": true,
   "description": "AWS Pricing Calculator MCP server adapted for Amazon Bedrock AgentCore Runtime.",
   "scripts": {
-    "start": "node node_modules/sample-aws-pricing-calculator-mcp/dist/mcp-server.js",
-    "start:local": "MCP_TRANSPORT=http PORT=8000 HOST=0.0.0.0 npm start"
+    "start": "node http-server.mjs",
+    "start:local": "MCP_TRANSPORT=http PORT=8000 HOST=0.0.0.0 npm start",
+    "test": "node --test --test-isolation=none test/*.test.mjs"
   },
   "dependencies": {
     "sample-aws-pricing-calculator-mcp": "1.3.0",
     "@aws-sdk/client-dynamodb": "^3.712.0",
-    "@aws-sdk/lib-dynamodb": "^3.712.0"
+    "@aws-sdk/lib-dynamodb": "^3.712.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "express": "5.2.1"
   }
 }
