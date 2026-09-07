@@ -14,7 +14,7 @@
  * the "730 hours priced as 730 minutes" bug in a new coat.
  */
 
-import { resolveUnitToken, validateValue, type ServiceDefinition } from '../calculator-orchestrator/calculator-definitions';
+import { resolveUnitToken, validateValue, type ServiceDefinition } from './service-definition.js';
 import {
   fileSizeUnit,
   matchFrequency,
@@ -540,9 +540,22 @@ export function mapDeterministically(
     }
     const isQuantity = !type || QUANTITY_TYPES.has(type);
     if (isQuantity) {
-      // A number the customer did not state is a question for the customer, not a default:
-      // a default count or duration is a cost that came from nowhere.
-      result.missingInputs.push(label);
+      // Resolution order (spec section 6 — Autonomous Assumption Mode):
+      //   A. canonical workload value — already handled above (would be in result.config)
+      //   B. catalog.minimalConfig — MCP-verified structural default
+      //   C. ask user only as last resort
+      //
+      // Examples: SageMaker modelsDeployed=1, EventBridge payload=1KB are verified MCP
+      // defaults that an AI agent (Claude, Codex) would use autonomously. Ask only when
+      // no MCP-provided default exists for a genuinely workload-specific dimension.
+      if (fieldId in minimal) {
+        result.config[fieldId] = minimal[fieldId];
+        result.defaultsApplied[fieldId] = minimal[fieldId];
+        result.notes.push(`${label}: used MCP catalog.minimalConfig default (${JSON.stringify(minimal[fieldId])}); override in plan if this workload requires a different value`);
+      } else {
+        // No MCP default — this is genuinely customer-specific.
+        result.missingInputs.push(label);
+      }
       continue;
     }
     if (fieldId in minimal) {
@@ -554,6 +567,26 @@ export function mapDeterministically(
       result.defaultsApplied[fieldId] = token;
     } else {
       result.missingInputs.push(label);
+    }
+  }
+
+  // Apply minimalConfig defaults for structural fields NOT in catalog.required.
+  // These are safe-to-default fields: columnFormIPM secondaries (OpenSearch dedicated-master
+  // tables that must be zeroed or the Calculator adds phantom cost) and simple dropdown/
+  // checkbox choices where the minimalConfig value is the verified working default.
+  // Quantity fields (numericInput, fileSize, frequency, etc.) are deliberately excluded —
+  // those are workload dimensions the customer must supply.
+  const SAFE_DEFAULT_TYPES = new Set(['columnFormIPM', 'dropdown', 'checkbox', 'radioTiles']);
+  for (const [fieldId, minValue] of Object.entries(minimal)) {
+    if (fieldId in result.config) continue;
+    if (fieldId === 'region' || fieldId === 'description' || fieldId === 'pricingStrategy') continue;
+    const field = fields.find((entry) => entry.id === fieldId);
+    if (!field) continue;
+    if (field.type === 'columnFormIPM' && field === result.columnForm) continue; // already handled
+    if (SAFE_DEFAULT_TYPES.has(field.type)) {
+      result.config[fieldId] = minValue;
+      result.defaultsApplied[fieldId] = minValue;
+      result.notes.push(`${field.label || fieldId}: MCP minimalConfig default applied (${JSON.stringify(minValue)})`);
     }
   }
 

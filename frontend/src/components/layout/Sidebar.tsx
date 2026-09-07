@@ -39,6 +39,7 @@ interface NavItem {
   name: string;
   href: string;
   icon: typeof Home;
+  admin?: boolean;
 }
 
 interface NavSection {
@@ -59,7 +60,7 @@ const BASE_SECTIONS: NavSection[] = [
     ],
   },
   {
-    name: 'Meetings',
+    name: 'MOM Analyzer',
     items: [
       { name: 'Projects', href: '/mom', icon: ListChecks },
       { name: 'New Project', href: '/mom/new', icon: FolderPlus },
@@ -85,34 +86,23 @@ function buildNavSections(isAdmin: boolean, tier: AdminTier | null): NavSection[
   if (!isAdmin || !tier) return BASE_SECTIONS;
 
   const rank = TIER_RANK[tier];
-  const adminItems: NavItem[] = [
-    { name: 'Overview', href: '/admin', icon: Shield },
-    { name: 'All Candidates', href: '/admin/candidates', icon: Users },
-    { name: 'Interviews', href: '/admin/interviews', icon: LayoutDashboard },
-    { name: 'Meetings', href: '/admin/moms', icon: ListChecks },
-    { name: 'Cost Estimates', href: '/admin/calculator', icon: Calculator },
-  ];
-
-  // REVIEWER is the first tier trusted to read records it does not own, and an assistant
-  // transcript is exactly that: what the model said about somebody else's candidate or
-  // price. Reading one is the whole of the permission — there is no way to join a thread.
+  const sections = BASE_SECTIONS.map(section => ({ ...section, items: [...section.items] }));
+  const add = (index: number, name: string, href: string, icon: typeof Home) =>
+    sections[index].items.push({ name, href, icon, admin: true });
+  add(0, 'All Candidates', '/admin/candidates', Users);
+  add(0, 'All Interviews', '/admin/interviews', LayoutDashboard);
+  add(1, 'All Meetings', '/admin/moms', ListChecks);
+  add(2, 'All Cost Estimates', '/admin/calculator', Calculator);
+  if (rank >= TIER_RANK.APPROVER) add(0, 'Approval Queue', '/admin/approvals', CheckSquare);
+  if (rank >= TIER_RANK.OWNER) add(0, 'Question Bank', '/admin/question-bank', LibraryBig);
+  const adminItems: NavItem[] = [{ name: 'Overview', href: '/admin', icon: Shield }];
   if (rank >= TIER_RANK.REVIEWER) {
     adminItems.push({ name: 'Conversations', href: '/admin/conversations', icon: MessagesSquare });
   }
-
-  // APPROVER is the first tier that can act on a decision, not just read.
-  if (rank >= TIER_RANK.APPROVER) {
-    adminItems.push({ name: 'Approval Queue', href: '/admin/approvals', icon: CheckSquare });
-  }
-
-  // OWNER alone manages membership. Search and audit remain available from the
-  // admin overview so the main rail stays focused.
   if (rank >= TIER_RANK.OWNER) {
     adminItems.push({ name: 'Access', href: '/admin/access', icon: Settings });
-    adminItems.push({ name: 'Question Bank', href: '/admin/question-bank', icon: LibraryBig });
   }
-
-  return [...BASE_SECTIONS, { name: 'Admin', items: adminItems }];
+  return [...sections, { name: 'Organization', items: adminItems }];
 }
 
 /** Footer subtitle: "Admin - Owner", or plain "Member" when there is no grant. */
@@ -139,6 +129,12 @@ function isActiveNavItem(pathname: string, href: string): boolean {
   if (pathname === href) return true;
   if (href === '/my-interviews') {
     return pathname.startsWith('/interviews/intelligence') || pathname.startsWith('/interviews/view') || pathname === '/interviews';
+  }
+  if (href === '/candidates') return pathname.startsWith('/candidates/');
+  if (href === '/mom') return pathname.startsWith('/mom/') && pathname !== '/mom/new';
+  if (href === '/calculator') return pathname.startsWith('/calculator/') && pathname !== '/calculator/project/new';
+  if (href === '/admin/candidates' || href === '/admin/question-bank' || href === '/admin/conversations') {
+    return pathname.startsWith(`${href}/`);
   }
   return false;
 }
@@ -323,7 +319,7 @@ function SidebarContent({ collapsed, mobile = false, onCloseMobile, onToggleColl
                     title={collapsed ? item.name : undefined}
                   >
                     <Icon size={18} className={cn('flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted group-hover:text-text-primary')} />
-                    {showLabels && item.name}
+                    {showLabels && <><span className="min-w-0 flex-1">{item.name}</span>{item.admin && <Shield size={12} className="shrink-0 text-text-muted" aria-label="Admin feature" />}</>}
                   </Link>
                 );
               })}

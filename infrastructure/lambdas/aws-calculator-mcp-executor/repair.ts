@@ -16,7 +16,7 @@
  * discovered on the invoice.
  */
 
-import { resolveUnitToken, type ServiceDefinition } from '../calculator-orchestrator/calculator-definitions';
+import { resolveUnitToken, type ServiceDefinition } from './service-definition.js';
 import { describe } from './field-mapping';
 import { fileSizeUnit, matchOption, type McpField, type McpFieldsPayload } from './mcp-schema';
 import { parseJsonObject, type ModelCaller, type ModelTier } from './model-calls';

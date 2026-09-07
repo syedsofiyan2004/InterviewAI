@@ -106,6 +106,8 @@ function CalculationDetailContent() {
   const [downloadingWorkbook, setDownloadingWorkbook] = useState(false);
   const [downloadingDocument, setDownloadingDocument] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [agentAnswer, setAgentAnswer] = useState('');
+  const [answeringAgent, setAnsweringAgent] = useState(false);
   // See the list page: window.confirm puts the CloudFront hostname above the message,
   // which reads as a browser warning instead of the app asking.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -122,6 +124,20 @@ function CalculationDetailContent() {
     } catch (err: unknown) {
       setError(errorMessage(err, 'Could not delete this estimate.'));
       setDeleting(false);
+    }
+  };
+
+  const answerAgent = async () => {
+    if (!id || !agentAnswer.trim()) return;
+    setAnsweringAgent(true);
+    try {
+      await calculatorApi.answerCalculationQuestion(id, agentAnswer.trim());
+      setAgentAnswer('');
+      await fetchResult();
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Couldn't continue the estimate with that answer."));
+    } finally {
+      setAnsweringAgent(false);
     }
   };
 
@@ -226,6 +242,13 @@ function CalculationDetailContent() {
   }
 
   const result = data?.result ?? null;
+  // The top-level Calculator URL, found in priority order: full result URL →
+  // first scenario URL → first scenario_summary URL. This ensures the link shows
+  // even when browser validation failed (NEEDS_REVIEW with null monthlyTotal).
+  const primaryUrl = result?.url
+    || result?.scenarios?.[0]?.url
+    || data?.scenario_summaries?.[0]?.calculatorUrl
+    || null;
   // BUILDING and VALIDATING are sub-states of the execution run emitted by the
   // orchestrator since the architectural refactor; PROCESSING is the legacy alias.
   // CONFIRMED means the plan is locked and the worker is about to start.
@@ -317,8 +340,51 @@ function CalculationDetailContent() {
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
             <div>
-              <p className="text-sm font-semibold text-text-primary">Requirements need review</p>
-              <p className="mt-1 text-sm leading-6 text-text-secondary">No AWS estimate has been generated yet.</p>
+              <p className="text-sm font-semibold text-text-primary">
+                {data.agent_questions?.length ? 'The calculator agent needs your input' : 'Requirements need review'}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-text-secondary">
+                {data.agent_questions?.length
+                  ? 'These answers materially affect the AWS estimate. Resolve them before sharing or rerunning the build.'
+                  : 'No AWS estimate has been generated yet.'}
+              </p>
+              {!!data.agent_questions?.length && (
+                <div className="mt-4 space-y-3">
+                  {data.agent_questions.map((question, index) => (
+                    <div key={`${question.resource || 'question'}-${index}`} className="rounded-xl border border-warning/25 bg-surface/70 p-3">
+                      <p className="text-sm font-semibold text-text-primary">{question.question}</p>
+                      {question.reason && <p className="mt-1 text-xs leading-5 text-text-muted">{question.reason}</p>}
+                      {(question.resource || question.field) && (
+                        <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                          {[question.resource, question.field].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                  <div className="rounded-xl border border-border bg-surface p-3">
+                    <label htmlFor="agent-answer" className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                      Answer for the calculator agent
+                    </label>
+                    <textarea
+                      id="agent-answer"
+                      value={agentAnswer}
+                      onChange={(event) => setAgentAnswer(event.target.value)}
+                      rows={4}
+                      placeholder="Example: Treat rows 185-320 as Windows Server, use 1-year no-upfront Savings Plan, and keep grouped entries acceptable for this estimate."
+                      className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void answerAgent()}
+                      disabled={answeringAgent || !agentAnswer.trim()}
+                      className="btn-primary mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                    >
+                      {answeringAgent && <Loader2 size={14} className="animate-spin" />}
+                      Continue estimate
+                    </button>
+                  </div>
+                </div>
+              )}
               <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="mt-3 inline-flex text-sm font-semibold text-accent hover:underline">
                 Continue review
               </Link>
@@ -376,6 +442,24 @@ function CalculationDetailContent() {
         </div>
       )}
 
+      {/* When we have a Calculator URL but no full result yet (e.g. large result in S3
+          not loaded, or browser validation returned no totals), show the link prominently
+          so the user is never left with a blank page after a successful build. */}
+      {!result && primaryUrl && data?.status !== 'FAILED' && (
+        <div className="card p-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">AWS Pricing Calculator estimate</p>
+            <p className="mt-1 text-sm text-text-secondary">Open the link for live pricing — the Calculator renders totals when the page loads.</p>
+          </div>
+          <a href={primaryUrl} target="_blank" rel="noopener noreferrer"
+            className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+            <PiggyBank size={15} />
+            Open AWS Pricing Calculator
+            <ExternalLink size={15} />
+          </a>
+        </div>
+      )}
+
       {result && data?.status !== 'FAILED' && (
         <>
           <div className="card p-6">
@@ -416,9 +500,9 @@ function CalculationDetailContent() {
                 {/* The AWS Calculator link is always the primary action — it is the product.
                     Downloads are secondary; they come after. Single-scenario estimates show
                     the link here; multi-scenario links appear in the scenario table below. */}
-                {result.url && (result.scenarios?.length || 0) <= 1 && (
+                {primaryUrl && (result?.scenarios?.length || 0) <= 1 && (
                   <a
-                    href={result.url}
+                    href={primaryUrl!}
                     target="_blank"
                     rel="noopener noreferrer"
                     title={data?.status === 'PARTIAL'

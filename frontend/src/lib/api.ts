@@ -697,6 +697,7 @@ export interface CompositeAnalysis {
 }
 
 export interface CandidateWorkspace {
+  my_permission?: 'VIEWER' | 'COMMENTER';
   workspace_id: string;
   org_id: string;
   title: string;

@@ -126,6 +126,7 @@ import {
   createCalculationPlanRevision,
   confirmCalculationPlan,
   runCalculationPlan,
+  answerCalculationQuestion,
 } from './calculator-routes.js';
 import {
   adminListConversations,
@@ -329,6 +330,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'POST' && resource === '/calculator/{id}/revise') {
       return await reviseCalculation(pathParameters?.id, event);
+    }
+    if (httpMethod === 'POST' && resource === '/calculator/{id}/answer') {
+      return await answerCalculationQuestion(pathParameters?.id, event);
     }
     if (httpMethod === 'DELETE' && resource === '/calculator/{id}') {
       return await deleteCalculation(pathParameters?.id, event);
@@ -792,6 +796,28 @@ async function deleteS3Prefix(prefix: string) {
 
 function momProjectKey(projectId: string): string {
   return `PROJECT#${projectId}`;
+}
+
+async function scanOwnedMomTable(userId: string, limit?: number) {
+  const items: any[] = [];
+  let lastEvaluatedKey: Record<string, any> | undefined;
+
+  do {
+    const result = await ddbDocClient.send(new ScanCommand({
+      TableName: MOM_TABLE_NAME,
+      FilterExpression: 'owner_user_id = :owner AND attribute_not_exists(deleted_at)',
+      ExpressionAttributeValues: { ':owner': userId },
+      ...(lastEvaluatedKey ? { ExclusiveStartKey: lastEvaluatedKey } : {}),
+    }));
+
+    for (const item of result.Items || []) {
+      items.push(item);
+      if (limit && items.length >= limit) return items;
+    }
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return items;
 }
 
 function isOwnedBy(item: any, userId: string): boolean {
@@ -1922,17 +1948,12 @@ async function listMomProjects(event: APIGatewayProxyEvent) {
   const userId = getAuthenticatedUserId(event);
   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
 
-  const result = await ddbDocClient.send(new ScanCommand({
-    TableName: MOM_TABLE_NAME,
-    FilterExpression: 'owner_user_id = :owner',
-    ExpressionAttributeValues: { ':owner': userId },
-    Limit: 200,
-  }));
+  const rows = await scanOwnedMomTable(userId);
 
   const projects = new Map<string, any>();
   const momCounts = new Map<string, { count: number; completed: number; updated_at: number }>();
 
-  (result.Items || []).forEach((item) => {
+  rows.forEach((item) => {
     if (item.item_type === 'PROJECT') {
       projects.set(item.project_id, {
         project_id: item.project_id,
@@ -2015,14 +2036,9 @@ async function deleteMomProject(id: string | undefined, event: APIGatewayProxyEv
     return successResponse({ message: 'MOM project deleted successfully', deleted_moms: 0 });
   }
 
-  const result = await ddbDocClient.send(new ScanCommand({
-    TableName: MOM_TABLE_NAME,
-    FilterExpression: 'owner_user_id = :owner',
-    ExpressionAttributeValues: { ':owner': userId },
-    Limit: 200,
-  }));
+  const rows = await scanOwnedMomTable(userId);
 
-  const projectMoms = (result.Items || []).filter((item) =>
+  const projectMoms = rows.filter((item) =>
     item.item_type !== 'PROJECT' &&
     !item.mom_id?.startsWith('PROJECT#') &&
     item.project_id === id
@@ -2117,14 +2133,9 @@ async function listMoms(event: APIGatewayProxyEvent) {
   const userId = getAuthenticatedUserId(event);
   if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Unauthorized');
 
-  const result = await ddbDocClient.send(new ScanCommand({
-    TableName: MOM_TABLE_NAME,
-    FilterExpression: 'owner_user_id = :owner AND attribute_not_exists(deleted_at)',
-    ExpressionAttributeValues: { ':owner': userId },
-    Limit: 50,
-  }));
+  const rows = await scanOwnedMomTable(userId);
 
-  const items = (result.Items || [])
+  const items = rows
     .filter(item => item.item_type !== 'PROJECT' && !item.mom_id?.startsWith('PROJECT#'))
     .map(item => ({
       mom_id: item.mom_id,
@@ -2146,7 +2157,7 @@ async function listMoms(event: APIGatewayProxyEvent) {
   return successResponse({
     items,
     count: items.length,
-    last_evaluated_key: result.LastEvaluatedKey ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64') : null,
+    last_evaluated_key: null,
   });
 }
 

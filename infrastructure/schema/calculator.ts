@@ -696,6 +696,9 @@ export const CalculationRecordSchema = z.object({
   workbook_ir_s3_key: z.string().optional(),
   workbook_hash: z.string().optional(),
   canonical_model_s3_key: z.string().optional(),
+  workbook_semantic_model_s3_key: z.string().optional(),
+  scenario_manifest_s3_key: z.string().optional(),
+  scenario_requirements_s3_key: z.string().optional(),
   /**
    * The band matrix this run was asked for, when one was stated.
    *
@@ -707,6 +710,8 @@ export const CalculationRecordSchema = z.object({
   requested_plan: EstimatePlanSchema.optional(),
   /** Review/customize state. Legacy requested_plan remains readable during migration. */
   plan_v2: EstimatePlanV2Schema.optional(),
+  /** Set when a large review plan is stored outside the DynamoDB item. */
+  plan_v2_s3_key: z.string().optional(),
   confirmed_plan_revision_id: z.string().optional(),
   input_s3_key: z.string().optional(),
   input_file_name: z.string().optional(),
@@ -769,6 +774,13 @@ export const CalculationRecordSchema = z.object({
   // Diagnostics: how many model turns and tool calls the estimate took.
   iterations: z.number().optional(),
   tool_call_count: z.number().optional(),
+  question_count: z.number().optional(),
+  agent_questions: z.array(z.object({
+    resource: z.string().optional(),
+    field: z.string().optional(),
+    question: z.string(),
+    reason: z.string().optional(),
+  })).optional(),
 
   /**
    * Set on an estimate created by applying a chat-proposed change.

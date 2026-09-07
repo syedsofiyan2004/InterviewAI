@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowRight, CalendarDays, Home, ListChecks, Search, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, Home, ListChecks, Search, X, Users, Share2, Calculator } from 'lucide-react';
 
 type CommandItem = {
   title: string;
@@ -12,6 +12,9 @@ type CommandItem = {
 };
 
 const commands: CommandItem[] = [
+  { title: 'My Candidates', detail: 'HireRite candidate review workspaces you own', href: '/candidates', icon: <Users size={17} /> },
+  { title: 'Shared with Me', detail: 'HireRite reviews shared by colleagues', href: '/shared', icon: <Share2 size={17} /> },
+  { title: 'Cost Calculator', detail: 'AWS cost projects and estimates', href: '/calculator', icon: <Calculator size={17} /> },
   {
     title: 'Home',
     detail: 'Open the MiMo workspace hub',
@@ -37,11 +40,12 @@ export function CommandPalette() {
   const [query, setQuery] = useState('');
 
   useEffect(() => {
-    const handleOpen = () => setOpen(true);
+    const handleOpen = () => { setQuery(''); setOpen(true); };
     const handleKeyDown = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey;
       if (modifier && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        setQuery('');
         setOpen((value) => !value);
       }
       if (event.key === 'Escape') setOpen(false);
@@ -54,10 +58,6 @@ export function CommandPalette() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-
-  useEffect(() => {
-    if (!open) setQuery('');
-  }, [open]);
 
   const filtered = useMemo(() => {
     const normalisedQuery = query.trim().toLowerCase();

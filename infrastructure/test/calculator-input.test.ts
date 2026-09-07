@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { readWorkbook, valueToText } from '../lambdas/shared/workbook';
 import { analyseWorkbook } from '../lambdas/api-handler/calculator-workbook';
 
@@ -23,6 +24,24 @@ async function xlsxBuffer(rows: unknown[][], sheetName = 'Resources'): Promise<B
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
+async function prefixedNamespaceXlsxBuffer(rows: unknown[][], sheetName = 'Resources'): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(await xlsxBuffer(rows, sheetName));
+  await Promise.all(
+    Object.keys(zip.files)
+      .filter((path) => path === 'xl/workbook.xml' || path === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/.test(path))
+      .map(async (path) => {
+        const file = zip.file(path);
+        if (!file) return;
+        const xml = await file.async('string');
+        const prefixed = xml
+          .replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"', 'xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')
+          .replace(/<([/]?)([A-Za-z][\w.-]*)(?=[\s>/])/g, '<$1x:$2');
+        zip.file(path, prefixed);
+      }),
+  );
+  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+}
+
 const TEMPLATE_HEADER = ['Environment', 'Service', 'Instance / Size', 'Qty', 'Region', 'Hours/Day', 'Notes'];
 
 describe('Reading a spreadsheet', () => {
@@ -37,6 +56,19 @@ describe('Reading a spreadsheet', () => {
     expect(sheet.name).toBe('Resources');
     expect(sheet.rows[0]).toEqual(TEMPLATE_HEADER);
     expect(sheet.rows[1]).toEqual(['Production', 'EC2', 't3.large', '2', 'ap-south-1', '24', 'web tier']);
+  });
+
+  test('a valid xlsx using prefixed spreadsheet namespaces is still readable', async () => {
+    const buffer = await prefixedNamespaceXlsxBuffer([
+      TEMPLATE_HEADER,
+      ['Production', 'EC2', 'm6i.large', 2, 'ap-south-1', 24, 'web tier'],
+    ]);
+
+    const [sheet] = await readWorkbook(buffer, 'prefixed-template.xlsx');
+
+    expect(sheet.name).toBe('Resources');
+    expect(sheet.rows[0]).toEqual(TEMPLATE_HEADER);
+    expect(sheet.rows[1]).toEqual(['Production', 'EC2', 'm6i.large', '2', 'ap-south-1', '24', 'web tier']);
   });
 
   test('a csv comma inside quotes stays in one cell', async () => {

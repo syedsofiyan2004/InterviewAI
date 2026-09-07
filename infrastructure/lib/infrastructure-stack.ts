@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import { CalculatorAgentCore } from './calculator-agentcore';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -554,6 +555,54 @@ export class IepStack extends cdk.Stack {
     calculatorOrchestrator.grantInvoke(apiHandler);
     calculatorSidecar.grantInvoke(apiHandler);
 
+    // ─── AgentCore Calculator (Phase 1–2) ─────────────────────────────────────
+    //
+    // Provisions the new AgentCore-based execution path alongside the existing
+    // Lambda orchestrator. Production traffic stays on the old path until Phase 5
+    // acceptance tests pass and the CALCULATOR_EXECUTION_MODE feature flag is
+    // set to 'agentcore-harness'.
+    //
+    // CfnHarness is not yet available in aws-cdk-lib 2.250.0; the "Harness" is
+    // implemented as a Lambda calling Bedrock InvokeInlineAgent (the managed agent
+    // loop). CDK will be updated to use CfnHarness when the construct ships.
+    const calculatorAgentCore = new CalculatorAgentCore(this, 'CalculatorAgentCore', {
+      envName,
+      account,
+      region,
+      existingSidecar: calculatorSidecar,
+      estimatesTable: calculatorEstimatesTable,
+      filesBucket,
+      calculatorTable,
+      browserValidator: calculatorBrowserValidator,
+      agentModelId: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6',
+      maxIterations: 40,
+    });
+
+    // ─── Production path: the API handler starts a Step Functions execution ────
+    //
+    // In agentcore-runtime mode the route does NOT invoke a Lambda to run the estimate.
+    // It writes evidence to S3, starts the state machine and returns. The only thing it
+    // needs is permission to start and describe that execution.
+    calculatorAgentCore.executionStateMachine.grantStartExecution(apiHandler);
+    calculatorAgentCore.executionStateMachine.grantRead(apiHandler);
+    apiHandler.addEnvironment(
+      'CALCULATOR_EXECUTION_STATE_MACHINE_ARN',
+      calculatorAgentCore.executionStateMachine.stateMachineArn,
+    );
+    apiHandler.addEnvironment('CALCULATOR_HARNESS_ARN', calculatorAgentCore.harnessArn);
+    apiHandler.addEnvironment('CALCULATOR_AGENT_GATEWAY_ARN', calculatorAgentCore.gateway.attrGatewayArn);
+
+    // Rollback only. The grant and the ARN stay so `legacy-invokemodel` remains reachable
+    // by changing one environment variable, but nothing routes here by default.
+    calculatorAgentCore.agentLambda.grantInvoke(apiHandler);
+    apiHandler.addEnvironment('CALCULATOR_AGENT_LAMBDA_ARN', calculatorAgentCore.agentLambda.functionArn);
+
+    // Default is the real AgentCore path. 'legacy-invokemodel' and 'legacy-compiler' are
+    // the documented rollbacks. The former default, 'agentcore-harness', is deliberately
+    // not a valid mode any more: it named a Lambda that ran its own InvokeModel loop and
+    // never called AgentCore at all, so keeping the name would keep the confusion.
+    apiHandler.addEnvironment('CALCULATOR_EXECUTION_MODE', process.env.CALCULATOR_EXECUTION_MODE || 'agentcore-runtime');
+
     // 6. Cognito User Pool (self sign-up enabled, email-based)
     //
     // Email delivery. Leaving COGNITO_SES_FROM_ADDRESS unset keeps Cognito's
@@ -882,6 +931,7 @@ export class IepStack extends cdk.Stack {
     // authorizer rather than on the chat's Function URL: the conversation may only ever
     // propose, and the write path keeps the same gate as every other mutation.
     singleCalculation.addResource('revise').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleCalculation.addResource('answer').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     // Estimate projects, mirroring mom-projects below: an estimate belongs to at most one
     // project and the calculator opens on the project list. A sibling of /calculator

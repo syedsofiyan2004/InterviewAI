@@ -353,6 +353,14 @@ export interface CalculationResultResponse {
   scenario_summaries?: ScenarioSummary[] | null;
   /** How many critical requirements remain unresolved. Null until plan is ready. */
   unresolved_critical_count?: number | null;
+  /** Questions returned by the AgentCore calculator when it needs user input mid-run. */
+  agent_questions?: Array<{
+    resource?: string;
+    field?: string;
+    question: string;
+    reason?: string;
+  }>;
+  question_count?: number | null;
 }
 
 export interface CreateCalculationInput {
@@ -534,6 +542,15 @@ export const calculatorApi = {
 
   async getCalculationResult(id: string): Promise<CalculationResultResponse> {
     const res = await authFetch(`${API_URL}/calculator/${id}/result`);
+    return handleResponse(res);
+  },
+
+  async answerCalculationQuestion(id: string, answer: string): Promise<{ calculation_id: string; status: CalculationStatus }> {
+    const res = await authFetch(`${API_URL}/calculator/${id}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    });
     return handleResponse(res);
   },
 

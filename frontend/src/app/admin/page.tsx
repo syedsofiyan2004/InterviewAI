@@ -37,9 +37,10 @@ function OverviewContent() {
   }
 
   const metrics = [
-    { label: 'Interview reports', total: overview.total_interviews, href: '/admin/interviews', icon: LayoutDashboard, breakdown: overview.interviews },
-    { label: 'MOM reports', total: overview.total_moms, href: '/admin/moms', icon: ListChecks, breakdown: overview.moms },
+    { application: 'HireRite', label: 'Interview reports', total: overview.total_interviews, href: '/admin/interviews', icon: LayoutDashboard, breakdown: overview.interviews },
+    { application: 'MOM Analyzer', label: 'MOM reports', total: overview.total_moms, href: '/admin/moms', icon: ListChecks, breakdown: overview.moms },
     {
+      application: 'HireRite',
       label: 'Review workspaces',
       total: overview.total_workspaces ?? overview.total_intelligence,
       href: '/admin/candidates',
@@ -47,6 +48,7 @@ function OverviewContent() {
       breakdown: overview.workspaces ?? overview.intelligence,
     },
     {
+      application: 'Cost Calculator',
       label: 'Cost estimates',
       total: overview.total_calculations ?? 0,
       href: '/admin/calculator',
@@ -57,8 +59,11 @@ function OverviewContent() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {metrics.map((metric) => {
+      {['HireRite', 'MOM Analyzer', 'Cost Calculator'].map(application => (
+        <section key={application} aria-label={`${application} administration`}>
+          <h2 className="mb-3 text-lg font-semibold text-text-primary">{application}</h2>
+          <div className="grid gap-5 sm:grid-cols-2">
+        {metrics.filter(metric => metric.application === application).map((metric) => {
           const Icon = metric.icon;
           const statuses = Object.entries(metric.breakdown ?? {}).filter(([, count]) => count > 0);
           return (
@@ -81,7 +86,9 @@ function OverviewContent() {
             </Link>
           );
         })}
-      </div>
+          </div>
+        </section>
+      ))}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Link href="/admin/search" className="card flex items-center gap-3 p-4 transition-colors hover:bg-surface-interactive">

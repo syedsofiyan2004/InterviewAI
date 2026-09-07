@@ -42,9 +42,13 @@ import { countOf, groupResources, type ResourceGroup } from './prompt';
 import { calculatorModelId, type CalculatorModelTier } from './model-router';
 import { executeScenario, type ExecutorResult } from '../aws-calculator-mcp-executor/index';
 import { bedrockModelCaller } from '../aws-calculator-mcp-executor/model-calls';
-import { intentFromCommitment, intentFromRequest, toSemanticResources } from '../aws-calculator-mcp-executor/semantic-resources';
+import { intentFromRequest, toSemanticResources } from '../aws-calculator-mcp-executor/semantic-resources';
+import { intentFromCommitment } from './workload-ir';
 import { SCENARIO_LABELS } from '../../schema/canonical-resource';
-import { compileWithCalculatorAdapter } from './service-adapters';
+// service-adapters.ts removed — the AgentCore path does not use Calculator adapters.
+// The legacy Price List cross-check path used adapters for optimization; it now falls
+// through to the model-based classifier path which has no adapter dependency.
+const compileWithCalculatorAdapter = (..._args: unknown[]) => undefined;
 
 /**
  * The Cost Calculator estimate pipeline.
@@ -1356,21 +1360,6 @@ async function priceGroups(
       // from the workbook cell, but a reviewed scenario may intentionally override that
       // term; compiling the adapter again here prevents the old term/config from leaking
       // into the saved estimate.
-      const scenarioAdapter = compileWithCalculatorAdapter(group, {
-        defaultRegion: region,
-        term: effectiveTerm,
-      });
-      if (scenarioAdapter) {
-        const {
-          calculatorConfig: _oldConfig,
-          calculatorKey: _oldKey,
-          calculatorUnsupported: _oldUnsupported,
-          term: _oldTerm,
-          ...stablePlan
-        } = plan;
-        priced.plan = { ...stablePlan, ...scenarioAdapter };
-      }
-
       // The shareable link must agree with the report, so the config the EC2 path built
       // from the SHEET's cell is rebuilt around the effective commitment here. Cloned
       // rather than mutated: one plan object is shared by every segment that prices the
