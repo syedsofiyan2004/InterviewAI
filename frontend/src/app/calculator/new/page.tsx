@@ -480,7 +480,7 @@ function NewCalculationForm() {
   const confirmAndRun = async () => {
     if (!calculationId || !plan) return;
     const unresolvedHigh = plan.unresolved.some((entry) => !entry.resolved && entry.impact === 'high');
-    if (unresolvedHigh || plan.status === 'NEEDS_INPUT') {
+    if (unresolvedHigh) {
       setError('Resolve every high-impact requirement before building the estimate.');
       return;
     }
@@ -608,9 +608,13 @@ function NewCalculationForm() {
                 <div className="flex items-start gap-3">
                   <AlertCircle size={18} className="mt-0.5 shrink-0 text-warning" />
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-semibold text-text-primary">Input required</h3>
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      {openQuestions.some((entry) => entry.impact === 'high') ? 'Input required' : 'Optional review notes'}
+                    </h3>
                     <p className="mt-1 text-sm leading-6 text-text-secondary">
-                      High-impact gaps block generation. Answers are stored as typed resource constraints in a new plan revision.
+                      {openQuestions.some((entry) => entry.impact === 'high')
+                        ? 'High-impact gaps block generation. Answers are stored as typed resource constraints in a new plan revision.'
+                        : 'These are advisory assumptions the agent can resolve, default, or ask about later if they become material. You can fill them now, or start the estimate.'}
                     </p>
                     <div className="mt-4 space-y-4">
                       {openQuestions.map((question) => (
@@ -708,7 +712,7 @@ function NewCalculationForm() {
               <button
                 type="button"
                 onClick={() => void confirmAndRun()}
-                disabled={running || plan.status === 'NEEDS_INPUT' || openQuestions.some((entry) => entry.impact === 'high') || !!proposal}
+                disabled={running || openQuestions.some((entry) => entry.impact === 'high') || !!proposal}
                 className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold disabled:opacity-50"
               >
                 {running ? <Loader2 size={17} className="animate-spin" /> : <Calculator size={17} />}
