@@ -19,8 +19,11 @@ export const GET_WORKBOOK_EVIDENCE_TOOL = {
     'rather than full evidence, a sheet is referenced but not present, or a total does not',
     'reconcile with the rows you can see.',
     'Filter by chunkId, sheet, row range, environment or fiscal period.',
-    'If the reply says moreAvailable, call again with nextChunkId until it does not.',
-    'Rows are never discarded — anything not returned is still retrievable.',
+    'A chunk is returned whole or not at all: if the reply says moreAvailable, call again',
+    'with nextChunkId until it does not; if the reply also returns nextRowsFrom, pass it as',
+    'rowsFrom on the next call so the oversized chunk resumes at the exact unread row.',
+    'returnedChunks lists only chunks that were fully returned. Rows are never discarded or',
+    'duplicated — anything not returned is still retrievable.',
   ].join(' '),
   inputSchema: {
     type: 'object',
