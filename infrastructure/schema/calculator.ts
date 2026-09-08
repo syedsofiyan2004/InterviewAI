@@ -883,6 +883,17 @@ export const CalculationRecordSchema = z.object({
   coverage_repair_requested_at: z.number().optional(),
 
   /**
+   * Durable material-clarification repair bookkeeping. A COMPLETED answer is rejected once
+   * when the agent itself says a cost-material customer value was missing/ambiguous and
+   * then defaulted or assumed anyway. The follow-up stays in the same AgentCore session and
+   * asks the agent to call request_user_input.
+   */
+  material_clarification_requested: z.boolean().optional(),
+  material_clarification_attempted: z.boolean().optional(),
+  material_clarification_requested_at: z.number().optional(),
+  material_clarification_evidence: z.array(z.string()).optional(),
+
+  /**
    * Set on an estimate created by applying a chat-proposed change.
    *
    * A revision is a NEW row, not an edit of the original: a PDF or workbook already

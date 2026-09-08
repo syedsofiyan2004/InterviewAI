@@ -829,6 +829,10 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
   // post-send bookkeeping AND tells finalise a repair is already spent if the agent answers
   // with another COMPLETED claim inside the same step.
   let sentCoverageRepair = false;
+  // True once THIS step sends the single material-clarification continuation. This catches
+  // the bad final shape where the agent says a material customer value was missing, then
+  // prices a guessed/defaulted value anyway.
+  let sentMaterialClarificationRepair = false;
 
   if (resumingInlineFunction) {
     // Part 16: replay the original assistant toolUse and supply the customer's toolResult.
@@ -837,6 +841,9 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     // WAITING_FOR_INPUT with the full pending state so the same answer can be retried.
     // Clearing happens only after agentCore.send resolves (below).
     messages = buildResumeMessages(pendingToolUses, event.answers!);
+  } else if (iteration > 0 && record.material_clarification_requested === true) {
+    messages = [{ role: 'user', content: [{ text: buildMaterialClarificationRepairMessage(record) }] }];
+    sentMaterialClarificationRepair = true;
   } else if (iteration > 0 && record.coverage_repair_requested === true) {
     // Part 34: the record carries an outstanding coverage-repair request. Send the repair
     // instruction this step. It stays `coverage_repair_requested` until the Harness accepts
@@ -911,6 +918,19 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       progress_message: 'Pricing the remaining workbook rows…',
       coverage_repair_requested: null,
       coverage_repair_attempted: true,
+      agent_session_id: sessionId,
+      agent_last_activity_at: Date.now(),
+    });
+  } else if (sentMaterialClarificationRepair) {
+    // The Harness accepted the same-session correction turn, so the one allowed repair is
+    // spent. If the agent still completes by guessing, finalise will mark the result
+    // NEEDS_REVIEW rather than looping or trusting it.
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'ANALYZING',
+      progress_message: 'Asking the calculator agent to clarify missing workload details…',
+      material_clarification_requested: null,
+      material_clarification_attempted: true,
       agent_session_id: sessionId,
       agent_last_activity_at: Date.now(),
     });
@@ -1114,6 +1134,7 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     durationMs, traceKey,
     agentIterations: stepNumber,
     launchedCoverageRepair: sentCoverageRepair,
+    launchedMaterialClarificationRepair: sentMaterialClarificationRepair,
   });
   return outcome.terminal
     ? { calculationId, sessionId, iteration: iteration + 1, done: true, status: outcome.status }
@@ -1161,6 +1182,73 @@ Once every row is accounted for, run validate_estimate, then export_estimate, th
 
 // ─── Finalisation ────────────────────────────────────────────────────────────
 
+
+function materialClarificationEvidence(result: AgentCompleted): string[] {
+  const materialWords = [
+    'material', 'cost', 'price', 'pricing', 'monthly', 'annual',
+    'region', 'instance', 'node', 'count', 'storage', 'traffic', 'duration',
+    'frequency', 'multi-az', 'single-az', 'availability', 'term', 'payment',
+    'on-demand', 'savings plan', 'reserved',
+  ];
+  const missingWords = [
+    'not specified', 'unspecified', 'missing', 'omitted', 'unknown',
+    'not provided', 'not stated', 'ambiguous', 'unclear',
+  ];
+  const guessedWords = [
+    'assumed', 'assumption', 'defaulted', 'default', 'chosen', 'selected',
+    'used', 'set to', 'fallback',
+  ];
+  const source = [
+    ...(result.assumptions ?? []).map((text) => `assumption: ${text}`),
+    ...(result.warnings ?? []).map((text) => `warning: ${text}`),
+  ];
+
+  return source.filter((entry) => {
+    const text = entry.toLowerCase();
+    return materialWords.some((word) => text.includes(word))
+      && missingWords.some((word) => text.includes(word))
+      && guessedWords.some((word) => text.includes(word));
+  }).slice(0, 8);
+}
+
+function buildMaterialClarificationRepairMessage(record: CalculationRecord): string {
+  const priorEvidence = Array.isArray(record.material_clarification_evidence)
+    ? record.material_clarification_evidence
+      .filter((entry): entry is string => typeof entry === 'string' && !!entry)
+      .slice(0, 8)
+    : [];
+  const listed = priorEvidence.length
+    ? `Your previous final answer said these material customer workload values were missing or ambiguous, but then priced guessed/defaulted values anyway:\n${priorEvidence.map((entry) => ` - ${entry}`).join('\n')}\n`
+    : 'Your previous final answer appears to have priced guessed/defaulted material customer workload values.\n';
+
+  return `${listed}
+That is not a safe completed estimate. Stay in this SAME AgentCore session.
+
+Do not create a new estimate from the guessed values. Convert the first unresolved material customer workload decision into a request_user_input call now. The question must be contextual and structured, using the connected MCP guidance/options when appropriate, and it must ask for the customer value that materially changes the architecture or price.
+
+Do not ask about Calculator implementation details such as field IDs, minimalConfig scaffolding, or internal selector values. Ask only for the missing customer workload fact. After the customer answers, continue in this same session and update/rebuild the estimate with the answered value.`;
+}
+
+
+function failedResultCustomerQuestion(result: AgentFailed): AgentQuestion | undefined {
+  const message = result.message || '';
+  const category = (result.errorCategory || '').toUpperCase();
+  const text = `${category} ${message}`.toLowerCase();
+  const needsCustomerInput = category.includes('MISSING_REQUIRED_INPUT')
+    || (/(missing|required|unspecified|not specified|not provided|cannot continue|cannot safely proceed)/i.test(text)
+      && /(customer|workload|instance|region|multi-az|single-az|availability|pricing|duration|frequency|traffic|storage|count)/i.test(text));
+  if (!needsCustomerInput || !message) return undefined;
+
+  return {
+    questionId: `missing-input-${Date.now().toString(36)}`,
+    type: 'TEXT',
+    title: 'Workload details needed',
+    question: `The calculator agent needs these details before it can produce an accurate estimate:\n\n${message}\n\nPlease provide the missing value(s).`,
+    reason: 'The agent reported that the missing value(s) materially affect the AWS estimate and cannot be safely defaulted.',
+    allowApplyToSimilarResources: true,
+  };
+}
+
 async function finalise(input: {
   record: CalculationRecord;
   calculationId: string;
@@ -1180,9 +1268,31 @@ async function finalise(input: {
    * COMPLETED claim inside the same step it was asked to repair.
    */
   launchedCoverageRepair?: boolean;
+  launchedMaterialClarificationRepair?: boolean;
 }): Promise<{ terminal: boolean; status?: string }> {
   const { record, calculationId, result, mcpToolsUsed, toolCallCounts } = input;
   const owner = record.owner_user_id;
+
+  if (result.status === 'FAILED') {
+    const customerQuestion = failedResultCustomerQuestion(result);
+    if (customerQuestion) {
+      await patch(calculationId, {
+        status: 'WAITING_FOR_INPUT',
+        progress_stage: 'WAITING_FOR_INPUT',
+        progress_message: REQUEST_USER_INPUT_MESSAGE,
+        agent_session_id: input.sessionId,
+        agent_questions: [customerQuestion],
+        question_count: 1,
+        agent_last_activity_at: Date.now(),
+        agent_duration_ms: record.agent_started_at ? Date.now() - record.agent_started_at : input.durationMs,
+        agent_iterations: input.agentIterations,
+        tool_call_count: input.toolCallCount,
+        tool_call_counts: toolCallCounts,
+        mcp_tools_used: mcpToolsUsed,
+      });
+      return { terminal: true, status: 'WAITING_FOR_INPUT' };
+    }
+  }
 
   // Evidence accounting (Parts 32-36): coverage is reconciled against the ACTUAL workbook,
   // never against what the agent chose to report. The authoritative cost-relevant row set is
@@ -1257,6 +1367,32 @@ async function finalise(input: {
     return { terminal: false };
   }
 
+  const materialClarificationFindings = result.status === 'COMPLETED'
+    ? materialClarificationEvidence(result)
+    : [];
+  const launchedMaterialClarificationRepair = input.launchedMaterialClarificationRepair === true;
+  const materialClarificationAlreadyAttempted = record.material_clarification_attempted === true;
+  if (
+    result.status === 'COMPLETED'
+    && materialClarificationFindings.length > 0
+    && !materialClarificationAlreadyAttempted
+    && !launchedMaterialClarificationRepair
+  ) {
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'ANALYZING',
+      progress_message: 'Checking whether missing workload details need your input…',
+      material_clarification_requested: true,
+      material_clarification_requested_at: Date.now(),
+      material_clarification_evidence: materialClarificationFindings,
+      agent_last_activity_at: Date.now(),
+      tool_call_count: input.toolCallCount,
+      tool_call_counts: toolCallCounts,
+      agent_iterations: input.agentIterations,
+    });
+    return { terminal: false };
+  }
+
   // Cumulative run telemetry for the terminal write (Parts 38-39): wall-clock since the
   // run's first step started, the total message rounds, and the per-tool histogram.
   const agentDurationMs = record.agent_started_at ? Date.now() - record.agent_started_at : input.durationMs;
@@ -1300,13 +1436,18 @@ async function finalise(input: {
   if (!scenarioCoveragePassed) {
     warnings.push(`This workbook has ${requiredScenarioCount} scenario(s), but the agent returned ${pricedScenarioCount} priced scenario result(s). The estimate is not verified.`);
   }
+  if (result.status === 'COMPLETED' && materialClarificationFindings.length > 0) {
+    warnings.push('The agent completed after defaulting one or more missing material workload values, so the estimate is not verified.');
+  }
   const readBackPassed = result.status === 'COMPLETED' && renderedTotals?.validUrl === true && monthlyTotal !== null;
   const coveragePassed = result.status === 'COMPLETED' && unresolvedCount === 0 && scenarioCoveragePassed;
-  const costVerified = readBackPassed && coveragePassed;
+  const materialClarificationPassed = result.status !== 'COMPLETED' || materialClarificationFindings.length === 0;
+  const costVerified = readBackPassed && coveragePassed && materialClarificationPassed;
   const completionBlocked = result.status === 'COMPLETED' && !costVerified;
   if (completionBlocked) {
     if (!readBackPassed) warnings.push('The saved AWS Pricing Calculator estimate could not be read back with a monthly total, so the cost is not verified.');
     if (!coveragePassed) warnings.push('The workbook coverage reconciliation did not pass, so the cost is not verified.');
+    if (!materialClarificationPassed) warnings.push('A missing material customer workload value was defaulted instead of clarified, so the cost is not verified.');
   }
   const completedScenarios = result.status === 'COMPLETED'
     ? (result.scenarios ?? []).map((scenario, index) => ({
@@ -1365,6 +1506,8 @@ async function finalise(input: {
       costVerified,
       coverageUnresolvedRows: unresolvedCount,
       coverageRepairAttempted: record.coverage_repair_attempted === true,
+      materialClarificationRepairAttempted: record.material_clarification_attempted === true,
+      materialClarificationFindings,
       renderedTotals: renderedTotals ?? null,
       tracePath: input.traceKey,
     },
