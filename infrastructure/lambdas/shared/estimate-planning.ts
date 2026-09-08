@@ -480,11 +480,16 @@ export function buildInitialPlan(input: InitialPlanInput): EstimatePlanV2 {
     field: 'sagemaker.inference_configuration',
     scope: ['service:SageMaker'], impact: 'medium',
   });
-  if (uniqueFamilies.has('Lambda')) addQuestion(unresolved, {
-    prompt: 'Provide the Lambda execution profile: memory in MB and average duration in ms. Aggregate GB-seconds will not be converted into a guessed profile.',
-    field: 'lambda.execution_profile',
-    scope: ['service:Lambda'], impact: 'medium',
-  });
+  if (uniqueFamilies.has('Lambda')) {
+    const hasAggregateGbSeconds = input.resources.some((resource) => serviceFamily(resource) === 'Lambda'
+      && resource.quantities?.some((quantity) => /gb[-\s]?seconds/i.test(quantity.unit)));
+    addQuestion(unresolved, {
+      prompt: 'Provide the Lambda execution profile: memory in MB and average duration in ms. Aggregate GB-seconds will not be converted into a guessed profile.',
+      field: 'lambda.execution_profile',
+      scope: ['service:Lambda'],
+      impact: hasAggregateGbSeconds ? 'high' : 'medium',
+    });
+  }
   if (uniqueFamilies.has('Bedrock')) {
     addQuestion(unresolved, {
       prompt: 'Choose the Bedrock model/provider used by this workload.',
@@ -1038,7 +1043,9 @@ export function applyPlanProposal(
       return question.scope.some((scope) => change.scope.includes(scope));
     },
   );
-  const unresolved = plan.unresolved.filter((question) => !question.resolved && !resolvedQuestion(question));
+  const unresolved = plan.unresolved.filter((question) => !question.resolved
+    && !(question.field === 'scenario.selection' && proposal.scenarios?.length)
+    && !resolvedQuestion(question));
   return {
     ...plan,
     status: unresolved.some((question) => question.impact === 'high') ? 'NEEDS_INPUT' : 'READY',

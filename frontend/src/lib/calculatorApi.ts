@@ -18,6 +18,7 @@ export type CalculationStatus =
   | 'UPLOADED'
   | 'ANALYZING'
   | 'REVIEW_REQUIRED'
+  | 'WAITING_FOR_INPUT'
   | 'CONFIRMED'
   | 'PROCESSING'
   | 'BUILDING'
@@ -361,6 +362,7 @@ export interface CalculationResultResponse {
     reason?: string;
   }>;
   question_count?: number | null;
+  cost_verified?: boolean | null;
 }
 
 export interface CreateCalculationInput {
@@ -511,11 +513,13 @@ export const calculatorApi = {
       evidence?: Array<{ sheet?: string; row?: number; label?: string; value?: string }>;
     }>,
     requirementPatches?: RequirementPatch[],
+    scenarios?: PlannedScenario[],
   ): Promise<{ proposal: PlanProposal }> {
     const res = await authFetch(`${API_URL}/calculator/plans/${id}/proposals`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         requirements,
         requirement_patches: requirementPatches,
+        scenarios,
       }),
     });
     return handleResponse(res);

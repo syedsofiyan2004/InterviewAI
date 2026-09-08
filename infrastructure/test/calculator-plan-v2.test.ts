@@ -97,6 +97,54 @@ describe('Estimate Plan v2 review lifecycle', () => {
       .toContainEqual(expect.objectContaining({ sheet: 'Any Customer', row: 9 }));
   });
 
+  test('keeps multi-band workbook scenarios available for the AgentCore run', () => {
+    const plan = buildInitialPlan({
+      workbookId: 'multi-band-workbook',
+      defaultRegion: 'ap-south-1',
+      resources: [
+        { raw: 'Fargate 26-27', service: 'AWS Fargate', scenario: '26-27', quantity: '10', vcpu: 1, ram_gb: 2 },
+        { raw: 'Fargate 27-28', service: 'AWS Fargate', scenario: '27-28', quantity: '20', vcpu: 1, ram_gb: 2 },
+      ],
+      workbook: {
+        bands: [
+          { key: '26-27', label: '26-27', kind: 'period', sheet: 'Digital Assets', resource_count: 1 },
+          { key: '27-28', label: '27-28', kind: 'period', sheet: 'Digital Assets', resource_count: 1 },
+        ],
+      } as any,
+    });
+
+    expect(plan.status).toBe('READY');
+    expect(plan.recommendedScenarios.map((scenario) => scenario.label)).toEqual(['26-27', '27-28']);
+    expect(plan.unresolved.some((entry) => entry.field === 'scenario.selection')).toBe(false);
+  });
+
+  test('applying a selected workbook scenario narrows the executable plan', () => {
+    const plan = buildInitialPlan({
+      workbookId: 'multi-band-workbook',
+      defaultRegion: 'ap-south-1',
+      resources: [
+        { raw: 'Fargate 26-27', service: 'AWS Fargate', scenario: '26-27', quantity: '10', vcpu: 1, ram_gb: 2 },
+        { raw: 'Fargate 27-28', service: 'AWS Fargate', scenario: '27-28', quantity: '20', vcpu: 1, ram_gb: 2 },
+      ],
+      workbook: {
+        bands: [
+          { key: '26-27', label: '26-27', kind: 'period', sheet: 'Digital Assets', resource_count: 1 },
+          { key: '27-28', label: '27-28', kind: 'period', sheet: 'Digital Assets', resource_count: 1 },
+        ],
+      } as any,
+    });
+    const proposal = createPlanProposal(plan, {
+      scenarios: [{ label: '27-28', scope: '27-28', environments: [], pricing_model: 'sheet-specified' }],
+    });
+    const revised = applyPlanProposal(plan, proposal);
+
+    expect(revised.status).toBe('READY');
+    expect(revised.recommendedScenarios).toEqual([
+      { label: '27-28', scope: '27-28', environments: [], pricing_model: 'sheet-specified' },
+    ]);
+    expect(revised.unresolved.some((entry) => entry.field === 'scenario.selection')).toBe(false);
+  });
+
   test('asks for Lambda execution profile instead of treating aggregate GB-seconds as ready', () => {
     const plan = buildInitialPlan({
       workbookId: 'lambda-book',

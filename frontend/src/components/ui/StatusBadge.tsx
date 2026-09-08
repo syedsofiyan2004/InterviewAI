@@ -26,6 +26,7 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     QUEUED: "text-warning bg-warning/10 border-warning/25",
     ANALYZING: "text-info bg-info/10 border-info/25 animate-pulse",
     REVIEW_REQUIRED: "text-warning bg-warning/10 border-warning/25",
+    WAITING_FOR_INPUT: "text-warning bg-warning/10 border-warning/25",
     PROCESSING: "text-warning bg-warning/10 border-warning/25 animate-pulse",
     COMPLETED: "text-success bg-success/10 border-success/25",
     PARTIAL: "text-warning bg-warning/10 border-warning/25",
@@ -51,6 +52,7 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     QUEUED: "text-warning",
     ANALYZING: "text-info",
     REVIEW_REQUIRED: "text-warning",
+    WAITING_FOR_INPUT: "text-warning",
     PROCESSING: "text-warning",
     COMPLETED: "text-success",
     PARTIAL: "text-warning",
@@ -77,6 +79,7 @@ export function StatusBadge({ status, variant = 'dot', className }: StatusBadgeP
     ANALYSIS_GENERATED: 'Report ready',
     ANALYSIS_FAILED: 'Analysis failed',
     REVIEW_REQUIRED: 'Needs review',
+    WAITING_FOR_INPUT: 'Waiting for input',
     PARTIAL: 'Validation incomplete',
   };
 

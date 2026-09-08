@@ -498,6 +498,8 @@ async function createCalculationInternal(
       console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
     }
   }
+  const unresolvedCriticalCount = countUnresolvedCritical(planV2);
+  const shouldStartWorker = startWorker && unresolvedCriticalCount === 0;
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
@@ -505,7 +507,7 @@ async function createCalculationInternal(
     name: input.name,
     prompt,
     region: input.region,
-    status: startWorker ? 'PROCESSING' : 'REVIEW_REQUIRED',
+    status: shouldStartWorker ? 'PROCESSING' : 'REVIEW_REQUIRED',
     environment_hours: resolveEnvironmentHours(input.environment_hours),
     resources,
     ...(resourcesS3Key ? { resources_s3_key: resourcesS3Key } : {}),
@@ -532,9 +534,9 @@ async function createCalculationInternal(
     ...(projectTitle ? { project_title: projectTitle } : {}),
     created_at: now,
     updated_at: now,
-    progress_stage: startWorker ? 'queued' : 'review',
-    progress_message: startWorker ? 'Starting estimate' : 'Analysis ready for review and customization',
-    unresolved_critical_count: countUnresolvedCritical(planV2),
+    progress_stage: shouldStartWorker ? 'queued' : 'review',
+    progress_message: shouldStartWorker ? 'Starting estimate' : 'Analysis ready for review and customization',
+    unresolved_critical_count: unresolvedCriticalCount,
   };
 
   // Backstop before the write, not a hope after it (Step 9). Large artifacts already live
@@ -543,7 +545,7 @@ async function createCalculationInternal(
   const sized = enforceItemSizeBudget(persistable as unknown as Record<string, unknown>);
   await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
 
-  if (!startWorker) {
+  if (!shouldStartWorker) {
     return createdResponse({
       calculation_id: record.calculation_id,
       status: record.status,
@@ -1178,7 +1180,7 @@ export async function answerCalculationQuestion(
   if (error) return error;
 
   const sessionId = (item as { agent_session_id?: string }).agent_session_id;
-  if (item!.status !== 'REVIEW_REQUIRED' || !sessionId) {
+  if (!['WAITING_FOR_INPUT', 'REVIEW_REQUIRED'].includes(item!.status) || !sessionId) {
     return errorResponse(409, 'CONFLICT', 'This estimate is not waiting for an agent answer.');
   }
 

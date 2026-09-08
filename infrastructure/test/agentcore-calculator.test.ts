@@ -19,6 +19,8 @@
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { IepStack } from '../lib/infrastructure-stack';
+import { buildInitialMessage } from '../lambdas/calculator-harness-driver';
+import * as awsShared from '../lambdas/shared/aws';
 
 let template: Template;
 let templateJson: string;
@@ -267,6 +269,42 @@ describe('AgentCore Harness (managed Claude loop)', () => {
         }),
       }),
     });
+  });
+});
+
+describe('AgentCore workbook handoff', () => {
+  it('makes the agent own multi-scenario clarification before Calculator MCP execution', async () => {
+    jest.spyOn(awsShared, 'getFileBuffer').mockImplementation(async (_bucket: string, key: string) => {
+      if (key.endsWith('/evidence/index.json')) {
+        return Buffer.from(JSON.stringify({
+          fileName: 'multi-scenario.xlsx',
+          sheets: [{ name: 'Digital Assets', rowCount: 20 }],
+          chunks: [],
+          detectedEnvironments: ['Dev', 'UAT'],
+          detectedFiscalPeriods: ['26-27', '27-28'],
+          serviceHints: ['AWS Fargate'],
+          accounting: { totalRows: 20, costRelevantRows: 18, totalChunks: 0 },
+        }));
+      }
+      throw new Error('full evidence not present');
+    });
+
+    const message = await buildInitialMessage({
+      calculation_id: 'calc-1',
+      owner_user_id: 'user-1',
+      name: 'Multi scenario estimate',
+      prompt: 'Price the workbook accurately.',
+      status: 'ANALYZING',
+      environment_hours: [],
+      resources: [],
+      input_warnings: [],
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    } as any, 'calc-1');
+
+    expect(message).toContain('This workbook contains multiple environments and/or fiscal periods.');
+    expect(message).toContain('return NEEDS_INPUT JSON');
+    expect(message).toContain('Do not create a partial single-scenario calculator link and call it complete.');
   });
 });
 

@@ -189,7 +189,7 @@ function CalculationDetailContent() {
       const next = await calculatorApi.getCalculationResult(id);
       setData(next);
       setError(null);
-      return ['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED', 'REVIEW_REQUIRED'].includes(next.status);
+      return ['COMPLETED', 'NEEDS_REVIEW', 'PARTIAL', 'FAILED', 'REVIEW_REQUIRED', 'WAITING_FOR_INPUT'].includes(next.status);
     } catch (err: unknown) {
       setError(errorMessage(err, 'Could not load this estimate'));
       // Stop polling on a hard error rather than hammering a failing endpoint.
@@ -335,7 +335,7 @@ function CalculationDetailContent() {
         </div>
       )}
 
-      {data?.status === 'REVIEW_REQUIRED' && (
+      {(data?.status === 'REVIEW_REQUIRED' || data?.status === 'WAITING_FOR_INPUT') && (
         <div className="card border-warning/30 bg-warning/5 p-5">
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />

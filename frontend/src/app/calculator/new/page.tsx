@@ -403,7 +403,7 @@ function NewCalculationForm() {
   };
 
   const applyRequiredAnswers = async () => {
-    if (!calculationId) return;
+    if (!calculationId || !plan || !currentRevision) return;
     const missing = blockingQuestions.filter((question) => (
       !answerIsComplete(question.field, answerForQuestion(question), question.options)
     ));
@@ -416,7 +416,15 @@ function NewCalculationForm() {
       setError(optionErrors[0]);
       return;
     }
+    const selectedScenarioLabels = blockingQuestions
+      .filter((question) => question.field === 'scenario.selection')
+      .map((question) => String(answerForQuestion(question)).trim())
+      .filter(Boolean);
+    const selectedScenarios = selectedScenarioLabels.length
+      ? currentRevision.scenarios.filter((scenario) => selectedScenarioLabels.includes(scenario.label))
+      : undefined;
     const answeredPatches = blockingQuestions
+      .filter((question) => question.field !== 'scenario.selection')
       .map((question) => ({ question, answer: answerForQuestion(question) }))
       .filter(({ answer, question }) => answerIsComplete(question.field, answer, question.options))
       .map(({ question, answer }): RequirementPatch => ({
@@ -424,15 +432,15 @@ function NewCalculationForm() {
         field: question.field,
         operation: 'set',
         value: answer,
-        source: 'user',
-        reason: question.prompt,
-      }));
-    if (!answeredPatches.length) return;
+      source: 'user',
+      reason: question.prompt,
+    }));
+    if (!answeredPatches.length && !selectedScenarios?.length) return;
 
     setError(null);
     setCustomizing(true);
     try {
-      const proposed = await calculatorApi.proposeStructuredPlan(calculationId, [], answeredPatches);
+      const proposed = await calculatorApi.proposeStructuredPlan(calculationId, [], answeredPatches, selectedScenarios);
       if (proposed.proposal.unresolved.length) {
         setProposal(proposed.proposal);
         return;

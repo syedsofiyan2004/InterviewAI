@@ -27,6 +27,8 @@ export const CalculationStatus = z.enum([
   'ANALYZING',
   /** Missing critical inputs require user review before execution. */
   'REVIEW_REQUIRED',
+  /** AgentCore is paused mid-run and can resume after the user answers. */
+  'WAITING_FOR_INPUT',
   /** Plan confirmed; executor not yet started. */
   'CONFIRMED',
   /** Legacy alias still accepted from older records. */
@@ -775,6 +777,7 @@ export const CalculationRecordSchema = z.object({
   iterations: z.number().optional(),
   tool_call_count: z.number().optional(),
   question_count: z.number().optional(),
+  cost_verified: z.boolean().optional(),
   agent_questions: z.array(z.object({
     resource: z.string().optional(),
     field: z.string().optional(),

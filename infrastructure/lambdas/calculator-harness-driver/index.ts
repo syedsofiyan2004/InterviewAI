@@ -81,6 +81,13 @@ const PROGRESS_BY_TOOL: Record<string, { stage: Stage; message: string }> = {
 /** Gateway tool names arrive as `<target>___<tool>`. */
 const bareToolName = (name: string) => String(name).split('___').pop()!;
 
+const expectedScenarioCount = (record: CalculationRecord): number => {
+  const plan = record.plan_v2;
+  const currentRevision = plan?.revisions?.find((revision) => revision.revisionId === plan.currentRevisionId);
+  const planned = currentRevision?.scenarios?.length || plan?.recommendedScenarios?.length || 0;
+  return planned || record.requested_plan?.scenarios?.length || record.workbook?.bands?.length || 0;
+};
+
 // ─── Agent result contract ───────────────────────────────────────────────────
 
 interface AgentCompleted {
@@ -93,6 +100,7 @@ interface AgentCompleted {
   servicesConfigured?: string[];
   assumptions?: string[];
   warnings?: string[];
+  scenarios?: Array<unknown>;
   evidenceConsumed?: string[];
   evidenceExcluded?: string[];
   evidenceUnsupported?: string[];
@@ -147,7 +155,7 @@ async function patch(calculationId: string, fields: Record<string, unknown>): Pr
  * agent is given the customer's workload and told to go and find out how the Calculator
  * expresses it.
  */
-async function buildInitialMessage(record: CalculationRecord, calculationId: string): Promise<string> {
+export async function buildInitialMessage(record: CalculationRecord, calculationId: string): Promise<string> {
   const owner = record.owner_user_id;
   const lines: string[] = [
     'Build an AWS Pricing Calculator estimate for this customer workload.',
@@ -184,6 +192,12 @@ async function buildInitialMessage(record: CalculationRecord, calculationId: str
   if (index.detectedFiscalPeriods.length) lines.push(`Fiscal periods seen: ${index.detectedFiscalPeriods.join(', ')}`);
   if (index.serviceHints.length) lines.push(`Service hints (indicative only, confirm with the MCP): ${index.serviceHints.join(', ')}`);
   lines.push('');
+  if (index.detectedEnvironments.length > 1 || index.detectedFiscalPeriods.length > 1) {
+    lines.push('This workbook contains multiple environments and/or fiscal periods.');
+    lines.push('Before creating any AWS Pricing Calculator estimate, decide from the workbook and customer instructions whether one estimate should cover all concurrently active environments, one selected period/environment, or separate estimates per scenario.');
+    lines.push('If that choice is not explicit, stop and return NEEDS_INPUT JSON with one concise question and options drawn from the workbook. Do not create a partial single-scenario calculator link and call it complete.');
+    lines.push('');
+  }
 
   // A workbook small enough to inline is inlined whole; nothing is summarised away.
   let inlined = false;
@@ -230,6 +244,7 @@ async function buildInitialMessage(record: CalculationRecord, calculationId: str
   lines.push('');
   lines.push('Configure this workload through the Calculator MCP tools, validate it, export it,');
   lines.push('and finish with the COMPLETED JSON object including the real calculator.aws URL.');
+  lines.push('For workbooks with separate scenario bands, include a scenarios array in the COMPLETED JSON with one entry per priced scenario.');
   lines.push('Report the evidence row ids you used in evidenceConsumed, and account for every');
   lines.push('billable row as consumed, excluded, unsupported or unresolved.');
 
@@ -625,6 +640,22 @@ async function finalise(input: {
   if (unresolvedCount > 0) {
     warnings.push(`${unresolvedCount} workbook row(s) that look billable were not reported as priced, excluded or unsupported. Open the Source Trace sheet to review them.`);
   }
+  const requiredScenarioCount = expectedScenarioCount(record);
+  const pricedScenarioCount = result.status === 'COMPLETED' ? ((result as AgentCompleted).scenarios?.length || 0) : 0;
+  const scenarioCoveragePassed = result.status !== 'COMPLETED'
+    || requiredScenarioCount <= 1
+    || pricedScenarioCount >= requiredScenarioCount;
+  if (!scenarioCoveragePassed) {
+    warnings.push(`This workbook has ${requiredScenarioCount} scenario(s), but the agent returned ${pricedScenarioCount} priced scenario result(s). The estimate is not verified.`);
+  }
+  const readBackPassed = result.status === 'COMPLETED' && renderedTotals?.validUrl === true && monthlyTotal !== null;
+  const coveragePassed = result.status === 'COMPLETED' && unresolvedCount === 0 && scenarioCoveragePassed;
+  const costVerified = readBackPassed && coveragePassed;
+  const completionBlocked = result.status === 'COMPLETED' && !costVerified;
+  if (completionBlocked) {
+    if (!readBackPassed) warnings.push('The saved AWS Pricing Calculator estimate could not be read back with a monthly total, so the cost is not verified.');
+    if (!coveragePassed) warnings.push('The workbook coverage reconciliation did not pass, so the cost is not verified.');
+  }
 
   const calculationResult = CalculationResultSchema.parse({
     url: result.status === 'COMPLETED' ? result.calculatorUrl : null,
@@ -637,7 +668,9 @@ async function finalise(input: {
     scenarios: [],
     assumptions: result.status === 'COMPLETED' ? (result.assumptions ?? []) : [],
     warnings,
-    validationErrors: result.status === 'FAILED' ? [result.message || 'The agent did not complete.'] : [],
+    validationErrors: result.status === 'FAILED'
+      ? [result.message || 'The agent did not complete.']
+      : completionBlocked ? warnings : [],
     diagnostics: {
       MIMO_BUILD_SHA: process.env.MIMO_BUILD_SHA || 'unknown',
       EXECUTION_MODE,
@@ -649,6 +682,7 @@ async function finalise(input: {
       mcpRuntimeIdentifier: MCP_RUNTIME_IDENTIFIER,
       toolCallCount: input.toolCallCount,
       calculatorUrlCreated: result.status === 'COMPLETED',
+      costVerified,
       renderedTotals: renderedTotals ?? null,
       tracePath: input.traceKey,
     },
@@ -657,8 +691,8 @@ async function finalise(input: {
   const resultS3Key = calculationResultKey(owner, calculationId);
   await saveFileContent(BUCKET_NAME, resultS3Key, JSON.stringify(calculationResult), 'application/json');
 
-  const status = result.status === 'COMPLETED' ? 'COMPLETED'
-    : result.status === 'NEEDS_INPUT' ? 'REVIEW_REQUIRED'
+  const status = result.status === 'COMPLETED' ? (costVerified ? 'COMPLETED' : 'NEEDS_REVIEW')
+    : result.status === 'NEEDS_INPUT' ? 'WAITING_FOR_INPUT'
       : 'FAILED';
 
   await patch(calculationId, {
@@ -666,8 +700,10 @@ async function finalise(input: {
     progress_stage: status === 'COMPLETED' ? 'COMPLETED' : status,
     progress_message: status === 'COMPLETED'
       ? 'Estimate ready'
-      : status === 'REVIEW_REQUIRED'
+      : status === 'WAITING_FOR_INPUT'
         ? 'A workload question needs your answer'
+        : status === 'NEEDS_REVIEW'
+          ? 'Estimate needs review before it can be trusted'
         : 'We could not complete this AWS estimate automatically.',
     // Small summary only. The full result object lives in S3 (Phase 22).
     result: compactCalculationResult(calculationResult),
@@ -678,6 +714,7 @@ async function finalise(input: {
     total_12_months: total12Months ?? undefined,
     warning_count: warnings.length,
     question_count: result.status === 'NEEDS_INPUT' ? result.questions.length : 0,
+    cost_verified: costVerified,
     // Customer-facing copy only (Phase 20). Raw diagnostics stay in S3/CloudWatch.
     error_message: status === 'FAILED' ? "We couldn't complete this AWS estimate automatically." : undefined,
     agent_questions: result.status === 'NEEDS_INPUT' ? result.questions.slice(0, 20) : undefined,
