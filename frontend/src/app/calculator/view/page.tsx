@@ -107,6 +107,8 @@ function CalculationDetailContent() {
   const [downloadingDocument, setDownloadingDocument] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [agentAnswer, setAgentAnswer] = useState('');
+  const [agentAnswers, setAgentAnswers] = useState<Record<string, string>>({});
+  const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
   // See the list page: window.confirm puts the CloudFront hostname above the message,
   // which reads as a browser warning instead of the app asking.
@@ -128,11 +130,30 @@ function CalculationDetailContent() {
   };
 
   const answerAgent = async () => {
-    if (!id || !agentAnswer.trim()) return;
+    if (!id) return;
+    const question = data?.agent_questions?.[0];
+    const key = question?.questionId || `${question?.resource || 'question'}-0`;
+    const raw = question ? (agentAnswers[key] ?? '').trim() : agentAnswer.trim();
+    if (!raw) return;
     setAnsweringAgent(true);
     try {
-      await calculatorApi.answerCalculationQuestion(id, agentAnswer.trim());
+      if (question) {
+        const value = question.type === 'NUMBER' ? Number(raw)
+          : question.type === 'BOOLEAN' ? raw === 'true'
+            : raw;
+        await calculatorApi.answerCalculationQuestion(id, {
+          questionId: question.questionId,
+          resource: question.resource,
+          semanticField: question.semanticField || question.field,
+          value,
+          applyToSimilarResources: !!applyToSimilar[key],
+        });
+      } else {
+        await calculatorApi.answerCalculationQuestion(id, raw);
+      }
       setAgentAnswer('');
+      setAgentAnswers({});
+      setApplyToSimilar({});
       await fetchResult();
     } catch (err: unknown) {
       setError(errorMessage(err, "Couldn't continue the estimate with that answer."));
@@ -351,32 +372,93 @@ function CalculationDetailContent() {
               {!!data.agent_questions?.length && (
                 <div className="mt-4 space-y-3">
                   {data.agent_questions.map((question, index) => (
-                    <div key={`${question.resource || 'question'}-${index}`} className="rounded-xl border border-warning/25 bg-surface/70 p-3">
-                      <p className="text-sm font-semibold text-text-primary">{question.question}</p>
+                    <div key={`${question.questionId || question.resource || 'question'}-${index}`} className="rounded-xl border border-warning/25 bg-surface/70 p-3">
+                      <p className="text-sm font-semibold text-text-primary">{question.title || question.question}</p>
+                      {question.title && <p className="mt-1 text-sm leading-6 text-text-secondary">{question.question}</p>}
                       {question.reason && <p className="mt-1 text-xs leading-5 text-text-muted">{question.reason}</p>}
-                      {(question.resource || question.field) && (
+                      {(question.resource || question.semanticField || question.field) && (
                         <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                          {[question.resource, question.field].filter(Boolean).join(' · ')}
+                          {[question.resource, question.semanticField || question.field].filter(Boolean).join(' · ')}
                         </p>
+                      )}
+                      {index === 0 && (() => {
+                        const key = question.questionId || `${question.resource || 'question'}-${index}`;
+                        const commonClass = 'mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent';
+                        if (question.type === 'CHOICE' && question.choices?.length) {
+                          return (
+                            <select
+                              value={agentAnswers[key] ?? ''}
+                              onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+                              className={commonClass}
+                            >
+                              <option value="">Select an option</option>
+                              {question.choices.map((choice) => (
+                                <option key={choice.value} value={choice.value}>{choice.label}</option>
+                              ))}
+                            </select>
+                          );
+                        }
+                        if (question.type === 'BOOLEAN') {
+                          return (
+                            <select
+                              value={agentAnswers[key] ?? ''}
+                              onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+                              className={commonClass}
+                            >
+                              <option value="">Select yes or no</option>
+                              <option value="true">Yes</option>
+                              <option value="false">No</option>
+                            </select>
+                          );
+                        }
+                        return (
+                          <input
+                            type={question.type === 'NUMBER' ? 'number' : 'text'}
+                            value={agentAnswers[key] ?? ''}
+                            onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+                            placeholder={question.type === 'NUMBER' && question.unit ? `Enter value in ${question.unit}` : 'Enter your answer'}
+                            className={commonClass}
+                          />
+                        );
+                      })()}
+                      {index === 0 && question.allowApplyToSimilarResources && (
+                        <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-text-secondary">
+                          <input
+                            type="checkbox"
+                            checked={!!applyToSimilar[question.questionId || `${question.resource || 'question'}-${index}`]}
+                            onChange={(event) => {
+                              const key = question.questionId || `${question.resource || 'question'}-${index}`;
+                              setApplyToSimilar((current) => ({ ...current, [key]: event.target.checked }));
+                            }}
+                            className="h-4 w-4 rounded border-border text-accent"
+                          />
+                          Apply this answer to similar resources
+                        </label>
                       )}
                     </div>
                   ))}
                   <div className="rounded-xl border border-border bg-surface p-3">
                     <label htmlFor="agent-answer" className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-                      Answer for the calculator agent
+                      {data.agent_questions[0]?.type ? 'Continue with this answer' : 'Answer for the calculator agent'}
                     </label>
-                    <textarea
-                      id="agent-answer"
-                      value={agentAnswer}
-                      onChange={(event) => setAgentAnswer(event.target.value)}
-                      rows={4}
-                      placeholder="Example: Treat rows 185-320 as Windows Server, use 1-year no-upfront Savings Plan, and keep grouped entries acceptable for this estimate."
-                      className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
-                    />
+                    {!data.agent_questions[0]?.type && (
+                      <textarea
+                        id="agent-answer"
+                        value={agentAnswer}
+                        onChange={(event) => setAgentAnswer(event.target.value)}
+                        rows={4}
+                        placeholder="Example: Treat rows 185-320 as Windows Server, use 1-year no-upfront Savings Plan, and keep grouped entries acceptable for this estimate."
+                        className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() => void answerAgent()}
-                      disabled={answeringAgent || !agentAnswer.trim()}
+                      disabled={answeringAgent || (() => {
+                        const question = data.agent_questions[0];
+                        const key = question?.questionId || `${question?.resource || 'question'}-0`;
+                        return question?.type ? !(agentAnswers[key] ?? '').trim() : !agentAnswer.trim();
+                      })()}
                       className="btn-primary mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
                     >
                       {answeringAgent && <Loader2 size={14} className="animate-spin" />}

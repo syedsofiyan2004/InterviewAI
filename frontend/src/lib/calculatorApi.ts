@@ -356,10 +356,18 @@ export interface CalculationResultResponse {
   unresolved_critical_count?: number | null;
   /** Questions returned by the AgentCore calculator when it needs user input mid-run. */
   agent_questions?: Array<{
+    questionId?: string;
     resource?: string;
+    semanticField?: string;
     field?: string;
+    type?: 'CHOICE' | 'NUMBER' | 'BOOLEAN' | 'TEXT';
+    title?: string;
     question: string;
     reason?: string;
+    choices?: Array<{ value: string; label: string }>;
+    recommended?: string | number | boolean | null;
+    unit?: string;
+    allowApplyToSimilarResources?: boolean;
   }>;
   question_count?: number | null;
   cost_verified?: boolean | null;
@@ -549,11 +557,20 @@ export const calculatorApi = {
     return handleResponse(res);
   },
 
-  async answerCalculationQuestion(id: string, answer: string): Promise<{ calculation_id: string; status: CalculationStatus }> {
+  async answerCalculationQuestion(
+    id: string,
+    answer: string | {
+      questionId?: string;
+      resource?: string;
+      semanticField?: string;
+      value: string | number | boolean;
+      applyToSimilarResources?: boolean;
+    },
+  ): Promise<{ calculation_id: string; status: CalculationStatus }> {
     const res = await authFetch(`${API_URL}/calculator/${id}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answer }),
+      body: JSON.stringify(typeof answer === 'string' ? { answer } : { answer, answers: [answer] }),
     });
     return handleResponse(res);
   },

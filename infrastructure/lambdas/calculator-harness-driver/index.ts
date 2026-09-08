@@ -31,10 +31,8 @@ import {
 import { ddbDocClient, getFileBuffer, saveFileContent } from '../shared/aws.js';
 import {
   evidenceIndexKey,
-  evidenceFullKey,
   evidenceAccountingKey,
   reconcileEvidence,
-  type WorkbookEvidence,
   type WorkbookEvidenceIndex,
 } from '../shared/workbook-evidence.js';
 import { calculationResultKey, compactCalculationResult } from '../shared/calculator-result-storage.js';
@@ -94,13 +92,14 @@ interface AgentCompleted {
   status: 'COMPLETED';
   estimateId?: string;
   calculatorUrl: string;
+  calculatorUrls?: string[];
   monthly?: number | null;
   upfront?: number | null;
   total12Months?: number | null;
   servicesConfigured?: string[];
   assumptions?: string[];
   warnings?: string[];
-  scenarios?: Array<unknown>;
+  scenarios?: Array<Record<string, unknown>>;
   evidenceConsumed?: string[];
   evidenceExcluded?: string[];
   evidenceUnsupported?: string[];
@@ -108,9 +107,26 @@ interface AgentCompleted {
   mcpToolsUsed?: string[];
 }
 
+type AgentQuestionType = 'CHOICE' | 'NUMBER' | 'BOOLEAN' | 'TEXT';
+
+interface AgentQuestion {
+  questionId?: string;
+  resource?: string;
+  semanticField?: string;
+  field?: string;
+  type: AgentQuestionType;
+  title?: string;
+  question: string;
+  reason?: string;
+  choices?: Array<{ value: string; label: string }>;
+  recommended?: string | number | boolean | null;
+  unit?: string;
+  allowApplyToSimilarResources?: boolean;
+}
+
 interface AgentNeedsInput {
   status: 'NEEDS_INPUT';
-  questions: Array<{ resource?: string; field?: string; question: string; reason?: string }>;
+  questions: AgentQuestion[];
 }
 
 interface AgentFailed {
@@ -188,65 +204,19 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   lines.push(`Workbook: ${index.fileName}`);
   lines.push(`Sheets: ${index.sheets.map((sheet) => `${sheet.name} (${sheet.rowCount} rows)`).join(', ')}`);
   lines.push(`Total rows: ${index.accounting.totalRows}. Rows that look billable: ${index.accounting.costRelevantRows}.`);
-  if (index.detectedEnvironments.length) lines.push(`Environments seen: ${index.detectedEnvironments.join(', ')}`);
-  if (index.detectedFiscalPeriods.length) lines.push(`Fiscal periods seen: ${index.detectedFiscalPeriods.join(', ')}`);
-  if (index.serviceHints.length) lines.push(`Service hints (indicative only, confirm with the MCP): ${index.serviceHints.join(', ')}`);
   lines.push('');
-  if (index.detectedEnvironments.length > 1 || index.detectedFiscalPeriods.length > 1) {
-    lines.push('This workbook contains multiple environments and/or fiscal periods.');
-    lines.push('Before creating any AWS Pricing Calculator estimate, decide from the workbook and customer instructions whether one estimate should cover all concurrently active environments, one selected period/environment, or separate estimates per scenario.');
-    lines.push('If that choice is not explicit, stop and return NEEDS_INPUT JSON with one concise question and options drawn from the workbook. Do not create a partial single-scenario calculator link and call it complete.');
-    lines.push('');
-  }
 
-  // A workbook small enough to inline is inlined whole; nothing is summarised away.
-  let inlined = false;
-  try {
-    const raw = (await getFileBuffer(BUCKET_NAME, evidenceFullKey(owner, calculationId))).toString('utf8');
-    if (Buffer.byteLength(raw, 'utf8') <= 200_000) {
-      const evidence = JSON.parse(raw) as WorkbookEvidence;
-      lines.push('Complete workbook evidence follows. It is the whole workbook, not a sample.');
-      lines.push('');
-      for (const sheet of evidence.sheets) {
-        lines.push(`Sheet: ${sheet.name} (${sheet.rows.length} rows)`);
-        for (const row of sheet.rows) {
-          const cells = row.cells
-            .filter((cell) => String(cell.formatted).trim() !== '')
-            .map((cell) => {
-              const label = cell.header || cell.inheritedHeader;
-              return `${cell.address}${label ? ` [${label}]` : ''}=${JSON.stringify(cell.formatted)}`;
-            })
-            .join(' | ');
-          if (cells) lines.push(`  ${row.rowId}: ${cells}`);
-        }
-        lines.push('');
-      }
-      inlined = true;
-    }
-  } catch { /* fall through to the chunked instruction */ }
-
-  if (!inlined) {
-    lines.push(`This workbook is too large to include in one message. It is split into ${index.accounting.totalChunks} chunks:`);
-    for (const chunk of index.chunks) {
-      const hints = [
-        ...chunk.environmentHints,
-        ...chunk.fiscalPeriodHints,
-        ...chunk.serviceHints,
-      ].join(', ');
-      lines.push(`  chunk ${chunk.chunkId}: ${chunk.sheet} rows ${chunk.rowsFrom}-${chunk.rowsTo}`
-        + ` (${chunk.costRelevantRowCount} billable-looking rows)${hints ? ` — ${hints}` : ''}`);
-    }
-    lines.push('');
-    lines.push('Fetch every chunk you need with get_workbook_evidence before finalising.');
-    lines.push('No rows have been discarded — everything listed above is retrievable.');
+  lines.push(`The workbook evidence is available through get_workbook_evidence in ${index.accounting.totalChunks} chunk(s):`);
+  for (const chunk of index.chunks) {
+    lines.push(`  chunk ${chunk.chunkId}: ${chunk.sheet} rows ${chunk.rowsFrom}-${chunk.rowsTo}`
+      + ` (${chunk.costRelevantRowCount} billable-looking rows)`);
   }
+  lines.push('');
+  lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
+  lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
   lines.push('');
-  lines.push('Configure this workload through the Calculator MCP tools, validate it, export it,');
-  lines.push('and finish with the COMPLETED JSON object including the real calculator.aws URL.');
-  lines.push('For workbooks with separate scenario bands, include a scenarios array in the COMPLETED JSON with one entry per priced scenario.');
-  lines.push('Report the evidence row ids you used in evidenceConsumed, and account for every');
-  lines.push('billable row as consumed, excluded, unsupported or unresolved.');
+  lines.push('Use the connected AWS Pricing Calculator MCP to create, validate, export and read back the requested estimate.');
 
   return lines.join('\n');
 }
@@ -294,7 +264,12 @@ export function parseAgentResult(text: string): AgentResult | undefined {
     (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
   if (parsed.status === 'COMPLETED') {
-    const url = typeof parsed.calculatorUrl === 'string' ? parsed.calculatorUrl : '';
+    const calculatorUrls = Array.isArray(parsed.calculatorUrls)
+      ? parsed.calculatorUrls.filter((url): url is string => typeof url === 'string' && url.includes('calculator.aws'))
+      : [];
+    const url = typeof parsed.calculatorUrl === 'string' && parsed.calculatorUrl
+      ? parsed.calculatorUrl
+      : calculatorUrls[0] || '';
     if (!url.includes('calculator.aws')) {
       return {
         status: 'FAILED',
@@ -306,6 +281,7 @@ export function parseAgentResult(text: string): AgentResult | undefined {
       status: 'COMPLETED',
       estimateId: typeof parsed.estimateId === 'string' ? parsed.estimateId : undefined,
       calculatorUrl: url,
+      calculatorUrls,
       monthly: numberOrNull(parsed.monthly),
       upfront: numberOrNull(parsed.upfront),
       total12Months: numberOrNull(parsed.total12Months),
@@ -317,17 +293,46 @@ export function parseAgentResult(text: string): AgentResult | undefined {
       evidenceUnsupported: strings(parsed.evidenceUnsupported) ?? [],
       evidenceUnresolved: strings(parsed.evidenceUnresolved) ?? [],
       mcpToolsUsed: strings(parsed.mcpToolsUsed) ?? [],
+      scenarios: Array.isArray(parsed.scenarios)
+        ? (parsed.scenarios as Array<unknown>).filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        : [],
     };
   }
   if (parsed.status === 'NEEDS_INPUT') {
+    const questionType = (value: unknown): AgentQuestionType => {
+      const normalised = typeof value === 'string' ? value.toUpperCase() : '';
+      return ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'].includes(normalised)
+        ? normalised as AgentQuestionType
+        : 'TEXT';
+    };
     const questions = Array.isArray(parsed.questions)
       ? (parsed.questions as Array<Record<string, unknown>>)
         .filter((entry) => typeof entry?.question === 'string')
         .map((entry) => ({
+          questionId: typeof entry.questionId === 'string' ? entry.questionId : undefined,
           resource: typeof entry.resource === 'string' ? entry.resource : undefined,
+          semanticField: typeof entry.semanticField === 'string' ? entry.semanticField : undefined,
           field: typeof entry.field === 'string' ? entry.field : undefined,
+          type: questionType(entry.type),
+          title: typeof entry.title === 'string' ? entry.title : undefined,
           question: entry.question as string,
           reason: typeof entry.reason === 'string' ? entry.reason : undefined,
+          choices: Array.isArray(entry.choices)
+            ? entry.choices
+              .filter((choice): choice is Record<string, unknown> => !!choice && typeof choice === 'object')
+              .map((choice) => ({
+                value: String(choice.value ?? choice.label ?? ''),
+                label: String(choice.label ?? choice.value ?? ''),
+              }))
+              .filter((choice) => choice.value && choice.label)
+            : undefined,
+          recommended: ['string', 'number', 'boolean'].includes(typeof entry.recommended) || entry.recommended === null
+            ? entry.recommended as string | number | boolean | null
+            : undefined,
+          unit: typeof entry.unit === 'string' ? entry.unit : undefined,
+          allowApplyToSimilarResources: typeof entry.allowApplyToSimilarResources === 'boolean'
+            ? entry.allowApplyToSimilarResources
+            : undefined,
         }))
       : [];
     return { status: 'NEEDS_INPUT', questions };
@@ -656,6 +661,24 @@ async function finalise(input: {
     if (!readBackPassed) warnings.push('The saved AWS Pricing Calculator estimate could not be read back with a monthly total, so the cost is not verified.');
     if (!coveragePassed) warnings.push('The workbook coverage reconciliation did not pass, so the cost is not verified.');
   }
+  const completedScenarios = result.status === 'COMPLETED'
+    ? (result.scenarios ?? []).map((scenario, index) => ({
+      label: String(scenario.label ?? scenario.name ?? `Scenario ${index + 1}`),
+      url: typeof scenario.url === 'string' && scenario.url.includes('calculator.aws')
+        ? scenario.url
+        : typeof scenario.calculatorUrl === 'string' && scenario.calculatorUrl.includes('calculator.aws')
+          ? scenario.calculatorUrl
+          : null,
+      monthly: typeof scenario.monthly === 'number' ? scenario.monthly : null,
+      upfront: typeof scenario.upfront === 'number' ? scenario.upfront : null,
+      total_12_months: typeof scenario.total12Months === 'number'
+        ? scenario.total12Months
+        : typeof scenario.total_12_months === 'number'
+          ? scenario.total_12_months
+          : null,
+      status: 'COMPLETED' as const,
+    }))
+    : [];
 
   const calculationResult = CalculationResultSchema.parse({
     url: result.status === 'COMPLETED' ? result.calculatorUrl : null,
@@ -665,7 +688,7 @@ async function finalise(input: {
     monthlyTotal,
     lineItems: [],
     environments: [],
-    scenarios: [],
+    scenarios: completedScenarios,
     assumptions: result.status === 'COMPLETED' ? (result.assumptions ?? []) : [],
     warnings,
     validationErrors: result.status === 'FAILED'

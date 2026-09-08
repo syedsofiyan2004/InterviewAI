@@ -499,7 +499,11 @@ async function createCalculationInternal(
     }
   }
   const unresolvedCriticalCount = countUnresolvedCritical(planV2);
-  const shouldStartWorker = startWorker && unresolvedCriticalCount === 0;
+  // Production AgentCore mode starts immediately. MIMO may keep its legacy review plan
+  // for rollback/analyze flows, but it must not turn MIMO-generated questions into the
+  // active pricing decision path. Claude decides whether a material customer fact is
+  // missing and returns NEEDS_INPUT from the same AgentCore session.
+  const shouldStartWorker = startWorker;
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
@@ -1185,9 +1189,43 @@ export async function answerCalculationQuestion(
   }
 
   let answer = '';
+  let structuredAnswers: Array<{
+    questionId?: string;
+    resource?: string;
+    semanticField?: string;
+    value: string | number | boolean;
+    applyToSimilarResources?: boolean;
+    answered_at: number;
+    session_id: string;
+  }> = [];
   try {
-    const body = JSON.parse(event.body || '{}') as { answer?: unknown };
+    const body = JSON.parse(event.body || '{}') as { answer?: unknown; answers?: unknown };
+    const rawStructured = Array.isArray(body.answers)
+      ? body.answers
+      : body.answer && typeof body.answer === 'object'
+        ? [body.answer]
+        : [];
+    structuredAnswers = (rawStructured as Array<Record<string, unknown>>)
+      .flatMap((entry) => {
+        if (!['string', 'number', 'boolean'].includes(typeof entry.value)) return [];
+        return [{
+          questionId: typeof entry.questionId === 'string' ? entry.questionId : undefined,
+          resource: typeof entry.resource === 'string' ? entry.resource : undefined,
+          semanticField: typeof entry.semanticField === 'string' ? entry.semanticField : undefined,
+          value: entry.value as string | number | boolean,
+          applyToSimilarResources: typeof entry.applyToSimilarResources === 'boolean' ? entry.applyToSimilarResources : undefined,
+          answered_at: Date.now(),
+          session_id: sessionId,
+        }];
+      });
     answer = typeof body.answer === 'string' ? body.answer.trim() : '';
+    if (!answer && structuredAnswers.length) {
+      answer = structuredAnswers.map((entry, index) => {
+        const label = [entry.resource, entry.semanticField].filter(Boolean).join(' / ') || entry.questionId || `question ${index + 1}`;
+        const scope = entry.applyToSimilarResources ? ' (apply to similar resources)' : '';
+        return `${label}: ${String(entry.value)}${scope}`;
+      }).join('\n');
+    }
   } catch {
     answer = '';
   }
@@ -1203,7 +1241,9 @@ export async function answerCalculationQuestion(
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
       UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, '
-        + 'state_machine_execution_arn = :arn, agent_last_activity_at = :now, updated_at = :now REMOVE agent_questions',
+        + 'state_machine_execution_arn = :arn, agent_last_activity_at = :now, updated_at = :now'
+        + (structuredAnswers.length ? ', agent_answers = list_append(if_not_exists(agent_answers, :emptyAnswers), :answers)' : '')
+        + ' REMOVE agent_questions',
       ExpressionAttributeNames: { '#status': 'status' },
       ExpressionAttributeValues: {
         ':status': 'ANALYZING',
@@ -1211,6 +1251,7 @@ export async function answerCalculationQuestion(
         ':message': 'Continuing the estimate with your answer...',
         ':arn': started.executionArn,
         ':now': Date.now(),
+        ...(structuredAnswers.length ? { ':emptyAnswers': [], ':answers': structuredAnswers } : {}),
       },
     }));
     return successResponse({ calculation_id: item!.calculation_id, status: 'ANALYZING' });

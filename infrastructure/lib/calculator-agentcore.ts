@@ -38,6 +38,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 // No `.js` suffix: lib/ is loaded by ts-node under CommonJS, which does not remap a .js
 // specifier onto a .ts file the way jest's moduleNameMapper does. With the suffix, tests
 // pass and `cdk synth` dies with MODULE_NOT_FOUND.
@@ -433,6 +434,10 @@ export class CalculatorAgentCore extends Construct {
       require('path').join(__dirname, '../prompts/calculator-agent-system.txt'),
       'utf8',
     ) as string;
+    const harnessConfigHash = createHash('sha256')
+      .update(`${agentModelId}\n${harnessSystemPrompt}`)
+      .digest('hex')
+      .slice(0, 60);
 
     // Least privilege (Phase 32): the Harness needs exactly two things — permission to
     // invoke the one Claude model it is configured with, and permission to reach the one
@@ -578,8 +583,8 @@ export class CalculatorAgentCore extends Construct {
         GatewayArn: this.gateway.attrGatewayArn,
         MaxIterations: String(props.maxIterations ?? 60),
         MaxTokens: '8192',
-        // Enforce the documented primitive-only flow at the tool boundary, not
-        // just in the prompt. Harness allowedTools uses @server/tool patterns;
+        // Expose the official AWS Pricing Calculator MCP surface unchanged, plus the
+        // one MIMO-owned workbook evidence tool. Harness allowedTools uses @server/tool patterns;
         // calculator_mcp is the Harness tool name and the Gateway supplies the
         // calcmcp___ / mimoev___ target-prefixed MCP tool names.
         AllowedTools: [
@@ -589,6 +594,7 @@ export class CalculatorAgentCore extends Construct {
           '@calculator_mcp/calcmcp___create_estimate',
           '@calculator_mcp/calcmcp___add_service',
           '@calculator_mcp/calcmcp___validate_estimate',
+          '@calculator_mcp/calcmcp___build_estimate',
           '@calculator_mcp/calcmcp___export_estimate',
           '@calculator_mcp/calcmcp___import_estimate',
           '@calculator_mcp/mimoev___get_workbook_evidence',
@@ -606,7 +612,7 @@ export class CalculatorAgentCore extends Construct {
         TimeoutSeconds: '420',
         // Forces an update when only the prompt text changed — CloudFormation would
         // otherwise see identical properties and skip the UpdateHarness call.
-        ConfigHash: cdk.Fn.base64(`${agentModelId}:${harnessSystemPrompt.length}`).slice(0, 60),
+        ConfigHash: harnessConfigHash,
       },
     });
 

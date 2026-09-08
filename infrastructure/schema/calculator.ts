@@ -779,10 +779,30 @@ export const CalculationRecordSchema = z.object({
   question_count: z.number().optional(),
   cost_verified: z.boolean().optional(),
   agent_questions: z.array(z.object({
+    questionId: z.string().optional(),
     resource: z.string().optional(),
+    semanticField: z.string().optional(),
     field: z.string().optional(),
+    type: z.enum(['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT']).optional(),
+    title: z.string().optional(),
     question: z.string(),
     reason: z.string().optional(),
+    choices: z.array(z.object({
+      value: z.string(),
+      label: z.string(),
+    })).optional(),
+    recommended: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+    unit: z.string().optional(),
+    allowApplyToSimilarResources: z.boolean().optional(),
+  })).optional(),
+  agent_answers: z.array(z.object({
+    questionId: z.string().optional(),
+    resource: z.string().optional(),
+    semanticField: z.string().optional(),
+    value: z.union([z.string(), z.number(), z.boolean()]),
+    applyToSimilarResources: z.boolean().optional(),
+    answered_at: z.number(),
+    session_id: z.string(),
   })).optional(),
 
   /**

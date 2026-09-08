@@ -223,17 +223,24 @@ describe('AgentCore Harness (managed Claude loop)', () => {
     template.resourceCountIs('Custom::AgentCoreHarness', 1);
   });
 
-  it('prevents the Harness from calling build_estimate', () => {
+  it('exposes the complete official Calculator MCP surface plus workbook evidence', () => {
     const harness = Object.values(template.findResources('Custom::AgentCoreHarness'))[0];
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___get_server_info');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___search_services');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___get_service_fields');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___create_estimate');
     expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___add_service');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___validate_estimate');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___build_estimate');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___export_estimate');
+    expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___import_estimate');
     expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/mimoev___get_workbook_evidence');
-    expect(harness.Properties.AllowedTools).not.toContain('@calculator_mcp/calcmcp___build_estimate');
     expect(harness.Properties.AllowedTools).not.toContain('*');
   });
 
   it('passes the source-controlled system prompt and the Gateway ARN to the Harness', () => {
     const harness = Object.values(template.findResources('Custom::AgentCoreHarness'))[0] as any;
-    expect(harness.Properties.SystemPrompt).toContain('AWS Pricing Calculator agent');
+    expect(harness.Properties.SystemPrompt).toContain('AWS Cost Estimation agent');
     expect(harness.Properties.GatewayArn).toBeDefined();
     expect(harness.Properties.ModelId).toContain('claude');
   });
@@ -286,6 +293,18 @@ describe('AgentCore workbook handoff', () => {
           accounting: { totalRows: 20, costRelevantRows: 18, totalChunks: 0 },
         }));
       }
+      if (key.endsWith('/evidence/evidence.json')) {
+        return Buffer.from(JSON.stringify({
+          fileName: 'multi-scenario.xlsx',
+          sheets: [{
+            name: 'Digital Assets',
+            rows: [{
+              rowId: 'Digital Assets!2',
+              cells: [{ address: 'A2', header: 'Service', formatted: 'AWS Fargate' }],
+            }],
+          }],
+        }));
+      }
       throw new Error('full evidence not present');
     });
 
@@ -302,9 +321,9 @@ describe('AgentCore workbook handoff', () => {
       updated_at: Date.now(),
     } as any, 'calc-1');
 
-    expect(message).toContain('This workbook contains multiple environments and/or fiscal periods.');
-    expect(message).toContain('return NEEDS_INPUT JSON');
-    expect(message).toContain('Do not create a partial single-scenario calculator link and call it complete.');
+    expect(message).toContain('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
+    expect(message).not.toContain('This workbook contains multiple environments and/or fiscal periods.');
+    expect(message).not.toContain('Service hints');
   });
 });
 
@@ -406,27 +425,27 @@ describe('Legacy retention and rollback (Phase 33)', () => {
 describe('Agent system prompt', () => {
   it('is source-controlled and states the success contract', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('AWS Pricing Calculator agent');
+    expect(prompt).toContain('AWS Cost Estimation agent');
     expect(prompt).toContain('COMPLETED');
     expect(prompt).toContain('calculator.aws');
     expect(prompt).toContain('NEEDS_INPUT');
     expect(prompt).toContain('FAILED');
   });
 
-  it('encodes the autonomous default resolution order (Phase 9)', () => {
+  it('keeps the MCP authoritative instead of overriding Calculator behavior', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('explicit workbook value');
-    expect(prompt).toContain('MCP verified minimalConfig');
-    expect(prompt).toContain('MCP field default');
-    expect(prompt).toContain('ask the customer');
+    expect(prompt).toContain('Use the AWS Pricing Calculator MCP exactly according to its own tool descriptions.');
+    expect(prompt).toContain('minimalConfig');
+    expect(prompt).toContain('Never calculate AWS prices yourself.');
+    expect(prompt).not.toContain('Do not call build_estimate');
+    expect(prompt).not.toContain('build_estimate is unsupported');
   });
 
-  it('forbids asking the customer Calculator-internal field questions (Phase 16)', () => {
+  it('supports structured material-workload clarification without Calculator-internal questions', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('Not acceptable');
-    for (const banned of ['modelsPerEndPoint', 'Size_of_the_payload', 'Data_Written']) {
-      expect(prompt).toContain(banned);
-    }
+    expect(prompt).toContain('"type": "CHOICE|NUMBER|BOOLEAN|TEXT"');
+    expect(prompt).toContain('Do not ask about Calculator field IDs');
+    expect(prompt).toContain('internal selector values');
   });
 
   it('tells the agent to use get_workbook_evidence when evidence may be incomplete', () => {
