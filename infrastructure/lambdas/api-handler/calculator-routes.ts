@@ -1188,6 +1188,16 @@ export async function answerCalculationQuestion(
     return errorResponse(409, 'CONFLICT', 'This estimate is not waiting for an agent answer.');
   }
 
+  // A genuine request_user_input interrupt (WAITING_FOR_INPUT + a pending inline-function
+  // tool use) resumes by replaying the original assistant toolUse and supplying the
+  // customer's toolResult on the SAME runtimeSessionId. That interrupt must survive until
+  // the harness driver confirms InvokeHarness accepted the continuation, so this route only
+  // records that a resume was requested. The driver is the sole writer that clears
+  // pending_tool_* / agent_questions and moves WAITING_FOR_INPUT -> BUILDING, and it does so
+  // only after agentCore.send returns.
+  const resumingAgentCoreInterrupt = item!.status === 'WAITING_FOR_INPUT'
+    && Boolean((item as { pending_tool_use_id?: string }).pending_tool_use_id);
+
   let answer = '';
   let structuredAnswers: Array<{
     questionId?: string;
@@ -1241,24 +1251,43 @@ export async function answerCalculationQuestion(
       // original assistant toolUse message followed by the customer's toolResult.
       answers: structuredAnswers.length ? structuredAnswers : undefined,
     });
+    const answersAppend = structuredAnswers.length
+      ? ', agent_answers = list_append(if_not_exists(agent_answers, :emptyAnswers), :answers)'
+      : '';
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
       Key: { calculation_id: item!.calculation_id },
-      UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, '
-        + 'state_machine_execution_arn = :arn, agent_last_activity_at = :now, updated_at = :now'
-        + (structuredAnswers.length ? ', agent_answers = list_append(if_not_exists(agent_answers, :emptyAnswers), :answers)' : '')
-        + ' REMOVE agent_questions',
-      ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: {
-        ':status': 'ANALYZING',
-        ':stage': 'ANALYZING',
-        ':message': 'Continuing the estimate with your answer...',
-        ':arn': started.executionArn,
-        ':now': Date.now(),
-        ...(structuredAnswers.length ? { ':emptyAnswers': [], ':answers': structuredAnswers } : {}),
-      },
+      UpdateExpression: resumingAgentCoreInterrupt
+        // Keep WAITING_FOR_INPUT and the whole durable pause. Nothing here touches status,
+        // progress_*, pending_tool_* or agent_questions — the driver owns that transition
+        // once InvokeHarness accepts the resumed toolUse + toolResult.
+        ? `SET state_machine_execution_arn = :arn, resume_requested_at = :now, agent_last_activity_at = :now, updated_at = :now${answersAppend}`
+        // Legacy text resumption (REVIEW_REQUIRED, or a WAITING_FOR_INPUT with no pending
+        // inline-function tool use): the conversation continues with a plain user message, so
+        // the run visibly leaves the wait state here, exactly as before.
+        : `SET #status = :status, progress_stage = :stage, progress_message = :message, `
+          + `state_machine_execution_arn = :arn, agent_last_activity_at = :now, updated_at = :now${answersAppend}`
+          + ' REMOVE agent_questions',
+      ExpressionAttributeNames: resumingAgentCoreInterrupt ? undefined : { '#status': 'status' },
+      ExpressionAttributeValues: resumingAgentCoreInterrupt
+        ? {
+            ':arn': started.executionArn,
+            ':now': Date.now(),
+            ...(structuredAnswers.length ? { ':emptyAnswers': [], ':answers': structuredAnswers } : {}),
+          }
+        : {
+            ':status': 'ANALYZING',
+            ':stage': 'ANALYZING',
+            ':message': 'Continuing the estimate with your answer...',
+            ':arn': started.executionArn,
+            ':now': Date.now(),
+            ...(structuredAnswers.length ? { ':emptyAnswers': [], ':answers': structuredAnswers } : {}),
+          },
     }));
-    return successResponse({ calculation_id: item!.calculation_id, status: 'ANALYZING' });
+    return successResponse({
+      calculation_id: item!.calculation_id,
+      status: resumingAgentCoreInterrupt ? item!.status : 'ANALYZING',
+    });
   } catch (startError) {
     console.error(JSON.stringify({
       event: 'calculator_agent_answer_failed',

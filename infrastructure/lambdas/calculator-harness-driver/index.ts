@@ -589,6 +589,33 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       calculationId,
       errorInfo: JSON.stringify(event.errorInfo ?? null).slice(0, 4000),
     }));
+    // A resume execution can exhaust its retries while the record still holds an
+    // unanswered request_user_input pause — InvokeHarness never accepted the continuation.
+    // That is NOT an ordinary failure: the customer's answer was never taken, so the
+    // calculation must stay WAITING_FOR_INPUT with the pending question intact and the SAME
+    // agent_session_id, which lets the answer route retry the same answer. Only records with
+    // no pending interrupt keep the FAILED terminal state.
+    const failedRecord = (await ddbDocClient.send(new GetCommand({
+      TableName: CALCULATOR_TABLE_NAME,
+      Key: { calculation_id: calculationId },
+    }))).Item as CalculationRecord | undefined;
+
+    if (failedRecord?.pending_tool_use_id) {
+      await patch(calculationId, {
+        status: 'WAITING_FOR_INPUT',
+        progress_stage: 'WAITING_FOR_INPUT',
+        progress_message: "We couldn't continue with that answer. Please try again.",
+        agent_last_activity_at: Date.now(),
+      });
+      return {
+        calculationId,
+        sessionId: failedRecord.agent_session_id ?? '',
+        iteration: event.iteration ?? 0,
+        done: true,
+        status: 'WAITING_FOR_INPUT',
+      };
+    }
+
     await patch(calculationId, {
       status: 'FAILED',
       progress_stage: 'FAILED',

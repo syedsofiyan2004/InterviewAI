@@ -147,9 +147,61 @@ describe('request_user_input resume: one answered question still resumes correct
     });
 
     // The pause is cleared only after the Harness accepted the continuation (send
-    // returned), so the very first UpdateCommand is the clearing write.
+    // returned), so the very first UpdateCommand is the clearing write — and it is the
+    // transition to BUILDING, not a silent deletion.
     const firstUpdate = ddbMock.commandCalls(UpdateCommand)[0].args[0].input as any;
     expect(JSON.stringify(firstUpdate)).toContain('pending_tool_use_id');
     expect(JSON.stringify(firstUpdate)).toContain('agent_questions');
+    expect(JSON.stringify(firstUpdate)).toContain('BUILDING');
+  });
+});
+
+describe('request_user_input resume: an exhausted retry never FAILs an unaccepted interrupt', () => {
+  it('state-machine catch restores WAITING_FOR_INPUT with the pending question and SAME session, not FAILED', async () => {
+    // Mirrors MarkCalculationFailed: the resume driver invocation threw (InvokeHarness
+    // rejected), SFN retries exhausted, and the catch re-entered the driver in fail mode.
+    const { handler } = load();
+    const output = await handler({
+      calculationId: 'calc-1',
+      mode: 'fail',
+      errorInfo: { Error: 'InvokeHarness failed after retries' },
+    });
+
+    expect(output).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
+    // Same agent_session_id is reported back, so a retry resumes the same conversation.
+    expect(output.sessionId).toBe(SESSION_ID);
+
+    const update = ddbMock.commandCalls(UpdateCommand)[0].args[0].input as any;
+    const serialized = JSON.stringify(update);
+    expect(serialized).toContain('WAITING_FOR_INPUT');
+    expect(serialized).toContain("We couldn't continue with that answer. Please try again.");
+    // Not a FAILED conversion, and the durable pause is neither cleared nor rewritten, so
+    // the answer route can accept the same answer again.
+    expect(serialized).not.toContain('FAILED');
+    expect(serialized).not.toContain('pending_tool_use_id');
+    expect(serialized).not.toContain('agent_questions');
+    expect(serialized).not.toContain('agent_session_id');
+    expect(ddbMock).toHaveReceivedCommandTimes(UpdateCommand, 1);
+  });
+
+  it('keeps FAILED for an ordinary (non-interrupt) driver failure', async () => {
+    ddbMock.on(GetCommand).resolves({
+      Item: {
+        ...waitingRecord(),
+        status: 'BUILDING',
+        progress_stage: 'BUILDING',
+        pending_tool_use_id: undefined,
+        pending_tool_name: undefined,
+        pending_tool_input: undefined,
+        pending_tool_uses: undefined,
+        agent_questions: undefined,
+      },
+    });
+    const { handler } = load();
+    const output = await handler({ calculationId: 'calc-1', mode: 'fail', errorInfo: { Error: 'boom' } });
+
+    expect(output).toMatchObject({ done: true, status: 'FAILED' });
+    const serialized = JSON.stringify(ddbMock.commandCalls(UpdateCommand)[0].args[0].input as any);
+    expect(serialized).toContain('FAILED');
   });
 });

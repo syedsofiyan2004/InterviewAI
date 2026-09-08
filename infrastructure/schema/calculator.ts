@@ -827,6 +827,14 @@ export const CalculationRecordSchema = z.object({
   /** Persisted alongside the pause so the UI can render the live agent_session_id too. */
   agent_session_id: z.string().optional(),
   agent_last_activity_at: z.number().optional(),
+  /**
+   * Set when the customer submits an answer for a WAITING_FOR_INPUT request_user_input
+   * pause. The interrupt itself is NOT cleared here — the harness driver clears it only
+   * after InvokeHarness accepts the resumed assistant toolUse + user toolResult. If the
+   * continuation fails before that, the calculation stays WAITING_FOR_INPUT and the same
+   * answer can be retried against this timestamp.
+   */
+  resume_requested_at: z.number().optional(),
 
   /**
    * Set on an estimate created by applying a chat-proposed change.
