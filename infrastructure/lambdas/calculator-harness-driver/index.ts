@@ -26,9 +26,11 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import {
   BedrockAgentCoreClient,
   InvokeHarnessCommand,
+  type HarnessContentBlock,
   type HarnessMessage,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { ddbDocClient, getFileBuffer, saveFileContent } from '../shared/aws.js';
+import type { DocumentType } from '@smithy/types';
 import {
   evidenceIndexKey,
   evidenceAccountingKey,
@@ -78,6 +80,174 @@ const PROGRESS_BY_TOOL: Record<string, { stage: Stage; message: string }> = {
 
 /** Gateway tool names arrive as `<target>___<tool>`. */
 const bareToolName = (name: string) => String(name).split('___').pop()!;
+
+// ─── request_user_input: the Harness inline function (Phase 24) ──────────────
+//
+// request_user_input is a first-class AgentCore `inline_function` declared on the
+// Harness (NOT behind the Gateway). When Claude calls it the Harness pauses: the
+// InvokeHarness stream ends with messageStop.stopReason == "tool_use", and MIMO owns
+// the pause. The tool input follows a fixed semantic schema; it never carries
+// Calculator implementation detail.
+
+const REQUEST_USER_INPUT_TOOL = 'request_user_input';
+const REQUEST_USER_INPUT_STAGE = 'ANALYZING';
+const REQUEST_USER_INPUT_MESSAGE = 'A workload question needs your answer';
+
+/** A request_user_input tool use captured from the stream, in stream order. */
+interface CapturedToolUse {
+  /** contentBlockIndex of the block that STARTED this tool use. */
+  blockIndex: number;
+  toolUseId: string;
+  name: string;
+  /** Concatenated contentBlockDelta.delta.toolUse.input fragments. */
+  inputJson: string;
+}
+
+/** A fully-parsed pending tool use, persisted so the answer route can resume it. */
+export interface PendingToolUse {
+  toolUseId: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** A structured customer answer, the shape the answer route already collects. */
+export interface StructuredQuestionAnswer {
+  questionId?: string;
+  resource?: string;
+  semanticField?: string;
+  value: string | number | boolean;
+  applyToSimilarResources?: boolean;
+}
+
+const stringValue = (value: unknown): string | undefined =>
+  typeof value === 'string' && value ? value : undefined;
+
+/**
+ * Project a request_user_input tool input onto the frontend's agent_question shape.
+ * The tool's semantic schema already matches AgentQuestion 1:1, so this is a light
+ * coercion rather than a second pricing/semantic model.
+ */
+export function toolInputToAgentQuestion(input: Record<string, unknown>): AgentQuestion | undefined {
+  const question = stringValue(input.question);
+  if (!question) return undefined;
+  const type = stringValue(input.type)?.toUpperCase();
+  return {
+    questionId: stringValue(input.questionId),
+    resource: stringValue(input.resource),
+    semanticField: stringValue(input.semanticField),
+    field: stringValue(input.semanticField),
+    type: ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'].includes(type ?? '')
+      ? type as AgentQuestionType
+      : 'TEXT',
+    title: stringValue(input.title),
+    question,
+    reason: stringValue(input.reason),
+    choices: Array.isArray(input.choices)
+      ? (input.choices as Array<Record<string, unknown>>)
+        .map((choice) => ({
+          value: String(choice.value ?? choice.label ?? ''),
+          label: String(choice.label ?? choice.value ?? ''),
+          ...(stringValue(choice.description) ? { description: stringValue(choice.description) as string } : {}),
+        }))
+        .filter((choice) => choice.value && choice.label)
+      : undefined,
+    unit: stringValue(input.unit),
+    allowApplyToSimilarResources: typeof input.allowApplyToSimilarResources === 'boolean'
+      ? input.allowApplyToSimilarResources
+      : undefined,
+  };
+}
+
+/** Persisted inline-function pause state on the record (Phase 14). */
+export interface PendingToolState {
+  pending_tool_use_id?: string;
+  pending_tool_name?: string;
+  pending_tool_input?: Record<string, unknown>;
+  pending_tool_uses?: PendingToolUse[];
+}
+
+export function readPendingToolUses(record: CalculationRecord): PendingToolUse[] {
+  if (Array.isArray(record.pending_tool_uses) && record.pending_tool_uses.length) {
+    return record.pending_tool_uses.filter((entry): entry is PendingToolUse =>
+      !!entry && typeof entry === 'object' && typeof entry.toolUseId === 'string' && !!entry.toolUseId
+      && typeof entry.input === 'object' && entry.input !== null);
+  }
+  if (record.pending_tool_use_id && record.pending_tool_input) {
+    return [{
+      toolUseId: record.pending_tool_use_id,
+      name: record.pending_tool_name || REQUEST_USER_INPUT_TOOL,
+      input: record.pending_tool_input,
+    }];
+  }
+  return [];
+}
+
+/**
+ * Build the messages that resume a paused request_user_input (Part 16).
+ *
+ * AgentCore does not persist the incomplete inline-function turn to session history,
+ * so the continuation must replay the ORIGINAL assistant toolUse message and then
+ * supply the customer's toolResult for the same toolUseId — never a bare
+ * "The customer answered: ..." text message. Each paused tool use is answered by the
+ * matching StructuredQuestionAnswer; the tool result body is the exact JSON
+ * { value, applyToSimilarResources } that the Harness hands back to Claude.
+ */
+export function buildResumeMessages(
+  pending: PendingToolUse[],
+  answers: StructuredQuestionAnswer[],
+): HarnessMessage[] {
+  const messages: HarnessMessage[] = [];
+  const usedAnswerIndexes = new Set<number>();
+
+  for (const toolUse of pending) {
+    const input = toolUse.input ?? {};
+    const inputQuestionId = typeof input.questionId === 'string' ? input.questionId : undefined;
+
+    // Prefer the answer that names the same questionId; otherwise the first unused
+    // answer, which keeps a single-question pause in order even when the frontend
+    // omitted questionIds.
+    const answerIndex = answers.findIndex((answer, index) => {
+      if (usedAnswerIndexes.has(index)) return false;
+      if (inputQuestionId && answer.questionId) return answer.questionId === inputQuestionId;
+      return true;
+    });
+    const answer = answerIndex >= 0 ? answers[answerIndex] : undefined;
+    if (answer) usedAnswerIndexes.add(answerIndex);
+
+    const assistantBlock: HarnessContentBlock = {
+      toolUse: {
+        toolUseId: toolUse.toolUseId,
+        name: toolUse.name || REQUEST_USER_INPUT_TOOL,
+        input: input as DocumentType,
+      },
+    };
+    messages.push({ role: 'assistant', content: [assistantBlock] });
+
+    const userBlock: HarnessContentBlock = answer
+      ? {
+          toolResult: {
+            toolUseId: toolUse.toolUseId,
+            status: 'success',
+            content: [{
+              text: JSON.stringify({
+                value: answer.value,
+                applyToSimilarResources: answer.applyToSimilarResources ?? false,
+              }),
+            }],
+          },
+        }
+      : {
+          toolResult: {
+            toolUseId: toolUse.toolUseId,
+            status: 'error',
+            content: [{ text: 'No customer answer was provided for this question. Continue without it.' }],
+          },
+        };
+    messages.push({ role: 'user', content: [userBlock] });
+  }
+
+  return messages;
+}
 
 const expectedScenarioCount = (record: CalculationRecord): number => {
   const plan = record.plan_v2;
@@ -372,8 +542,19 @@ export interface DriverStepInput {
   /** AgentCore session id. Reused across steps so the conversation continues. */
   sessionId?: string;
   iteration?: number;
-  /** Answer to a previous NEEDS_INPUT, for a continuation run (Phase 17). */
+  /**
+   * Legacy NEEDS_INPUT continuation answer. Kept so an already-in-flight run started
+   * before the inline_function cutover still has a text continuation path; new runs
+   * resume through `answers` instead (Part 16).
+   */
   userAnswer?: string;
+  /**
+   * Structured answers to a paused request_user_input, in submission order. When the
+   * record holds pending tool uses this drives the real inline-function resume: the
+   * original assistant toolUse message is replayed followed by the customer's
+   * toolResult for each answered tool use (Part 16).
+   */
+  answers?: StructuredQuestionAnswer[];
   /**
    * 'fail' is the state machine's catch path. Without it a driver crash leaves the
    * record in BUILDING for ever and the UI shows a job that is neither running nor
@@ -467,13 +648,45 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     });
   }
 
-  const messageText = iteration === 0
-    ? await buildInitialMessage(record, calculationId)
-    : (event.userAnswer
-      ? `The customer answered: ${event.userAnswer}\n\nContinue building the estimate.`
-      : 'Continue. If the estimate is finished, reply with the final JSON object only.');
+  const pendingToolUses = readPendingToolUses(record);
+  const resumingInlineFunction = iteration > 0
+    && pendingToolUses.length > 0
+    && !!event.answers?.length;
 
-  const messages: HarnessMessage[] = [{ role: 'user', content: [{ text: messageText }] }];
+  let messages: HarnessMessage[];
+  if (resumingInlineFunction) {
+    // Part 16: replay the original assistant toolUse(s) and supply the customer's
+    // toolResult(s). The continuation is being started now, so the wait state is over.
+    messages = buildResumeMessages(pendingToolUses, event.answers!);
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'BUILDING',
+      progress_message: 'Continuing with your answer...',
+      pending_tool_use_id: null,
+      pending_tool_name: null,
+      pending_tool_input: null,
+      pending_tool_uses: null,
+      agent_questions: null,
+      question_count: null,
+      agent_session_id: sessionId,
+      agent_last_activity_at: Date.now(),
+    });
+  } else {
+    const messageText = iteration === 0
+      ? await buildInitialMessage(record, calculationId)
+      : (event.userAnswer
+        ? `The customer answered: ${event.userAnswer}\n\nContinue building the estimate.`
+        : 'Continue. If the estimate is finished, reply with the final JSON object only.');
+    messages = [{ role: 'user', content: [{ text: messageText }] }];
+  }
+
+  const logMessageBytes = messages.reduce((total, message) => {
+    const blocks = message.content ?? [];
+    return total + blocks.reduce((sum, block) => {
+      const text = (block as { text?: string }).text;
+      return sum + (typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : 0);
+    }, 0);
+  }, 0);
 
   console.log(JSON.stringify({
     event: 'harness_step_start',
@@ -482,7 +695,8 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     iteration,
     sessionId,
     harnessArn: HARNESS_ARN,
-    messageBytes: Buffer.byteLength(messageText, 'utf8'),
+    resumedInlineFunction: resumingInlineFunction,
+    messageBytes: logMessageBytes,
   }));
 
   const response = await agentCore.send(new InvokeHarnessCommand({
@@ -492,22 +706,50 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     timeoutSeconds: STEP_TIMEOUT_SECONDS,
   }));
 
+  let stopReason: string | undefined;
+  // Part 13: inline-function tool use is captured per content block — the start event
+  // carries toolUseId/name, the delta events carry the partial JSON input fragments.
+  const capturedToolUses: CapturedToolUse[] = [];
+
   for await (const chunk of response.stream ?? []) {
     const kind = Object.keys(chunk)[0];
 
     if (kind === 'contentBlockStart') {
-      const toolUse = (chunk as any).contentBlockStart?.start?.toolUse;
+      const start = (chunk as any).contentBlockStart;
+      const toolUse = start?.start?.toolUse;
       if (toolUse?.name) {
         const bare = bareToolName(toolUse.name);
         toolCalls.push(bare);
         const progress = PROGRESS_BY_TOOL[bare];
         if (progress) { lastStage = progress.stage; lastMessage = progress.message; }
-        if (trace.length < MAX_TRACE_EVENTS) trace.push({ at: Date.now(), toolUse: toolUse.name });
+        if (trace.length < MAX_TRACE_EVENTS) trace.push({ at: Date.now(), toolUse: toolUse.name, toolUseId: toolUse.toolUseId });
+        if (bare === REQUEST_USER_INPUT_TOOL) {
+          capturedToolUses.push({
+            blockIndex: start?.contentBlockIndex ?? capturedToolUses.length,
+            toolUseId: String(toolUse.toolUseId ?? ''),
+            name: bare,
+            inputJson: '',
+          });
+          lastStage = REQUEST_USER_INPUT_STAGE;
+          lastMessage = REQUEST_USER_INPUT_MESSAGE;
+        }
         await heartbeat();
       }
     } else if (kind === 'contentBlockDelta') {
-      const delta = (chunk as any).contentBlockDelta?.delta;
+      const deltaEvent = (chunk as any).contentBlockDelta;
+      const delta = deltaEvent?.delta;
       if (delta?.text) assistantText += delta.text;
+      if (delta?.toolUse?.input) {
+        const target = capturedToolUses.find((use) => use.blockIndex === deltaEvent?.contentBlockIndex);
+        if (target) target.inputJson += delta.toolUse.input;
+      }
+      await heartbeat();
+    } else if (kind === 'contentBlockStop') {
+      // A block finished. No per-block action needed for request_user_input: its JSON
+      // input is only considered once messageStop confirms the pause.
+      await heartbeat();
+    } else if (kind === 'messageStop') {
+      stopReason = (chunk as any).messageStop?.stopReason ?? stopReason;
       await heartbeat();
     } else if (kind === 'metadata') {
       if (trace.length < MAX_TRACE_EVENTS) trace.push({ at: Date.now(), metadata: (chunk as any).metadata });
@@ -538,6 +780,8 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     mcpToolsUsed,
     streamErrors,
     assistantText,
+    stopReason,
+    pendingToolUses: capturedToolUses.map(({ toolUseId, name, inputJson }) => ({ toolUseId, name, input: inputJson })),
     trace,
   }), 'application/json').catch((error) => console.error('trace write failed', error));
 
@@ -548,8 +792,62 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     durationMs,
     toolCallCount: toolCalls.length,
     mcpToolsUsed,
+    stopReason,
     streamErrors: streamErrors.length,
   }));
+
+  // ─── Part 14 — a real inline-function pause ─────────────────────────────────
+  //
+  // When Claude called request_user_input the Harness paused: the stream ended with
+  // messageStop.stopReason == "tool_use" and the tool input came back to MIMO. That is
+  // a first-class human-in-the-loop interruption, NOT a NEEDS_INPUT assistant-text
+  // message and NOT a failure. Persist the wait state and stop pumping Step Functions:
+  // the UI renders agent_questions and the answer route resumes the SAME session.
+  const pausedToolUses: PendingToolUse[] = [];
+  const agentQuestions: AgentQuestion[] = [];
+  if (stopReason === 'tool_use') {
+    for (const captured of capturedToolUses) {
+      if (captured.name !== REQUEST_USER_INPUT_TOOL || !captured.toolUseId) continue;
+      let input: Record<string, unknown> | undefined;
+      try {
+        const parsed = JSON.parse(captured.inputJson || '{}') as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object') input = parsed;
+      } catch (error) {
+        streamErrors.push(`request_user_input unparseable input for ${captured.toolUseId}: ${String((error as Error).message).slice(0, 500)}`);
+      }
+      if (!input) continue;
+      const pending: PendingToolUse = { toolUseId: captured.toolUseId, name: captured.name, input };
+      pausedToolUses.push(pending);
+      const question = toolInputToAgentQuestion(input);
+      if (question) agentQuestions.push(question);
+    }
+  }
+  if (pausedToolUses.length) {
+    console.log(JSON.stringify({
+      event: 'harness_paused_for_user_input',
+      calculationId,
+      iteration,
+      sessionId,
+      stopReason,
+      pendingToolUseCount: pausedToolUses.length,
+      questionCount: agentQuestions.length,
+    }));
+    await patch(calculationId, {
+      status: 'WAITING_FOR_INPUT',
+      progress_stage: 'WAITING_FOR_INPUT',
+      progress_message: REQUEST_USER_INPUT_MESSAGE,
+      agent_session_id: sessionId,
+      pending_tool_use_id: pausedToolUses[0].toolUseId,
+      pending_tool_name: pausedToolUses[0].name,
+      pending_tool_input: pausedToolUses[0].input,
+      pending_tool_uses: pausedToolUses,
+      agent_questions: agentQuestions.slice(0, 20),
+      question_count: agentQuestions.length,
+      agent_last_activity_at: Date.now(),
+      tool_call_count: toolCalls.length,
+    });
+    return { calculationId, sessionId, iteration: iteration + 1, done: true, status: 'WAITING_FOR_INPUT' };
+  }
 
   const result = parseAgentResult(assistantText);
   if (!result) {

@@ -806,6 +806,29 @@ export const CalculationRecordSchema = z.object({
   })).optional(),
 
   /**
+   * A real AgentCore inline-function pause (request_user_input), as distinct from the
+   * old assistant-text NEEDS_INPUT JSON. While status == WAITING_FOR_INPUT the answer
+   * route resumes the SAME runtimeSessionId by replaying the original assistant
+   * toolUse message and supplying the customer's toolResult.
+   *
+   * `pending_tool_use_id/name/input` is the single canonical pause (the Harness pauses
+   * on one inline-function tool use at a time); `pending_tool_uses` additionally keeps
+   * the full set when more than one request_user_input was captured before the pause,
+   * so the resume path can answer each one.
+   */
+  pending_tool_use_id: z.string().optional(),
+  pending_tool_name: z.string().optional(),
+  pending_tool_input: z.record(z.string(), z.unknown()).optional(),
+  pending_tool_uses: z.array(z.object({
+    toolUseId: z.string(),
+    name: z.string(),
+    input: z.record(z.string(), z.unknown()),
+  })).optional(),
+  /** Persisted alongside the pause so the UI can render the live agent_session_id too. */
+  agent_session_id: z.string().optional(),
+  agent_last_activity_at: z.number().optional(),
+
+  /**
    * Set on an estimate created by applying a chat-proposed change.
    *
    * A revision is a NEW row, not an edit of the original: a PDF or workbook already

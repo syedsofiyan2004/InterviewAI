@@ -219,17 +219,6 @@ export interface EnvironmentHours {
   hoursPerDay: number;
 }
 
-/**
- * Starting point on the form. Production runs continuously; lower environments are
- * assumed to be shut down outside working hours, which is where the saving comes
- * from. Every value is editable before submitting.
- */
-export const DEFAULT_ENVIRONMENT_HOURS: EnvironmentHours[] = [
-  { name: 'Production', hoursPerDay: 24 },
-  { name: 'Staging', hoursPerDay: 12 },
-  { name: 'Dev', hoursPerDay: 8 },
-];
-
 export interface CalculationSummary {
   calculation_id: string;
   name: string;

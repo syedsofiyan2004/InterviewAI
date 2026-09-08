@@ -235,6 +235,11 @@ describe('AgentCore Harness (managed Claude loop)', () => {
     expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___export_estimate');
     expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/calcmcp___import_estimate');
     expect(harness.Properties.AllowedTools).toContain('@calculator_mcp/mimoev___get_workbook_evidence');
+    // Inline functions are NOT Gateway tools, so allowedTools names them by their exact
+    // plain tool name rather than the `<target>___<tool>` form. The gateway tools above
+    // stay namespaced; request_user_input must not be.
+    expect(harness.Properties.AllowedTools).toContain('request_user_input');
+    expect(harness.Properties.AllowedTools).not.toContain('@calculator_mcp/request_user_input');
     expect(harness.Properties.AllowedTools).not.toContain('*');
   });
 
@@ -428,28 +433,36 @@ describe('Agent system prompt', () => {
     expect(prompt).toContain('AWS Cost Estimation agent');
     expect(prompt).toContain('COMPLETED');
     expect(prompt).toContain('calculator.aws');
-    expect(prompt).toContain('NEEDS_INPUT');
     expect(prompt).toContain('FAILED');
+    // The old NEEDS_INPUT-as-assistant-text interruption mechanism is gone: pauses now
+    // happen through the request_user_input inline function, not by asking Claude to
+    // print a JSON object.
+    expect(prompt).not.toContain('NEEDS_INPUT');
   });
 
   it('keeps the MCP authoritative instead of overriding Calculator behavior', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('Use the AWS Pricing Calculator MCP exactly according to its own tool descriptions.');
-    expect(prompt).toContain('minimalConfig');
-    expect(prompt).toContain('Never calculate AWS prices yourself.');
+    expect(prompt).toContain('The MCP is authoritative about Calculator service fields, minimalConfig, supported values, validation and export behavior');
     expect(prompt).not.toContain('Do not call build_estimate');
     expect(prompt).not.toContain('build_estimate is unsupported');
   });
 
-  it('supports structured material-workload clarification without Calculator-internal questions', () => {
+  it('clarifies material workload facts through the request_user_input inline function, never NEEDS_INPUT JSON', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('"type": "CHOICE|NUMBER|BOOLEAN|TEXT"');
-    expect(prompt).toContain('Do not ask about Calculator field IDs');
-    expect(prompt).toContain('internal selector values');
+    expect(prompt).toContain('request_user_input');
+    expect(prompt).toContain('request_user_input is an accuracy mechanism. Do not use it merely to show questions.');
+    expect(prompt).not.toContain('NEEDS_INPUT');
+    expect(prompt).not.toContain('CHOICE|NUMBER|BOOLEAN|TEXT');
   });
 
   it('tells the agent to use get_workbook_evidence when evidence may be incomplete', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('get_workbook_evidence');
+  });
+
+  it('requires individual Calculator line items per distinct source resource', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('Every source workload/resource that must be priced must be represented individually in AWS Pricing Calculator');
+    expect(prompt).toContain('Do not merge several independent source resources into one Calculator line item');
   });
 });

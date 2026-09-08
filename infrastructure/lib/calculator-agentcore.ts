@@ -587,6 +587,11 @@ export class CalculatorAgentCore extends Construct {
         // one MIMO-owned workbook evidence tool. Harness allowedTools uses @server/tool patterns;
         // calculator_mcp is the Harness tool name and the Gateway supplies the
         // calcmcp___ / mimoev___ target-prefixed MCP tool names.
+        //
+        // `request_user_input` is the Harness's client-side inline_function (see the
+        // provisioner). Inline functions are NOT Gateway tools, so they are not
+        // @-prefixed: allowedTools names them by their exact plain tool name. Keep this
+        // in sync with REQUEST_USER_INPUT_TOOL_NAME in calculator-harness-provisioner.
         AllowedTools: [
           '@calculator_mcp/calcmcp___get_server_info',
           '@calculator_mcp/calcmcp___search_services',
@@ -598,6 +603,7 @@ export class CalculatorAgentCore extends Construct {
           '@calculator_mcp/calcmcp___export_estimate',
           '@calculator_mcp/calcmcp___import_estimate',
           '@calculator_mcp/mimoev___get_workbook_evidence',
+          'request_user_input',
         ],
         // Bounds ONE InvokeHarness call, not the calculation. Step Functions re-enters on
         // the same runtimeSessionId, and the managed runtime allows maxLifetime 28800s (8h).

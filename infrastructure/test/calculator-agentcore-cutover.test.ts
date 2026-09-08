@@ -231,15 +231,36 @@ describe('AgentCore execution liveness', () => {
     const { continueAgentCoreExecution } = load();
 
     const sessionId = 'mimo-c1-abcdefghijklmnopqrstuvwxyz0123456';
-    await continueAgentCoreExecution({ calculationId: 'c1', sessionId, userAnswer: 'db.r6g.large' });
+    const answers = [{
+      questionId: 'q1',
+      resource: 'web-server',
+      semanticField: 'instanceType',
+      value: 'm7g.large',
+      applyToSimilarResources: true,
+    }];
+    await continueAgentCoreExecution({ calculationId: 'c1', sessionId, userAnswer: 'm7g.large', answers });
 
     const call = sfnMock.commandCalls(StartExecutionCommand)[0].args[0].input;
     const payload = JSON.parse(call.input as string);
     // Same session => AgentCore continues the conversation, so the agent keeps its
     // estimate and its assumptions. No re-read of the workbook, no recompiled plan.
     expect(payload.sessionId).toBe(sessionId);
-    expect(payload.userAnswer).toBe('db.r6g.large');
+    expect(payload.userAnswer).toBe('m7g.large');
     expect(payload.iteration).toBeGreaterThan(0);
+    // Structured answers are forwarded so the driver can resume the paused
+    // request_user_input inline function with the original toolUse + toolResult.
+    expect(payload.answers).toEqual(answers);
+  });
+
+  it('omits answers from the payload when none were collected (legacy text resume)', async () => {
+    sfnMock.on(StartExecutionCommand).resolves({ executionArn: 'arn:aws:states:x:1:execution/sm/e3' });
+    const { continueAgentCoreExecution } = load();
+    const sessionId = 'mimo-c1-abcdefghijklmnopqrstuvwxyz0123456';
+    await continueAgentCoreExecution({ calculationId: 'c1', sessionId, userAnswer: 'db.r6g.large' });
+    const call = sfnMock.commandCalls(StartExecutionCommand)[0].args[0].input;
+    const payload = JSON.parse(call.input as string);
+    expect(payload.userAnswer).toBe('db.r6g.large');
+    expect(payload.answers).toBeUndefined();
   });
 });
 

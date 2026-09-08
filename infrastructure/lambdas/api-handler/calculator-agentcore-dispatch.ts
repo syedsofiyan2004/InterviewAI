@@ -176,11 +176,27 @@ export async function startAgentCoreExecution(input: {
   return { executionArn: started.executionArn!, sessionId: input.sessionId };
 }
 
-/** Continues a NEEDS_INPUT calculation on its existing AgentCore session (Step 11). */
+/**
+ * Continues a paused calculator on its existing AgentCore session.
+ *
+ * Two shapes of continuation are supported. The production path is the real
+ * AgentCore inline-function pause: the record holds `pending_tool_*` fields and this
+ * passes the structured `answers` through to the driver, which replays the original
+ * assistant toolUse message plus the customer's toolResult on the SAME
+ * runtimeSessionId (Part 16). `userAnswer` remains for legacy NEEDS_INPUT runs that
+ * started before the cutover and resume with plain text.
+ */
 export async function continueAgentCoreExecution(input: {
   calculationId: string;
   sessionId: string;
   userAnswer: string;
+  answers?: Array<{
+    questionId?: string;
+    resource?: string;
+    semanticField?: string;
+    value: string | number | boolean;
+    applyToSimilarResources?: boolean;
+  }>;
 }): Promise<StartedExecution> {
   if (!STATE_MACHINE_ARN) throw new Error('CALCULATOR_EXECUTION_STATE_MACHINE_ARN is not set');
 
@@ -195,6 +211,7 @@ export async function continueAgentCoreExecution(input: {
       sessionId: input.sessionId,
       iteration: 1,
       userAnswer: input.userAnswer,
+      ...(input.answers?.length ? { answers: input.answers } : {}),
     }),
   }));
 

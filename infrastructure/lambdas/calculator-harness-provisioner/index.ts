@@ -33,6 +33,7 @@ import {
   ListHarnessesCommand,
   type HarnessTool,
 } from '@aws-sdk/client-bedrock-agentcore-control';
+import type { DocumentType } from '@smithy/types';
 
 const client = new BedrockAgentCoreControlClient({});
 
@@ -82,6 +83,76 @@ const gatewayTool = (gatewayArn: string): HarnessTool => ({
 });
 
 /**
+ * The human-in-the-loop tool. This is a first-class AgentCore `inline_function`, NOT a
+ * second Gateway target and NOT behind the Gateway: when Claude calls it the Harness
+ * pauses (messageStop.stopReason == "tool_use") and hands the toolUse back to MIMO,
+ * which renders the question and later resumes the SAME runtimeSessionId with the
+ * original assistant toolUse message followed by the user's toolResult.
+ *
+ * The input schema mirrors the semantic request_user_input contract end to end
+ * (questionId/resource/semanticField/type/title/question/reason/choices/unit/
+ * allowApplyToSimilarResources). It intentionally contains NO Calculator field ids or
+ * MCP implementation detail — it asks for missing customer workload facts only.
+ */
+const REQUEST_USER_INPUT_TOOL_NAME = 'request_user_input';
+
+const REQUEST_USER_INPUT_DESCRIPTION =
+  'Use this tool only when a customer workload, architecture, scope or pricing fact is '
+  + 'genuinely missing or ambiguous and guessing it could materially change the AWS '
+  + 'Pricing Calculator estimate.\n\n'
+  + 'Before calling it, try to resolve the value from:\n'
+  + '- workbook\n'
+  + '- workbook instructions\n'
+  + '- user messages\n'
+  + '- previous user answers\n'
+  + '- official Pricing Calculator MCP guidance where the value is only a Calculator '
+  + 'implementation/default detail.\n\n'
+  + 'Do not ask customers for internal Calculator fields.\n\n'
+  + 'Prefer CHOICE when valid customer choices are finite.';
+
+const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
+  type: 'object',
+  properties: {
+    questionId: { type: 'string' },
+    resource: { type: 'string' },
+    semanticField: { type: 'string' },
+    type: {
+      type: 'string',
+      enum: ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'],
+    },
+    title: { type: 'string' },
+    question: { type: 'string' },
+    reason: { type: 'string' },
+    choices: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          value: { type: 'string' },
+          label: { type: 'string' },
+          description: { type: 'string' },
+        },
+        required: ['value', 'label'],
+      },
+    },
+    unit: { type: 'string' },
+    allowApplyToSimilarResources: { type: 'boolean' },
+  },
+  required: ['questionId', 'type', 'title', 'question', 'reason'],
+};
+
+const requestUserInputTool = (): HarnessTool => ({
+  type: 'inline_function',
+  name: REQUEST_USER_INPUT_TOOL_NAME,
+  config: {
+    inlineFunction: {
+      description: REQUEST_USER_INPUT_DESCRIPTION,
+      inputSchema: REQUEST_USER_INPUT_SCHEMA,
+    },
+  },
+});
+
+/**
  * Memory is explicitly OFF, and that is a decision rather than an omission.
  *
  * Leaving `memory` unset does not mean "no memory": the Harness provisions a managed
@@ -108,7 +179,7 @@ function configuration(properties: HarnessResourceProperties) {
       },
     },
     systemPrompt: [{ text: properties.SystemPrompt }],
-    tools: [gatewayTool(properties.GatewayArn)],
+    tools: [gatewayTool(properties.GatewayArn), requestUserInputTool()],
     ...(properties.AllowedTools?.length ? { allowedTools: properties.AllowedTools } : {}),
     // Context pressure is handled by summarising the *conversation*, never by dropping
     // workbook evidence. Evidence that will not fit stays in S3 and is fetched back

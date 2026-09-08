@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import {
   calculatorApi,
-  DEFAULT_ENVIRONMENT_HOURS,
   TEMPLATE_COLUMNS,
   TEMPLATE_ROWS,
   type CalculationProject,
@@ -107,8 +106,15 @@ function NewCalculationForm() {
 
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [region, setRegion] = useState('ap-south-1');
-  const [environments, setEnvironments] = useState<EnvironmentHours[]>(DEFAULT_ENVIRONMENT_HOURS);
+  // No region default. MIMO must not silently answer "which region?" before Claude reads
+  // the workbook — a UI default must never become authoritative workload data. The region
+  // is only sent when the user picks one (or the workbook/prompt states one).
+  const [region, setRegion] = useState('');
+  // No environment-hour defaults either. Runtime hours are workload facts; if the user does
+  // not state them here the agent reads them from the workbook or asks via request_user_input.
+  const [environments, setEnvironments] = useState<EnvironmentHours[]>([]);
+  const [newEnvName, setNewEnvName] = useState('');
+  const [newEnvHours, setNewEnvHours] = useState(24);
   const [sheet, setSheet] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -169,6 +175,18 @@ function NewCalculationForm() {
         ? { ...entry, hoursPerDay: Number.isFinite(parsed) ? Math.min(24, Math.max(1, Math.round(parsed))) : entry.hoursPerDay }
         : entry
     )));
+  };
+
+  const addEnvironment = () => {
+    const cleanName = newEnvName.trim();
+    if (!cleanName) return;
+    setEnvironments((current) => [...current, { name: cleanName, hoursPerDay: newEnvHours }]);
+    setNewEnvName('');
+    setNewEnvHours(24);
+  };
+
+  const removeEnvironment = (index: number) => {
+    setEnvironments((current) => current.filter((_, at) => at !== index));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -805,6 +823,9 @@ function NewCalculationForm() {
               value={region}
               onChange={(event) => setRegion(event.target.value)}
             >
+              <option value="">
+                Not specified — read from the workbook
+              </option>
               {REGIONS.map((option) => (
                 <option key={option.value || 'auto'} value={option.value}>
                   {option.label}
@@ -900,38 +921,88 @@ function NewCalculationForm() {
             </div>
           </div>
 
-          {/* Runtime hours. The whole point: non-production is normally shut down
-              outside working hours, and pricing it at 24/7 overstates the estimate. */}
+          {/* Runtime hours. Optional: environment run-hours are workload facts, and a blank
+              value must stay blank so the agent reads them from the workbook or asks the
+              customer — a prefilled "Production 24h / Staging 12h" would silently answer a
+              pricing question before Claude has seen the sheet. */}
           <div className="rounded-xl border border-border bg-surface-elevated p-4">
-            <p className="text-sm font-semibold text-text-primary">Runtime hours per environment</p>
+            <p className="text-sm font-semibold text-text-primary">Runtime hours per environment (optional)</p>
             <p className="mt-1 text-xs leading-5 text-text-muted">
               How many hours a day each environment actually runs. Time-billed resources are priced at
               these hours, so shutting non-production down overnight is reflected in the cost. A
-              Hours/Day value in your sheet overrides the environment default for that row.
+              Hours/Day value in your sheet overrides the environment hours for that row. Leave this
+              blank and the agent reads the hours from the workbook or asks.
             </p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              {environments.map((entry, index) => (
-                <div key={entry.name}>
-                  <label
-                    htmlFor={`env-${index}`}
-                    className="block text-xs font-semibold text-text-muted mb-1.5"
-                  >
-                    {entry.name}
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id={`env-${index}`}
-                      type="number"
-                      min={1}
-                      max={24}
-                      value={entry.hoursPerDay}
-                      onChange={(event) => setHours(index, event.target.value)}
-                      className="premium-input w-full px-3 text-sm"
-                    />
-                    <span className="shrink-0 text-xs text-text-muted">h/day</span>
+            {environments.length ? (
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {environments.map((entry, index) => (
+                  <div key={entry.name}>
+                    <div className="flex items-center justify-between gap-1">
+                      <label
+                        htmlFor={`env-${index}`}
+                        className="block text-xs font-semibold text-text-muted mb-1.5"
+                      >
+                        {entry.name}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeEnvironment(index)}
+                        className="mb-1 shrink-0 text-text-muted transition-colors hover:text-danger"
+                        aria-label={`Remove the ${entry.name} environment`}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={`env-${index}`}
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={entry.hoursPerDay}
+                        onChange={(event) => setHours(index, event.target.value)}
+                        className="premium-input w-full px-3 text-sm"
+                      />
+                      <span className="shrink-0 text-xs text-text-muted">h/day</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-5 text-text-muted">
+                No environments listed. Add one below only if the hours are not already in the workbook.
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={newEnvName}
+                onChange={(event) => setNewEnvName(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addEnvironment(); } }}
+                placeholder="Environment name, e.g. Production"
+                className="premium-input w-full px-3 text-sm sm:w-48"
+                aria-label="Environment name"
+              />
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={newEnvHours}
+                  onChange={(event) => setNewEnvHours(Math.min(24, Math.max(1, Number(event.target.value) || 24)))}
+                  className="premium-input w-20 px-3 text-sm"
+                  aria-label="Hours per day"
+                />
+                <span className="text-xs text-text-muted">h/day</span>
+              </div>
+              <button
+                type="button"
+                onClick={addEnvironment}
+                disabled={!newEnvName.trim()}
+                className="btn-secondary inline-flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-semibold disabled:opacity-40"
+              >
+                Add environment
+              </button>
             </div>
           </div>
           </div>

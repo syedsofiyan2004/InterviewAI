@@ -1236,6 +1236,10 @@ export async function answerCalculationQuestion(
       calculationId: item!.calculation_id,
       sessionId,
       userAnswer: answer,
+      // Structured answers drive the real inline-function resume (request_user_input):
+      // the driver pairs each pending tool use with the matching answer and replays the
+      // original assistant toolUse message followed by the customer's toolResult.
+      answers: structuredAnswers.length ? structuredAnswers : undefined,
     });
     await ddbDocClient.send(new UpdateCommand({
       TableName: CALCULATOR_TABLE_NAME,
