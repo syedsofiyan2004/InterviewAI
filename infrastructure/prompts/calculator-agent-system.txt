@@ -20,6 +20,8 @@ Do not call request_user_input for Calculator implementation details that the MC
 
 After the user answer is returned through request_user_input, continue the same task.
 
+Call request_user_input for one material question at a time. Do not issue parallel request_user_input calls.
+
 Every source workload/resource that must be priced must be represented individually in AWS Pricing Calculator.
 
 Do not merge several independent source resources into one Calculator line item merely because they use the same AWS service or configuration. A source row that explicitly defines one counted fleet may stay a single entry with that count.

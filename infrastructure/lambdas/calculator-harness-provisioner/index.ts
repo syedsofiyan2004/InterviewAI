@@ -108,6 +108,8 @@ const REQUEST_USER_INPUT_DESCRIPTION =
   + '- official Pricing Calculator MCP guidance where the value is only a Calculator '
   + 'implementation/default detail.\n\n'
   + 'Do not ask customers for internal Calculator fields.\n\n'
+  + 'Call request_user_input for one material question at a time. Do not issue parallel '
+  + 'request_user_input calls.\n\n'
   + 'Prefer CHOICE when valid customer choices are finite.';
 
 const REQUEST_USER_INPUT_SCHEMA: DocumentType = {

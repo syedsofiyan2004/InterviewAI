@@ -143,17 +143,15 @@ describe('request_user_input: resume continuation messages (Part 16)', () => {
     ]);
   });
 
-  it('fails an unanswered tool use instead of resuming with bare text', () => {
+  it('refuses to resume an unanswered material request instead of saying "continue without it"', () => {
     const { buildResumeMessages } = load();
-    const messages = buildResumeMessages(
+    const build = () => buildResumeMessages(
       [{ toolUseId: 'tooluse_1', name: 'request_user_input', input: { questionId: 'q1', question: 'A?' } }],
       [],
     );
-    expect(messages).toHaveLength(2);
-    const toolResult = (messages[1] as any).content[0].toolResult;
-    expect(toolResult.status).toBe('error');
-    expect(toolResult.toolUseId).toBe('tooluse_1');
-    expect(String(toolResult.content[0].text)).toContain('No customer answer');
+    // An unanswered MATERIAL request must never be resumed with an error toolResult that
+    // tells the agent to continue without the fact — so no messages are produced at all.
+    expect(build).toThrow(/refusing to resume by telling the agent to continue without it/);
   });
 });
 
@@ -206,5 +204,20 @@ describe('harness driver: real pause plumbing, not NEEDS_INPUT-as-text', () => {
     expect(source).toContain('contentBlockDelta');
     expect(source).toContain('delta?.toolUse?.input');
     expect(source).toContain('agent_questions');
+  });
+
+  it('clears the pending pause only AFTER InvokeHarness is accepted, never before', () => {
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '../lambdas/calculator-harness-driver/index.ts'), 'utf8',
+    );
+    // The clearing patch must sit after the send, so an InvokeHarness throw leaves
+    // WAITING_FOR_INPUT + the full pending state intact for a safe retry.
+    const sendAt = source.indexOf('await agentCore.send(new InvokeHarnessCommand');
+    const clearAt = source.indexOf('pending_tool_use_id: null');
+    expect(sendAt).toBeGreaterThanOrEqual(0);
+    expect(clearAt).toBeGreaterThan(sendAt);
+    // No error toolResult that tells the agent to keep going without an unanswered
+    // material fact may exist anywhere in the driver.
+    expect(source).not.toContain('Continue without it');
   });
 });

@@ -188,8 +188,13 @@ export function readPendingToolUses(record: CalculationRecord): PendingToolUse[]
  * AgentCore does not persist the incomplete inline-function turn to session history,
  * so the continuation must replay the ORIGINAL assistant toolUse message and then
  * supply the customer's toolResult for the same toolUseId — never a bare
- * "The customer answered: ..." text message. Each paused tool use is answered by the
- * matching StructuredQuestionAnswer; the tool result body is the exact JSON
+ * "The customer answered: ..." text message.
+ *
+ * The pause contract is exactly ONE request_user_input per pause and the frontend
+ * answers that single question, so every paused tool use must have a customer answer.
+ * If one is ever missing, this throws rather than building an error toolResult that
+ * tells Claude to "continue without it" — an unanswered MATERIAL customer fact must
+ * never be silently dropped. The tool result body is the exact JSON
  * { value, applyToSimilarResources } that the Harness hands back to Claude.
  */
 export function buildResumeMessages(
@@ -211,8 +216,15 @@ export function buildResumeMessages(
       if (inputQuestionId && answer.questionId) return answer.questionId === inputQuestionId;
       return true;
     });
-    const answer = answerIndex >= 0 ? answers[answerIndex] : undefined;
-    if (answer) usedAnswerIndexes.add(answerIndex);
+
+    if (answerIndex < 0) {
+      throw new Error(
+        `request_user_input ${toolUse.toolUseId} has no customer answer; `
+        + 'refusing to resume by telling the agent to continue without it',
+      );
+    }
+    const answer = answers[answerIndex];
+    usedAnswerIndexes.add(answerIndex);
 
     const assistantBlock: HarnessContentBlock = {
       toolUse: {
@@ -223,26 +235,18 @@ export function buildResumeMessages(
     };
     messages.push({ role: 'assistant', content: [assistantBlock] });
 
-    const userBlock: HarnessContentBlock = answer
-      ? {
-          toolResult: {
-            toolUseId: toolUse.toolUseId,
-            status: 'success',
-            content: [{
-              text: JSON.stringify({
-                value: answer.value,
-                applyToSimilarResources: answer.applyToSimilarResources ?? false,
-              }),
-            }],
-          },
-        }
-      : {
-          toolResult: {
-            toolUseId: toolUse.toolUseId,
-            status: 'error',
-            content: [{ text: 'No customer answer was provided for this question. Continue without it.' }],
-          },
-        };
+    const userBlock: HarnessContentBlock = {
+      toolResult: {
+        toolUseId: toolUse.toolUseId,
+        status: 'success',
+        content: [{
+          text: JSON.stringify({
+            value: answer.value,
+            applyToSimilarResources: answer.applyToSimilarResources ?? false,
+          }),
+        }],
+      },
+    };
     messages.push({ role: 'user', content: [userBlock] });
   }
 
@@ -649,28 +653,44 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
   }
 
   const pendingToolUses = readPendingToolUses(record);
+  // The pause contract is exactly ONE request_user_input per pause — the answer UI
+  // renders a single question. Only that single-pending case can be resumed by replaying
+  // the original assistant toolUse and supplying the customer's toolResult.
   const resumingInlineFunction = iteration > 0
-    && pendingToolUses.length > 0
+    && pendingToolUses.length === 1
     && !!event.answers?.length;
 
-  let messages: HarnessMessage[];
-  if (resumingInlineFunction) {
-    // Part 16: replay the original assistant toolUse(s) and supply the customer's
-    // toolResult(s). The continuation is being started now, so the wait state is over.
-    messages = buildResumeMessages(pendingToolUses, event.answers!);
+  if (iteration > 0 && pendingToolUses.length > 0 && !resumingInlineFunction) {
+    // A continuation arrived while the record still holds a paused request_user_input
+    // that cannot be resumed cleanly (no answers, or a stale multi-question pause). Never
+    // skip it — that would silently drop a material customer fact or "continue without
+    // it". Keep WAITING_FOR_INPUT and surface a diagnostic so the answer can be retried.
+    console.log(JSON.stringify({
+      event: 'request_user_input_unresumable_continuation',
+      calculationId,
+      iteration,
+      sessionId,
+      pendingToolUseCount: pendingToolUses.length,
+      answerCount: event.answers?.length ?? 0,
+    }));
     await patch(calculationId, {
-      status: 'BUILDING',
-      progress_stage: 'BUILDING',
-      progress_message: 'Continuing with your answer...',
-      pending_tool_use_id: null,
-      pending_tool_name: null,
-      pending_tool_input: null,
-      pending_tool_uses: null,
-      agent_questions: null,
-      question_count: null,
+      status: 'WAITING_FOR_INPUT',
+      progress_stage: 'WAITING_FOR_INPUT',
+      progress_message: REQUEST_USER_INPUT_MESSAGE,
       agent_session_id: sessionId,
       agent_last_activity_at: Date.now(),
     });
+    return { calculationId, sessionId, iteration: iteration + 1, done: true, status: 'WAITING_FOR_INPUT' };
+  }
+
+  let messages: HarnessMessage[];
+  if (resumingInlineFunction) {
+    // Part 16: replay the original assistant toolUse and supply the customer's toolResult.
+    // The pending fields are deliberately NOT cleared here: InvokeHarness can throw before
+    // the continuation is accepted, and if it does the record must still say
+    // WAITING_FOR_INPUT with the full pending state so the same answer can be retried.
+    // Clearing happens only after agentCore.send resolves (below).
+    messages = buildResumeMessages(pendingToolUses, event.answers!);
   } else {
     const messageText = iteration === 0
       ? await buildInitialMessage(record, calculationId)
@@ -705,6 +725,27 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     messages,
     timeoutSeconds: STEP_TIMEOUT_SECONDS,
   }));
+
+  if (resumingInlineFunction) {
+    // Part 17: the Harness accepted the continuation (send returned), so the wait state is
+    // genuinely over. Now — and only now — clear the pending pause and return the run to
+    // BUILDING. If send had thrown above, this block would not have run and the record
+    // would still hold WAITING_FOR_INPUT plus the full pending state, so the customer's
+    // answer can be retried safely rather than lost.
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'BUILDING',
+      progress_message: 'Continuing with your answer...',
+      pending_tool_use_id: null,
+      pending_tool_name: null,
+      pending_tool_input: null,
+      pending_tool_uses: null,
+      agent_questions: null,
+      question_count: null,
+      agent_session_id: sessionId,
+      agent_last_activity_at: Date.now(),
+    });
+  }
 
   let stopReason: string | undefined;
   // Part 13: inline-function tool use is captured per content block — the start event
@@ -816,10 +857,36 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
         streamErrors.push(`request_user_input unparseable input for ${captured.toolUseId}: ${String((error as Error).message).slice(0, 500)}`);
       }
       if (!input) continue;
-      const pending: PendingToolUse = { toolUseId: captured.toolUseId, name: captured.name, input };
-      pausedToolUses.push(pending);
       const question = toolInputToAgentQuestion(input);
-      if (question) agentQuestions.push(question);
+      // A request_user_input that cannot project to a customer question cannot be
+      // answered (the UI renders only representable questions), so it must not hold the
+      // pause. Pending entries and questions stay 1:1.
+      if (!question) continue;
+      pausedToolUses.push({ toolUseId: captured.toolUseId, name: captured.name, input });
+      agentQuestions.push(question);
+    }
+
+    if (pausedToolUses.length > 1) {
+      // Exactly ONE request_user_input per pause — the answer UI renders one question.
+      // Parallel calls are a protocol error by the agent, never something to paper over
+      // by resuming the extras with an error toolResult that says "continue without it".
+      // Keep only the first material question and surface a diagnostic; the dropped calls
+      // are not replayed into the resumed history, so the agent simply asks again in a
+      // fresh pause if a fact is still needed.
+      const allIds = pausedToolUses.map((entry) => entry.toolUseId).join(', ');
+      streamErrors.push(
+        `request_user_input protocol error: ${pausedToolUses.length} parallel calls in one pause (${allIds}); `
+        + `keeping ${pausedToolUses[0].toolUseId} only. The agent must call request_user_input for one material question at a time.`,
+      );
+      console.log(JSON.stringify({
+        event: 'request_user_input_parallel_calls',
+        calculationId,
+        iteration,
+        sessionId,
+        toolUseIds: pausedToolUses.map((entry) => entry.toolUseId),
+      }));
+      pausedToolUses.length = 1;
+      agentQuestions.length = 1;
     }
   }
   if (pausedToolUses.length) {
