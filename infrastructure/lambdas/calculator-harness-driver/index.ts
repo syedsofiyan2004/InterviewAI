@@ -492,27 +492,47 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
 // ─── JSON extraction ─────────────────────────────────────────────────────────
 
 /** The last balanced JSON object in the text, which is where the contract puts it. */
+/**
+ * The last TOP-LEVEL JSON object in `text`.
+ *
+ * A naive "scan back from the last `{`" breaks the moment the terminal object legitimately
+ * ends with nested objects (e.g. a comparison estimate whose final JSON closes with
+ * `"scenarios": [{...}, {...}]`): the innermost tail object is the last balanced object in
+ * the text, so the parser would hand back `{label, url}` instead of the enclosing
+ * `{status:"COMPLETED", ...}` and the agent would never be seen as finished. Instead we do
+ * one brace/bracket-aware pass and keep the last object that opens at container depth 0 —
+ * an object nested inside an array or another object never qualifies.
+ */
 export function lastJsonObject(text: string): unknown | undefined {
-  for (let start = text.lastIndexOf('{'); start >= 0; start = text.lastIndexOf('{', start - 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\' && inString) { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (ch === '{') depth += 1;
-      else if (ch === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          try { return JSON.parse(text.slice(start, i + 1)); } catch { break; }
-        }
+  let lastParsed: unknown;
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') { if (depth === 0) start = i; depth += 1; }
+    else if (ch === '[') { depth += 1; }
+    else if (ch === ']') { depth = Math.max(0, depth - 1); }
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          const parsed = JSON.parse(text.slice(start, i + 1));
+          if (parsed && typeof parsed === 'object') lastParsed = parsed;
+        } catch { /* not a valid object; keep any earlier candidate */ }
+        start = -1;
+      } else if (depth < 0) {
+        depth = 0;
+        start = -1;
       }
     }
   }
-  return undefined;
+  return lastParsed;
 }
 
 /**
@@ -1290,6 +1310,13 @@ async function finalise(input: {
   }
   const completedScenarios = result.status === 'COMPLETED'
     ? (result.scenarios ?? []).map((scenario, index) => ({
+      // The persisted scenario schema keys on a stable identifier, not an index or a
+      // position, so the scenario's own key wins, then an id, then a deterministic slug.
+      key: typeof scenario.key === 'string' && scenario.key
+        ? scenario.key
+        : typeof scenario.id === 'string' && scenario.id
+          ? scenario.id
+          : `scenario-${index + 1}`,
       label: String(scenario.label ?? scenario.name ?? `Scenario ${index + 1}`),
       url: typeof scenario.url === 'string' && scenario.url.includes('calculator.aws')
         ? scenario.url

@@ -341,3 +341,248 @@ describe('Parts 32-36 — coverage is authoritative and gated', () => {
     expect(diagnostics.coverageUnresolvedRows).toBe(0);
   });
 });
+
+/**
+ * Part 42 — the mission's REQUIRED TESTS A–J.
+ *
+ * Claude is the intelligence layer: whether to ask about commercial pricing, an ambiguous
+ * frequency, a sizing contradiction or an OS conflict is the agent's decision, made under
+ * the system prompt. MIMO's deterministic duties are (a) to state those expectations in
+ * the prompt, and (b) to honour an agent that DOES ask (surface a real, persisted customer
+ * question and pause — never complete over an open question) and one that DOESN'T (complete
+ * without fabricating a question), (c) to keep every calculator.aws estimate URL a
+ * comparison returns, (d) to account for each distinct source row without merging, and
+ * (e) to reconcile coverage against the actual rows so a large workbook can never leave a
+ * silent remainder. So A–H are prompt-gate + driver-seam tests, I is the evidence-tool
+ * source gate over the dedicated zero-loss paging suite, and J is the large-workbook
+ * remainder.
+ */
+describe('Part 42 — REQUIRED TESTS A-J', () => {
+  const readPrompt = (): string =>
+    require('fs').readFileSync(
+      require('path').join(__dirname, '../prompts/calculator-agent-system.txt'), 'utf8',
+    );
+
+  // The real Harness pause: a request_user_input content block (start + input delta),
+  // then messageStop with stopReason 'tool_use'. The driver persists a wait state.
+  async function* pauseFrames(input: Record<string, unknown>) {
+    yield {
+      contentBlockStart: {
+        contentBlockIndex: 1,
+        start: { toolUse: { name: 'request_user_input', toolUseId: 'tooluse_q' } },
+      },
+    };
+    yield {
+      contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: JSON.stringify(input) } } },
+    };
+    yield { messageStop: { stopReason: 'tool_use' } };
+  }
+
+  const givenPause = async (input: Record<string, unknown>, iteration = 2) => {
+    ddbMock.on(GetCommand).resolves({ Item: baseRecord() });
+    agentCoreMock.on(InvokeHarnessCommand).resolves({ stream: pauseFrames(input) } as never);
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration });
+    return { outcome, fields: lastUpdateFields() };
+  };
+
+  it('A — commercial pricing missing becomes a customer question, not a completed estimate', async () => {
+    expect(readPrompt()).toContain('commercial pricing, term, payment, frequency, runtime and sizing decisions, ask before pricing');
+    const { outcome, fields } = await givenPause({
+      questionId: 'q-commitment',
+      title: 'EC2 commitment',
+      question: 'The workbook prices EC2 but names no commitment term. Which should apply?',
+      reason: 'A commitment materially changes the monthly cost, so it cannot be guessed.',
+      scope: 'all EC2 resources',
+      selectionMode: 'single',
+      options: [
+        { value: 'on_demand', label: 'On-Demand', description: 'No commitment; highest unit price.' },
+        { value: 'sp_1yr_no_upfront', label: '1-year Savings Plan, no upfront' },
+        { value: 'sp_3yr_all_upfront', label: '3-year Savings Plan, all upfront' },
+      ],
+      customInput: { enabled: true, label: 'Other', inputType: 'text' },
+      allowApplyToSimilarResources: true,
+    });
+
+    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
+    const question = (fields.agent_questions as Array<Record<string, unknown>>)[0];
+    expect(question).toMatchObject({
+      questionId: 'q-commitment',
+      title: 'EC2 commitment',
+      selectionMode: 'single',
+      allowApplyToSimilarResources: true,
+    });
+    expect(question.type).toBeUndefined();
+    expect((question.options as Array<Record<string, unknown>>).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('B — a comparison keeps every calculator.aws estimate URL, one per scenario', async () => {
+    const assistantText = 'Done:\n' + completedJson({
+      evidenceConsumed: ROWS,
+      calculatorUrls: [
+        'https://calculator.aws/#/estimate?id=cmp-on-demand',
+        'https://calculator.aws/#/estimate?id=cmp-3yr-sp',
+      ],
+      scenarios: [
+        { label: 'On-Demand', url: 'https://calculator.aws/#/estimate?id=cmp-on-demand' },
+        { label: '3-year Savings Plan', url: 'https://calculator.aws/#/estimate?id=cmp-3yr-sp' },
+      ],
+    });
+    givenCompletedStep({ record: baseRecord(), assistantText });
+
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration: 5 });
+
+    expect(outcome).toMatchObject({ done: true, status: 'COMPLETED' });
+    const resultBody = putBodiesTo(PutObjectCommand, `users/${OWNER}/calculator/${CALC}/result.json`).pop();
+    const scenarios = (JSON.parse(resultBody!) as { scenarios: Array<{ label: string; url: string }> }).scenarios;
+    const urls = scenarios.map((scenario) => scenario.url).sort();
+    expect(urls).toEqual([
+      'https://calculator.aws/#/estimate?id=cmp-3yr-sp',
+      'https://calculator.aws/#/estimate?id=cmp-on-demand',
+    ]);
+  });
+
+  it('C — an ambiguous frequency/runtime becomes a question, not a silent 24x7 assumption', async () => {
+    expect(readPrompt()).toContain('frequency');
+    const { outcome, fields } = await givenPause({
+      questionId: 'q-hours',
+      title: 'Operating hours',
+      question: 'No server states its hours. What hours should the EC2 fleet run?',
+      reason: 'Hours materially change the monthly cost and the workbook is silent on them.',
+      selectionMode: 'multiple',
+      options: [
+        { value: '24x7', label: '24x7' },
+        { value: 'business', label: 'Business hours' },
+      ],
+      customInput: { enabled: true, inputType: 'number', unit: 'hours/day', placeholder: 'e.g. 12' },
+    });
+
+    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
+    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].question).toContain('hours');
+  });
+
+  it('D — a known frequency produces no question and a completed estimate', async () => {
+    // The agent read the hours from the workbook (mocked as streamed text) and priced the
+    // rows; it never called request_user_input. MIMO must not invent a question for it.
+    givenCompletedStep({ record: baseRecord(), assistantText: 'Done:\n' + completedJson({ evidenceConsumed: ROWS }) });
+
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration: 5 });
+
+    expect(outcome).toMatchObject({ done: true, status: 'COMPLETED' });
+    const fields = lastUpdateFields();
+    expect(fields.status).toBe('COMPLETED');
+    expect(fields.pending_tool_use_id).toBeUndefined();
+    expect(fields.agent_questions).toBeUndefined();
+  });
+
+  it('E — a sizing contradiction becomes a question, not a nearest-fit instance guess', async () => {
+    expect(readPrompt()).toContain('Material mismatches are questions, not nearest-fit assumptions');
+    const { outcome, fields } = await givenPause({
+      questionId: 'q-db-size',
+      title: 'Database size conflict',
+      question: 'The workbook names db.r6g.large and db.r6g.xlarge for the same database. Which is right?',
+      reason: 'A sizing contradiction is a material customer decision and cannot be coerced silently.',
+      options: [
+        { value: 'db.r6g.large', label: 'db.r6g.large' },
+        { value: 'db.r6g.xlarge', label: 'db.r6g.xlarge' },
+      ],
+    });
+
+    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
+    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].question).toContain('db.r6g');
+  });
+
+  it('F — an OS family/version conflict becomes a question, not a coerced platform', async () => {
+    expect(readPrompt()).toContain('OS family/version conflict');
+    const { outcome, fields } = await givenPause({
+      questionId: 'q-os',
+      title: 'OS conflict',
+      question: 'The OS column says Windows but the row looks like a Linux-only workload. Which OS?',
+      reason: 'The OS family/version conflict changes the license cost and cannot be assumed.',
+      options: [
+        { value: 'linux', label: 'Linux' },
+        { value: 'windows', label: 'Windows' },
+      ],
+    });
+
+    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
+    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].reason).toContain('OS');
+  });
+
+  it('G — three independent resources stay three individually accounted source rows', async () => {
+    expect(readPrompt()).toContain('represented individually in AWS Pricing Calculator');
+    expect(readPrompt()).toContain('Do not merge several independent source resources into one Calculator line item');
+    const priced = ROWS.slice(0, 3); // Inventory!5, !6, !7 — three distinct workloads
+    givenCompletedStep({
+      record: baseRecord(),
+      assistantText: 'Done:\n' + completedJson({ evidenceConsumed: priced }),
+      costRelevantRows: priced,
+      indexCostRelevant: priced.length,
+    });
+
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration: 5 });
+
+    expect(outcome).toMatchObject({ done: true, status: 'COMPLETED' });
+    const accounting = JSON.parse(putBodiesTo(PutObjectCommand, accountingKey).pop()!);
+    // Three distinct rows individually priced — none merged, none dropped, none left over.
+    expect(accounting.counts.costRelevant).toBe(3);
+    expect(accounting.counts.consumed).toBe(3);
+    expect(accounting.unresolved).toEqual([]);
+  });
+
+  it('H — an explicit counted fleet may stay a single entry and still pass coverage', async () => {
+    expect(readPrompt()).toContain('A source row that explicitly defines one counted fleet may stay a single entry with that count');
+    // Inventory!5 explicitly defines a fleet of N servers; one row, one entry, count = N.
+    const fleetRow = ROWS[0];
+    givenCompletedStep({
+      record: baseRecord(),
+      assistantText: 'Done:\n' + completedJson({ evidenceConsumed: [fleetRow] }),
+      costRelevantRows: [fleetRow],
+      indexCostRelevant: 1,
+    });
+
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration: 5 });
+
+    expect(outcome).toMatchObject({ done: true, status: 'COMPLETED' });
+    const accounting = JSON.parse(putBodiesTo(PutObjectCommand, accountingKey).pop()!);
+    expect(accounting.counts.costRelevant).toBe(1);
+    expect(accounting.counts.consumed).toBe(1);
+    expect(accounting.unresolved).toEqual([]);
+  });
+
+  it('I — the evidence cursor contract is intact over the dedicated zero-loss paging suite', () => {
+    // calculator-evidence-tool-paging.test.ts proves zero loss/duplication across chunk and
+    // oversized-row boundaries. This source gate keeps the whole-chunk/exact-cursor surface
+    // the bug fix (e239b1c) introduced from silently regressing.
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '../lambdas/calculator-evidence-tool/index.ts'), 'utf8',
+    );
+    expect(source).toContain('returnedChunks');
+    expect(source).toContain('moreAvailable');
+    expect(source).toContain('nextChunkId');
+    expect(source).toContain('nextRowsFrom');
+    expect(source).toContain('MAX_RESPONSE_BYTES');
+  });
+
+  it('J — a 120-row workbook the agent priced only a slice of leaves every remaining row unresolved', async () => {
+    const largeRows = Array.from({ length: 120 }, (_, index) => `Inventory!${5 + index}`);
+    const priced = largeRows.slice(0, 40);
+    givenCompletedStep({
+      record: baseRecord(),
+      assistantText: 'Done:\n' + completedJson({ evidenceConsumed: priced }),
+      costRelevantRows: largeRows,
+      indexCostRelevant: largeRows.length,
+    });
+
+    const outcome = await runStep({ calculationId: CALC, sessionId: SESSION, iteration: 5 });
+
+    // Zero silent remainder: not trusted, one repair requested, and the accounting names
+    // exactly the 80 rows the agent never priced — nothing vanishes.
+    expect(outcome).toMatchObject({ done: false, iteration: 6 });
+    const accounting = JSON.parse(putBodiesTo(PutObjectCommand, accountingKey).pop()!);
+    expect(accounting.counts.costRelevant).toBe(120);
+    expect(accounting.counts.consumed).toBe(40);
+    const remaining = largeRows.filter((row) => !priced.includes(row)).sort();
+    expect([...(accounting.unresolved as string[])].sort()).toEqual(remaining);
+    expect(lastUpdateSerialized()).toContain('coverage_repair_requested');
+  });
+});
