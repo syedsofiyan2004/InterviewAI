@@ -34,8 +34,10 @@ import type { DocumentType } from '@smithy/types';
 import {
   evidenceIndexKey,
   evidenceAccountingKey,
+  evidenceCostRelevantRowsKey,
   reconcileEvidence,
   type WorkbookEvidenceIndex,
+  type EvidenceAccounting,
 } from '../shared/workbook-evidence.js';
 import { calculationResultKey, compactCalculationResult } from '../shared/calculator-result-storage.js';
 import { CalculationResultSchema, type CalculationRecord } from '../../schema/calculator.js';
@@ -80,6 +82,18 @@ const PROGRESS_BY_TOOL: Record<string, { stage: Stage; message: string }> = {
 
 /** Gateway tool names arrive as `<target>___<tool>`. */
 const bareToolName = (name: string) => String(name).split('___').pop()!;
+
+/**
+ * Merge one step's bare-tool invocation list into the run's cumulative per-tool counts
+ * (Parts 38-39). The record holds the PRIOR steps' histogram; this adds exactly the calls
+ * observed in the present step once, at the step's end — never inside a heartbeat, which
+ * would double count as the stream grows.
+ */
+const mergeToolCounts = (existing: Record<string, number> | undefined, stepCalls: string[]): Record<string, number> => {
+  const merged = { ...(existing ?? {}) };
+  for (const name of stepCalls) merged[name] = (merged[name] ?? 0) + 1;
+  return merged;
+};
 
 // ─── request_user_input: the Harness inline function (Phase 24) ──────────────
 //
@@ -791,6 +805,11 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
   }
 
   let messages: HarnessMessage[];
+  // True once THIS step sends the single coverage-repair continuation. It drives the
+  // post-send bookkeeping AND tells finalise a repair is already spent if the agent answers
+  // with another COMPLETED claim inside the same step.
+  let sentCoverageRepair = false;
+
   if (resumingInlineFunction) {
     // Part 16: replay the original assistant toolUse and supply the customer's toolResult.
     // The pending fields are deliberately NOT cleared here: InvokeHarness can throw before
@@ -798,6 +817,12 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     // WAITING_FOR_INPUT with the full pending state so the same answer can be retried.
     // Clearing happens only after agentCore.send resolves (below).
     messages = buildResumeMessages(pendingToolUses, event.answers!);
+  } else if (iteration > 0 && record.coverage_repair_requested === true) {
+    // Part 34: the record carries an outstanding coverage-repair request. Send the repair
+    // instruction this step. It stays `coverage_repair_requested` until the Harness accepts
+    // it (send returns) — a throw must leave the request pending so the retry re-sends.
+    messages = [{ role: 'user', content: [{ text: await buildCoverageRepairMessage(record, calculationId) }] }];
+    sentCoverageRepair = true;
   } else {
     const messageText = iteration === 0
       ? await buildInitialMessage(record, calculationId)
@@ -849,6 +874,23 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       pending_tool_uses: null,
       agent_questions: null,
       question_count: null,
+      agent_session_id: sessionId,
+      agent_last_activity_at: Date.now(),
+    });
+  } else if (sentCoverageRepair) {
+    // Part 35: the Harness accepted the coverage-repair continuation (send returned), so the
+    // request is spent: mark the repair attempted and clear the outstanding request. If send
+    // had thrown, this block would not have run and the record would still say
+    // coverage_repair_requested, so the retry re-sends the same instruction rather than
+    // skipping the repair. `coverage_repair_attempted` is what bounds the repair to ONE:
+    // a later COMPLETED claim that is still uncovered is terminal NEEDS_REVIEW, never a
+    // second repair.
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'BUILDING',
+      progress_message: 'Pricing the remaining workbook rows…',
+      coverage_repair_requested: null,
+      coverage_repair_attempted: true,
       agent_session_id: sessionId,
       agent_last_activity_at: Date.now(),
     });
@@ -911,6 +953,10 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
 
   const durationMs = Date.now() - startedAt;
   const mcpToolsUsed = [...new Set(toolCalls)];
+  // Cumulative per-tool counts across the whole run (Parts 38-39): prior steps' histogram
+  // from the record plus exactly this step's calls, merged once at the step's end.
+  const toolCounts = mergeToolCounts(record.tool_call_counts, toolCalls);
+  const stepNumber = iteration + 1;
 
   // Full trace to S3, never to DynamoDB (Phase 22 / Phase 24).
   const traceKey = `users/${record.owner_user_id}/calculator/${calculationId}/agent/traces/${sessionId}-${iteration}.json`;
@@ -925,6 +971,7 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     mcpRuntimeIdentifier: MCP_RUNTIME_IDENTIFIER,
     durationMs,
     toolCallCount: toolCalls.length,
+    toolCounts,
     mcpToolsUsed,
     streamErrors,
     assistantText,
@@ -1019,6 +1066,8 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       question_count: agentQuestions.length,
       agent_last_activity_at: Date.now(),
       tool_call_count: toolCalls.length,
+      tool_call_counts: toolCounts,
+      agent_iterations: stepNumber,
     });
     return { calculationId, sessionId, iteration: iteration + 1, done: true, status: 'WAITING_FOR_INPUT' };
   }
@@ -1030,15 +1079,65 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
     await patch(calculationId, {
       agent_last_activity_at: Date.now(),
       tool_call_count: toolCalls.length,
+      tool_call_counts: toolCounts,
+      agent_iterations: stepNumber,
       progress_stage: lastStage,
       progress_message: lastMessage,
     });
     return { calculationId, sessionId, iteration: iteration + 1, done: false };
   }
 
-  await finalise({ record, calculationId, sessionId, result, mcpToolsUsed, toolCallCount: toolCalls.length, durationMs, traceKey });
-  return { calculationId, sessionId, iteration: iteration + 1, done: true, status: result.status };
+  const outcome = await finalise({
+    record, calculationId, sessionId, result, mcpToolsUsed,
+    toolCallCount: toolCalls.length,
+    toolCallCounts: toolCounts,
+    durationMs, traceKey,
+    agentIterations: stepNumber,
+    launchedCoverageRepair: sentCoverageRepair,
+  });
+  return outcome.terminal
+    ? { calculationId, sessionId, iteration: iteration + 1, done: true, status: outcome.status }
+    : { calculationId, sessionId, iteration: iteration + 1, done: false };
 };
+
+// ─── Coverage-repair continuation (Parts 34-36) ──────────────────────────────
+
+/**
+ * The ONE bounded coverage-repair turn.
+ *
+ * When the agent reports COMPLETED but the authoritative reconciliation still has
+ * cost-relevant rows that are neither priced, excluded nor unsupported, MIMO does NOT
+ * decide what those rows mean — that would be a hardcoded AWS decision tree, which is the
+ * exact thing this migration removed. Instead it gives the agent one more bounded turn on
+ * the SAME session: the list of uncovered rows plus an instruction to account for each of
+ * them (price it, exclude it with a reason, or mark it unsupported with a reason), then
+ * re-validate/export/import and read the total back. Whatever is still uncovered after that
+ * single turn is surfaced as NEEDS_REVIEW rather than being silently trusted, so the agent
+ * cannot loop by claiming completion again.
+ */
+async function buildCoverageRepairMessage(record: CalculationRecord, calculationId: string): Promise<string> {
+  const owner = record.owner_user_id;
+  let unresolvedRows: string[] = [];
+  try {
+    const accounting = JSON.parse(
+      (await getFileBuffer(BUCKET_NAME, evidenceAccountingKey(owner, calculationId))).toString('utf8'),
+    ) as EvidenceAccounting;
+    unresolvedRows = Array.isArray(accounting.unresolved) ? accounting.unresolved : [];
+  } catch (error) {
+    console.error('coverage repair: could not read evidence accounting; sending a generic repair turn', error);
+  }
+
+  const listed = unresolvedRows.length
+    ? `The reconciliation could not account for these cost-relevant workbook rows:\n${unresolvedRows.map((id) => ` - ${id}`).join('\n')}\n`
+    : 'The reconciliation could not account for every cost-relevant workbook row.\n';
+
+  return `${listed}
+For each row above, either price it in the estimate, or report it in evidenceExcluded with the reason it is genuinely not billable here (for example it is already covered by a resource you priced), or report it in evidenceUnsupported with the reason AWS Pricing Calculator cannot express it. Every cost-relevant row must appear in exactly one of evidenceConsumed, evidenceExcluded or evidenceUnsupported.
+
+Do not silently drop a row, and do not guess at a nearest-fit resource. If a row's mapping to an AWS service genuinely needs a customer decision, ask with request_user_input instead of assuming.
+
+Once every row is accounted for, run validate_estimate, then export_estimate, then import_estimate one final time, read the imported estimate back to confirm it holds the totals, and reply with the final JSON object only.`;
+}
 
 // ─── Finalisation ────────────────────────────────────────────────────────────
 
@@ -1049,43 +1148,99 @@ async function finalise(input: {
   result: AgentResult;
   mcpToolsUsed: string[];
   toolCallCount: number;
+  /** Cumulative per-tool counts across the whole run (prior steps + this step). */
+  toolCallCounts: Record<string, number>;
+  /** 1-based driver step this run is on (message rounds, including the repair turn). */
+  agentIterations: number;
   durationMs: number;
   traceKey: string;
-}): Promise<void> {
-  const { record, calculationId, result, mcpToolsUsed } = input;
+  /**
+   * True when THIS step already sent the single coverage-repair continuation (the message
+   * was accepted by the Harness). Guards against a second repair when the agent returns a
+   * COMPLETED claim inside the same step it was asked to repair.
+   */
+  launchedCoverageRepair?: boolean;
+}): Promise<{ terminal: boolean; status?: string }> {
+  const { record, calculationId, result, mcpToolsUsed, toolCallCounts } = input;
   const owner = record.owner_user_id;
 
-  // Evidence accounting (Phase 3): reconcile what the agent said against the workbook.
+  // Evidence accounting (Parts 32-36): coverage is reconciled against the ACTUAL workbook,
+  // never against what the agent chose to report. The authoritative cost-relevant row set is
+  // classified once at evidence-build time and persisted; rows the agent never mentions land
+  // in `unresolved` rather than vanishing. Older runs without that persisted list fall back to
+  // the index count so the unresolved COUNT stays honest even when the missing rows cannot be
+  // named.
   let unresolvedCount = 0;
   if (result.status === 'COMPLETED') {
     try {
       const index = JSON.parse((await getFileBuffer(BUCKET_NAME, evidenceIndexKey(owner, calculationId))).toString('utf8')) as WorkbookEvidenceIndex;
-      // The index carries counts; the row ids come from the chunks the agent cited plus
-      // whatever it omitted, so an absent citation lands in `unresolved` rather than
-      // vanishing.
+      let authoritativeRows: string[] | undefined;
+      try {
+        const persisted = JSON.parse(
+          (await getFileBuffer(BUCKET_NAME, evidenceCostRelevantRowsKey(owner, calculationId))).toString('utf8'),
+        ) as { costRelevantRows?: unknown; count?: unknown };
+        if (Array.isArray(persisted.costRelevantRows)) {
+          authoritativeRows = persisted.costRelevantRows.filter((id): id is string => typeof id === 'string');
+        }
+      } catch (error) {
+        console.warn('authoritative cost-relevant rows missing; counting against the index instead', String((error as Error).message));
+      }
+      const agentReported = [...new Set([
+        ...(result.evidenceConsumed ?? []),
+        ...(result.evidenceExcluded ?? []),
+        ...(result.evidenceUnsupported ?? []),
+        ...(result.evidenceUnresolved ?? []),
+      ])];
       const accounting = reconcileEvidence({
         calculationId,
-        costRelevantRows: result.evidenceConsumed?.length || result.evidenceExcluded?.length
-          ? [...new Set([
-            ...(result.evidenceConsumed ?? []),
-            ...(result.evidenceExcluded ?? []),
-            ...(result.evidenceUnsupported ?? []),
-            ...(result.evidenceUnresolved ?? []),
-          ])]
-          : [],
+        // The authoritative set when present; otherwise the agent's own claims, whose count
+        // the index total below still corrects so a silent remainder can never read as zero.
+        costRelevantRows: authoritativeRows ?? agentReported,
         consumedByAgent: result.evidenceConsumed,
         explicitlyIgnored: result.evidenceExcluded,
         unsupported: result.evidenceUnsupported,
         unresolved: result.evidenceUnresolved,
       });
-      accounting.counts.costRelevant = index.accounting.costRelevantRows;
-      unresolvedCount = Math.max(0, index.accounting.costRelevantRows - accounting.counts.consumed
-        - accounting.counts.ignored - accounting.counts.unsupported);
+      accounting.counts.costRelevant = authoritativeRows?.length ?? index.accounting.costRelevantRows;
+      if (!authoritativeRows) {
+        accounting.counts.unresolved = Math.max(0, index.accounting.costRelevantRows
+          - accounting.counts.consumed - accounting.counts.ignored - accounting.counts.unsupported);
+        accounting.unresolved = [];
+      }
+      unresolvedCount = accounting.counts.unresolved;
       await saveFileContent(BUCKET_NAME, evidenceAccountingKey(owner, calculationId), JSON.stringify(accounting), 'application/json');
     } catch (error) {
       console.error('evidence accounting failed', error);
     }
   }
+
+  // Parts 34-36: ONE bounded coverage-repair continuation. A COMPLETED claim that leaves
+  // cost-relevant rows unaccounted for is not trusted and not handed to the customer as a
+  // finished number: MIMO asks the agent to price or account for the remainder — it never
+  // decides the pricing itself — and re-verifies. After that single repair turn, whatever
+  // is still uncovered becomes NEEDS_REVIEW (unverified) rather than triggering a second
+  // repair, so a stubborn agent cannot loop forever.
+  const launchedRepair = input.launchedCoverageRepair === true;
+  const repairAlreadyAttempted = record.coverage_repair_attempted === true;
+  if (result.status === 'COMPLETED' && unresolvedCount > 0 && !repairAlreadyAttempted && !launchedRepair) {
+    await patch(calculationId, {
+      status: 'BUILDING',
+      progress_stage: 'VALIDATING',
+      progress_message: 'Checking that every billable workbook row is priced…',
+      coverage_repair_requested: true,
+      coverage_repair_requested_at: Date.now(),
+      agent_last_activity_at: Date.now(),
+      tool_call_count: input.toolCallCount,
+      tool_call_counts: toolCallCounts,
+      agent_iterations: input.agentIterations,
+    });
+    return { terminal: false };
+  }
+
+  // Cumulative run telemetry for the terminal write (Parts 38-39): wall-clock since the
+  // run's first step started, the total message rounds, and the per-tool histogram.
+  const agentDurationMs = record.agent_started_at ? Date.now() - record.agent_started_at : input.durationMs;
+  const agentIterations = input.agentIterations;
 
   let renderedTotals: RenderedTotals | undefined;
   if (result.status === 'COMPLETED') {
@@ -1172,12 +1327,17 @@ async function finalise(input: {
       MCP_TOOLS_USED: mcpToolsUsed,
       SERVICES_CONFIGURED: result.status === 'COMPLETED' ? (result.servicesConfigured ?? []) : [],
       agentDurationMs: input.durationMs,
+      agentTotalDurationMs: agentDurationMs,
+      agentIterations,
       agentSessionId: input.sessionId,
       gatewayIdentifier: GATEWAY_IDENTIFIER,
       mcpRuntimeIdentifier: MCP_RUNTIME_IDENTIFIER,
       toolCallCount: input.toolCallCount,
+      toolCallCounts,
       calculatorUrlCreated: result.status === 'COMPLETED',
       costVerified,
+      coverageUnresolvedRows: unresolvedCount,
+      coverageRepairAttempted: record.coverage_repair_attempted === true,
       renderedTotals: renderedTotals ?? null,
       tracePath: input.traceKey,
     },
@@ -1214,7 +1374,11 @@ async function finalise(input: {
     error_message: status === 'FAILED' ? "We couldn't complete this AWS estimate automatically." : undefined,
     agent_questions: result.status === 'NEEDS_INPUT' ? result.questions.slice(0, 20) : undefined,
     agent_last_activity_at: Date.now(),
+    agent_duration_ms: agentDurationMs,
+    agent_iterations: agentIterations,
     tool_call_count: input.toolCallCount,
+    tool_call_counts: toolCallCounts,
     mcp_tools_used: mcpToolsUsed,
   });
+  return { terminal: true, status };
 }

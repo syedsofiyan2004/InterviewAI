@@ -458,6 +458,19 @@ export const evidenceFullKey = (owner: string, calculationId: string) =>
 export const evidenceAccountingKey = (owner: string, calculationId: string) =>
   `${evidencePrefix(owner, calculationId)}/evidence-accounting.json`;
 
+/**
+ * The authoritative list of cost-relevant row ids for a calculation.
+ *
+ * Coverage is only trustworthy when it is reconciled against what the workbook ACTUALLY
+ * contained, never against the union of ids the agent happens to report — an agent that
+ * forgot ten billable rows reports nothing about them, and self-reported reconciliation
+ * therefore sees zero unresolved rows. So the full classified set is persisted once at
+ * evidence-build time (a few thousand short strings, not the workbook) and the driver
+ * reconciles the agent's citations against this list at completion.
+ */
+export const evidenceCostRelevantRowsKey = (owner: string, calculationId: string) =>
+  `${evidencePrefix(owner, calculationId)}/cost-relevant-rows.json`;
+
 // ─── Index assembly ───────────────────────────────────────────────────────────
 
 export function buildEvidenceIndex(

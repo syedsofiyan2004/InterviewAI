@@ -25,6 +25,7 @@ import {
   evidenceIndexKey,
   evidenceChunkKey,
   evidenceFullKey,
+  evidenceCostRelevantRowsKey,
   fitsInline,
   type WorkbookEvidence,
 } from '../shared/workbook-evidence.js';
@@ -84,8 +85,25 @@ export async function persistWorkbookEvidence(input: {
   const chunked = chunkEvidence(evidence);
   const index = buildEvidenceIndex(evidence, chunked, input.owner, input.calculationId);
 
+  // The authoritative cost-relevant row set, classified ONCE here from the real evidence
+  // and written as a tiny object. The driver reconciles the agent's coverage claims
+  // against THIS list at completion — never against whatever the agent chose to report,
+  // because rows an agent forgets are exactly the rows that would otherwise vanish.
+  const costRelevant = costRelevantRowIds(evidence);
+
   const writes: Array<Promise<unknown>> = [
     saveFileContent(BUCKET_NAME, evidenceIndexKey(input.owner, input.calculationId), JSON.stringify(index), 'application/json'),
+    saveFileContent(
+      BUCKET_NAME,
+      evidenceCostRelevantRowsKey(input.owner, input.calculationId),
+      JSON.stringify({
+        version: '1.0',
+        calculationId: input.calculationId,
+        costRelevantRows: costRelevant,
+        count: costRelevant.length,
+      }),
+      'application/json',
+    ),
   ];
   for (const chunk of chunked.chunks) {
     writes.push(saveFileContent(
@@ -107,7 +125,6 @@ export async function persistWorkbookEvidence(input: {
 
   await Promise.all(writes);
 
-  const costRelevant = costRelevantRowIds(evidence);
   console.log(JSON.stringify({
     event: 'evidence_persisted',
     calculationId: input.calculationId,

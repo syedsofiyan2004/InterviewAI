@@ -778,6 +778,16 @@ export const CalculationRecordSchema = z.object({
   tool_call_count: z.number().optional(),
   question_count: z.number().optional(),
   cost_verified: z.boolean().optional(),
+
+  // Performance telemetry (Parts 38-39), accumulated across every AgentCore step of the
+  // run so one record answers "how long, how many turns, how many calls per tool".
+  agent_started_at: z.number().optional(),
+  /** Wall-clock from the first step's start to the terminal write (includes SFN gaps). */
+  agent_duration_ms: z.number().optional(),
+  /** How many driver steps (message rounds) the run used, including any coverage repair. */
+  agent_iterations: z.number().optional(),
+  /** Per-tool invocation counts (bare tool names) merged across every step. */
+  tool_call_counts: z.record(z.string(), z.number()).optional(),
   agent_questions: z.array(z.object({
     questionId: z.string().optional(),
     resource: z.string().optional(),
@@ -856,6 +866,21 @@ export const CalculationRecordSchema = z.object({
    * answer can be retried against this timestamp.
    */
   resume_requested_at: z.number().optional(),
+
+  /**
+   * Durable coverage-repair bookkeeping (Parts 34-36). A COMPLETED claim that leaves
+   * cost-relevant workbook rows unaccounted for is never trusted as-is: the driver asks the
+   * agent for ONE bounded repair turn before the number is handed over.
+   *
+   *  - `coverage_repair_requested`: a repair turn is pending — a COMPLETED claim was
+   *    rejected for coverage and the next driver step injects the repair instruction.
+   *  - `coverage_repair_attempted`: the repair instruction was accepted by the Harness.
+   *    Once set, a further COMPLETED claim that is still uncovered is terminal
+   *    NEEDS_REVIEW, never a second repair, so the run cannot loop.
+   */
+  coverage_repair_requested: z.boolean().optional(),
+  coverage_repair_attempted: z.boolean().optional(),
+  coverage_repair_requested_at: z.number().optional(),
 
   /**
    * Set on an estimate created by applying a chat-proposed change.
