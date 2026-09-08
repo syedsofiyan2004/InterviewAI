@@ -516,5 +516,10 @@ describe('Agent system prompt', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('validate_estimate, then export_estimate, then import_estimate once');
     expect(prompt).toContain('nothing was aggregated or duplicated');
+    // Part 37: the readback closes the export/import loop — the estimate handed to the
+    // customer is the one AWS actually holds, so it must confirm the priced cost-relevant
+    // rows are present in the imported estimate, not merely reported in evidence arrays.
+    expect(prompt).toContain('the estimate handed to the customer is the one AWS actually holds');
+    expect(prompt).toContain('every cost-relevant row you priced is present and priced in the imported estimate');
   });
 });
