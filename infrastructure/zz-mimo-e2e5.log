@@ -1,0 +1,38 @@
+region      : ap-south-1
+api handler : iep-dev-api-handler-996122083346-ap-south-1
+workload    : agentcore-e2e-s3.csv (59 bytes)
+
+upload-url  OK  users/e2e-agentcore-0000-0000-000000000001/calculator/uploads/a062c73e-1a78-47d3-aa1c-0c72fbd52e6b-agentcore-e2e-s3.csv
+upload      OK
+create      OK  calculation_id=3009f2ac-b316-4945-9255-3efb80bbe98e  status=ANALYZING
+confirm/run skipped — create already started the execution (immediate-build path)
+     20s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+     40s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+     60s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+     80s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    100s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    121s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    141s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    161s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    181s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    201s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    221s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    241s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    261s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    281s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    301s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    321s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    341s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    361s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    381s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    402s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    422s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    442s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    462s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    482s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    502s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    522s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    542s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    562s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    584s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+    604s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0

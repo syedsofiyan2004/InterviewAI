@@ -1,0 +1,36 @@
+region      : ap-south-1
+api handler : iep-dev-api-handler-996122083346-ap-south-1
+workload    : agentcore-e2e-s3.csv (59 bytes)
+
+upload-url  OK  users/e2e-agentcore-0000-0000-000000000001/calculator/uploads/9f6889b7-774c-4ed0-8f05-a8482cc73994-agentcore-e2e-s3.csv
+upload      OK
+create      OK  calculation_id=188f430d-bb24-405a-85aa-1f7bade390e9  status=PROCESSING
+confirm     OK
+run         HTTP 200  {"calculationId":"188f430d-bb24-405a-85aa-1f7bade390e9","status":"ANALYZING"}
+     20s  status=BUILDING  stage=saving  "Workbook baseline: Reading the saved estimate back and rendering its totals"  tools=0
+     40s  status=COMPLETED  stage=done  "Validated estimate ready"  tools=11
+
+final status     : COMPLETED
+executionArn     : arn:aws:states:ap-south-1:996122083346:execution:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1:188f430d-bb24-405a-85aa-1f7bade390e9-mtq12xqd
+agent session    : mimo-188f430d-bb24-405a-85aa-1f7bade390e9-mtq12xnq
+evidence index   : users/e2e-agentcore-0000-0000-000000000001/calculator/188f430d-bb24-405a-85aa-1f7bade390e9/evidence/index.json
+evidence chunks  : 1  rows=2
+calculator URL   : https://calculator.aws/#/estimate?id=c1bee631c6d939a156c252afa19734d525ee2c21
+mcp tools used   : -
+record bytes     : 11099
+sfn status       : RUNNING
+sfn segments     : 2
+
+calculator-agent-orchestrator      invocations during run: 0
+calculator-mcp-proxy               invocations during run: 0
+calculator-mcp-sidecar             invocations during run: 0
+calculator-orchestrator            invocations during run: 0
+
+COMPLETED with a real calculator.aws URL : YES
+Legacy infrastructure untouched          : YES
+DynamoDB record under 100 KB             : YES
+
+REAL calculator.aws URL: https://calculator.aws/#/estimate?id=c1bee631c6d939a156c252afa19734d525ee2c21
+
+RESULT: PASSED — the actual MIMO request path produced a real Calculator estimate through AgentCore.
+EXIT=0

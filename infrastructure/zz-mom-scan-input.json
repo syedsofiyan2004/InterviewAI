@@ -1,0 +1,15 @@
+{
+  "TableName": "iep-dev-moms-996122083346-ap-south-1",
+  "FilterExpression": "contains(#pt, :title) OR contains(#title, :title)",
+  "ExpressionAttributeNames": {
+    "#pt": "project_title",
+    "#title": "title",
+    "#status": "status"
+  },
+  "ExpressionAttributeValues": {
+    ":title": {
+      "S": "Minfy-Intranet"
+    }
+  },
+  "ProjectionExpression": "mom_id,item_type,project_id,project_title,title,#status,owner_email,owner_user_id,created_at,updated_at,deleted_at"
+}

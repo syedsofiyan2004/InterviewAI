@@ -1,0 +1,41 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "aWSLambda",
+  "displayName": "AWS Lambda",
+  "templateId": "lambdaWithFreeTier",
+  "status": "verified",
+  "required": [
+    {
+      "field": "selectArchitectureRequests",
+      "hint": "Architecture toggle for the requests metric. '1' = x86 (default), '2' = arm64. Without it the pricing engine has no architecture context and silently zeros the request-cost path. Not a math operand — derivation rules can't catch it.",
+      "shape": "string ('1' x86, '2' arm64)",
+      "example": "1"
+    },
+    {
+      "field": "selectArchitectureConcurrency",
+      "hint": "Architecture toggle for the provisioned-concurrency metric. Same scheme as selectArchitectureRequests. Required even when not using provisioned concurrency.",
+      "shape": "string ('1' x86, '2' arm64)",
+      "example": "1"
+    }
+  ],
+  "traps": [
+    "durationOfEachRequest is numericInput subtype: bare string '200' (no unit object). An older catalog typo'd it as 'requestDuration' — silently accepted by save API, ignored by pricing engine, $0 result."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "API handler",
+    "numberOfRequests": {
+      "value": "1",
+      "unit": "millionPerMonth"
+    },
+    "durationOfEachRequest": "200",
+    "sizeOfMemoryAllocated": {
+      "value": "1",
+      "unit": "gb|NA"
+    },
+    "selectArchitectureRequests": "1",
+    "selectArchitectureConcurrency": "1"
+  },
+  "lastVerifiedAt": "2026-05-29",
+  "verifiedEstimateId": "abece21524e8228af2bd70d9a4f6ab5f4fbf647a"
+}

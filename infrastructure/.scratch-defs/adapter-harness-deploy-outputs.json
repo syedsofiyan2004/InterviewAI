@@ -1,0 +1,22 @@
+{
+  "IepStack-dev": {
+    "CalculatorAgentCoreHarnessArnOutputCE851553": "arn:aws:bedrock-agentcore:ap-south-1:996122083346:harness/mimoCalc_dev-dAmgUcz1zg",
+    "CalculatorTableName": "iep-dev-calculations-996122083346-ap-south-1",
+    "IepApiEndpointE361331A": "https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/",
+    "MomTableName": "iep-dev-moms-996122083346-ap-south-1",
+    "AdminTableName": "iep-dev-admin-996122083346-ap-south-1",
+    "ChatTableName": "iep-dev-chat-threads-996122083346-ap-south-1",
+    "FrontendUrl": "https://d2itpe2tuxdkli.cloudfront.net",
+    "CalculatorAgentCoreGatewayArn5A929F69": "arn:aws:bedrock-agentcore:ap-south-1:996122083346:gateway/iep-dev-calculator-996122083346-ap-south-1-30f1pfwnsb",
+    "ChatFunctionUrl": "https://glcqd3wjwtevajlzl7bywacafy0gotsl.lambda-url.ap-south-1.on.aws/",
+    "TableName": "iep-dev-interviews-v2-996122083346-ap-south-1",
+    "UserPoolClientId": "271dcg295cdk7dm64ec8e7cq5o",
+    "ApiUrl": "https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/",
+    "BucketName": "iep-dev-files-996122083346-ap-south-1",
+    "UserPoolId": "ap-south-1_S38e41Psu",
+    "CalculatorAgentCoreRuntimeArnEFC8726C": "arn:aws:bedrock-agentcore:ap-south-1:996122083346:runtime/mimoCalcMcp_dev-G46E17C4q8",
+    "InterviewIntelligenceTableName": "iep-dev-interview-intelligence-996122083346-ap-south-1",
+    "CalculatorAgentCoreAgentLambdaArn54A23170": "arn:aws:lambda:ap-south-1:996122083346:function:iep-dev-calculator-agent-orchestrator-996122083346-ap-south-1",
+    "CalculatorAgentCoreExecutionStateMachineArnE5CDE96B": "arn:aws:states:ap-south-1:996122083346:stateMachine:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1"
+  }
+}

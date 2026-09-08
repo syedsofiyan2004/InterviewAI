@@ -1,0 +1,150 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonSageMaker",
+  "displayName": "Amazon SageMaker AI",
+  "templateId": "amazonSageMakerClassesGroup",
+  "status": "verified",
+  "lastVerifiedAt": "2026-05-16",
+  "verifiedEstimateId": "38af84c9b3045425fa783c6279cd0952db52e6d4",
+  "required": [],
+  "traps": [
+    "amazonSageMaker is a subServiceSelector parent. Call addService('sageMakerStudioNotebooks', ...), addService('sageMakerRealTimeInference', ...), or any other child code; EstimateBuilder merges sibling children into a single amazonSageMaker parent envelope. Do NOT call addService('amazonSageMaker', ...) directly — that key has no fields of its own.",
+    "Each child has its OWN templateId and field set — do not assume parent-level fields. Studio Notebooks uses templateId 'sagemakerStudioNotebook'; Real-Time Inference uses 'realtimeInferenceInstances'. EstimateBuilder discovers each child's templateId from its PCT.",
+    "Instance type is a columnFormIPM, NOT a top-level field. Send the WRAPPED shape: { columnFormIPM: { value: [{ 'Instance Name': { value: '<ml.*>' } }] } } — NOT the dotted-path 'columnFormIPM[0].Instance Name' shorthand. validateConfigKeys rejects unknown top-level keys. The single column's selectorId is the literal string 'Instance Name' (autoSuggest cell). Values must be SageMaker-prefixed instance names (ml.t3.medium, ml.m5.large, ml.g5.xlarge, etc.) drawn from get_service_fields(<child>).columnFormIPM.selectorValues['Instance Name']. SageMaker columnFormIPMs have NO 'Number of Nodes', utilization, or TermType columns — instance count is governed by the scalar fields (instancesPerEndPoint for inference, NotebooksPerMonth × DataScientistsPerMonth for Studio).",
+    "sageMakerRealTimeInference exposes THREE columnFormIPM fields: 'columnFormIPM' (primary hosting instances), 'columnFormIPM_3' (Elastic Inference accelerators, gated by EIAInstancesPerm=Yes), and 'columnFormIPM2' (Model Monitor instances, gated by modelMonitorJobsPerMonth>0). Send only 'columnFormIPM' for a minimal estimate; the other two stay defaulted unless you explicitly enable EI or Model Monitor.",
+    "Real-Time Inference's SM_storageAmount is gated by SM_storageType — sending storage size alone won't surface unless storage type is also set. The dropdown has only one option ('General Purpose' = gp2). Storage adds a small fixed charge per endpoint instance."
+  ],
+  "subServices": [
+    {
+      "serviceCode": "sageMakerStudioNotebooks",
+      "estimateFor": "sagemakerStudioNotebook",
+      "required": [
+        {
+          "field": "DataScientistsPerMonth",
+          "hint": "Number of data scientists using Studio per month",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "NotebooksPerMonth",
+          "hint": "Number of Studio Notebook instances per data scientist",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "NotebookHrsPerDay",
+          "hint": "Hours per day each notebook runs",
+          "shape": "string (numeric, 1-24)",
+          "example": "8"
+        },
+        {
+          "field": "NotebookDaysPerMonth",
+          "hint": "Days per month each notebook runs",
+          "shape": "string (numeric, 1-31)",
+          "example": "20"
+        },
+        {
+          "field": "columnFormIPM",
+          "hint": "Hosting instance type for the Studio notebook (autoSuggest, key 'Instance Name'). Cheapest reasonable: ml.t3.medium.",
+          "shape": "{ value: [{ 'Instance Name': { value: '<ml.*>' } }] }",
+          "example": {
+            "value": [
+              {
+                "Instance Name": {
+                  "value": "ml.t3.medium"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "serviceCode": "sageMakerRealTimeInference",
+      "estimateFor": "realtimeInferenceInstances",
+      "required": [
+        {
+          "field": "modelsDeployed",
+          "hint": "Total number of distinct models deployed",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "modelsPerEndPoint",
+          "hint": "Number of models hosted per endpoint",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "instancesPerEndPoint",
+          "hint": "Number of hosting instances backing each endpoint",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "endpointHrsPerDay",
+          "hint": "Hours per day each endpoint runs (24 = always-on)",
+          "shape": "string (numeric, 1-24)",
+          "example": "24"
+        },
+        {
+          "field": "EndPointDaysPerMonth",
+          "hint": "Days per month each endpoint runs (30 = always-on)",
+          "shape": "string (numeric, 1-31)",
+          "example": "30"
+        },
+        {
+          "field": "columnFormIPM",
+          "hint": "Hosting instance type for the inference endpoint (autoSuggest, key 'Instance Name'). Cheapest reasonable: ml.m5.large.",
+          "shape": "{ value: [{ 'Instance Name': { value: '<ml.*>' } }] }",
+          "example": {
+            "value": [
+              {
+                "Instance Name": {
+                  "value": "ml.m5.large"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "minimalConfig": {
+    "sageMakerStudioNotebooks": {
+      "region": "us-east-1",
+      "description": "SageMaker Studio for ML development",
+      "DataScientistsPerMonth": "1",
+      "NotebooksPerMonth": "1",
+      "NotebookHrsPerDay": "8",
+      "NotebookDaysPerMonth": "20",
+      "columnFormIPM": {
+        "value": [
+          {
+            "Instance Name": {
+              "value": "ml.t3.medium"
+            }
+          }
+        ]
+      }
+    },
+    "sageMakerRealTimeInference": {
+      "region": "us-east-1",
+      "description": "SageMaker real-time inference endpoint",
+      "modelsDeployed": "1",
+      "modelsPerEndPoint": "1",
+      "instancesPerEndPoint": "1",
+      "endpointHrsPerDay": "24",
+      "EndPointDaysPerMonth": "30",
+      "columnFormIPM": {
+        "value": [
+          {
+            "Instance Name": {
+              "value": "ml.m5.large"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

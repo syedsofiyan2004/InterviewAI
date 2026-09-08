@@ -1,0 +1,84 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonElasticsearchService",
+  "displayName": "Amazon OpenSearch Service",
+  "templateId": "elasticSearchService",
+  "status": "verified",
+  "lastVerifiedAt": "2026-06-03",
+  "verifiedEstimateId": "383669ae784f00cb0ceb8845913fec1a964f5217",
+  "required": [
+    {
+      "field": "numberOfInstances",
+      "hint": "Number of data-instance copies. Required even though the manifest's validations.required is false — every storage cost expression multiplies by it, so without it the rendered cost stays at $0.",
+      "shape": "string (numeric, e.g. '1')",
+      "example": "1"
+    },
+    {
+      "field": "storageType",
+      "hint": "EBS storage type for the cluster (top-level field, NOT the columnFormIPM row's Storage selector — those are different).",
+      "enum": ["GP3", "GP2", "PIOPS Storage", "Magnetic"],
+      "example": "GP3"
+    }
+  ],
+  "traps": [
+    "Service rebrand: this entry's serviceCode is 'amazonElasticsearchService' but the calculator displays it as 'Amazon OpenSearch Service' — AWS rebranded the service in 2021 but the manifest key kept the legacy name. Both refer to the same product.",
+    "Three templates in the manifest: 'elasticSearchService' (provisioned, this entry's templateId), 'elasticSearchService-serverlesss' (serverless OCU pricing — note the 3 s's, not a typo in the manifest), and 'elasticSearchService-serverlesss-Ingestion' (separate ingestion pipeline). minimalConfig targets provisioned; for serverless workloads use a different config shape (numericInputs for indexing OCUs / search OCUs / index size).",
+    "Instance configuration uses a columnFormIPM matrix — same WRAPPED shape as RDS: { columnFormIPM_1: { value: [{ <selectorId>: { value: '<n>' }, ... }] } }. Selector ids: 'Number of Nodes Data instance', 'Instance Type', 'Instance Family', 'TermType', 'Storage'. The literal 'undefined' key is the utilization slot: { value: { unit: '<percent>', selectedId: '%Utilized/Month' } }. Sending a bare array `[{...}]` instead of the wrapped form silently saves but the pricing engine ignores the row.",
+    "columnFormIPM Instance Family options are NOT what you'd guess. Valid: 'Memory optimized', 'General purpose' (lowercase 'p'), 'Compute optimized', 'Storage optimized', 'OpenSearch Optimized', 'OR1'. Sending 'Standard' or other common AWS labels fails value validation.",
+    "columnFormIPM Storage selector is the INSTANCE-ATTACHED storage choice (EBS Only / 1 x 1900 NVMe SSD / etc — 62 options). It is NOT the same as top-level storageType (which is the EBS volume type: GP3 / GP2 / PIOPS Storage / Magnetic). For most workloads use Storage='EBS Only' in the matrix and storageType='GP3' at top level.",
+    "There are THREE columnFormIPM tables: columnFormIPM_1 (data instances — primary), columnFormIPM_2 (dedicated master nodes), and columnFormIPM (UltraWarm). When ANY columnFormIPM table is absent from the saved blob, the calculator UI silently rehydrates it with manifest defaults — master defaults to 3× r5.2xlarge.search, UltraWarm to 2× nodes — and prices them in. Production case 2026-06-03 saved with only columnFormIPM_1: rendered $2394/mo for what the user thought was a $280/mo cluster (8.5× phantom cost). Always include all three tables; set Number of Nodes='0' on the ones the user doesn't want. The column-form-default-trap lint predicate catches this at save time.",
+    "GP3-specific fields (gp3StorageAmount, gp3ProvisioningIOPS, gp3Throughput) are gated by storageType=GP3. The top-level storageAmount field is for non-GP3 storage types; using both with GP3 selected sends conflicting signals. For GP3 set storageAmount via gp3StorageAmount instead, and add gp3ProvisioningIOPS (default 3000) + gp3Throughput (default 125 MB/s) only if you need above-baseline IOPS or throughput."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Single-node OpenSearch m6g.large cluster, GP3 100GB",
+    "columnFormIPM_1": {
+      "value": [
+        {
+          "Number of Nodes Data instance": {
+            "value": "1"
+          },
+          "Instance Type": {
+            "value": "m6g.large.search"
+          },
+          "Instance Family": {
+            "value": "General purpose"
+          },
+          "TermType": {
+            "value": "OnDemand"
+          },
+          "Storage": {
+            "value": "EBS Only"
+          },
+          "undefined": {
+            "value": {
+              "unit": "100",
+              "selectedId": "%Utilized/Month"
+            }
+          }
+        }
+      ]
+    },
+    "columnFormIPM_2": {
+      "value": [
+        {
+          "Number of Nodes Dedicated master": { "value": "0" },
+          "Instance Type": { "value": "r5.2xlarge.search" }
+        }
+      ]
+    },
+    "columnFormIPM": {
+      "value": [
+        {
+          "Number of Nodes": { "value": "0" }
+        }
+      ]
+    },
+    "numberOfInstances": "1",
+    "storageType": "GP3",
+    "storageAmount": {
+      "value": "100",
+      "unit": "gb|NA"
+    }
+  }
+}

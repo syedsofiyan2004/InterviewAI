@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, ExternalLink, FileDown, FileSpreadsheet, FileText, Info, Loader2, PiggyBank, RefreshCw, Trash2 } from 'lucide-react';
@@ -15,6 +15,9 @@ import {
   type CalculationResultResponse,
   type CalculationScenario,
 } from '@/lib/calculatorApi';
+
+/** A single question the calculator agent asked the customer (mirrors server agent_questions). */
+type AgentQuestion = NonNullable<CalculationResultResponse['agent_questions']>[number];
 
 const POLL_INTERVAL_MS = 3000;
 const MONTHS_PER_YEAR = 12;
@@ -106,10 +109,34 @@ function CalculationDetailContent() {
   const [downloadingWorkbook, setDownloadingWorkbook] = useState(false);
   const [downloadingDocument, setDownloadingDocument] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [agentAnswer, setAgentAnswer] = useState('');
   const [agentAnswers, setAgentAnswers] = useState<Record<string, string>>({});
+  const [agentOptions, setAgentOptions] = useState<Record<string, string[]>>({});
+  const [agentCustom, setAgentCustom] = useState<Record<string, string>>({});
   const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
+
+  /** The pause contract is one question, so the active question is the first one. */
+  const activeQuestion = data?.agent_questions?.[0];
+  const questionKey = (question: AgentQuestion | undefined, index = 0) =>
+    question?.questionId || `${question?.resource || 'question'}-${index}`;
+
+  const canContinue = (): boolean => {
+    if (!activeQuestion) return true;
+    const key = questionKey(activeQuestion);
+    if (activeQuestion.type) {
+      if (activeQuestion.type === 'BOOLEAN') return (agentAnswers[key] ?? '') !== '';
+      return ((agentAnswers[key] ?? '').trim()) !== '';
+    }
+    const isPicker = (activeQuestion.options?.length ?? 0) > 0 || !!activeQuestion.customInput?.enabled;
+    if (isPicker) {
+      const picked = activeQuestion.selectionMode === 'multiple'
+        ? (agentOptions[key] ?? [])
+        : agentAnswers[key] ? [agentAnswers[key]] : [];
+      const custom = (agentCustom[key] ?? '').trim();
+      return picked.length > 0 || custom !== '';
+    }
+    return (agentAnswers[key] ?? '').trim() !== '';
+  };
   // See the list page: window.confirm puts the CloudFront hostname above the message,
   // which reads as a browser warning instead of the app asking.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -130,29 +157,53 @@ function CalculationDetailContent() {
   };
 
   const answerAgent = async () => {
-    if (!id) return;
-    const question = data?.agent_questions?.[0];
-    const key = question?.questionId || `${question?.resource || 'question'}-0`;
-    const raw = question ? (agentAnswers[key] ?? '').trim() : agentAnswer.trim();
-    if (!raw) return;
+    if (!id || !activeQuestion) return;
+    const key = questionKey(activeQuestion);
+    let value: string | number | boolean | Array<string | number | boolean>;
+
+    if (activeQuestion.type) {
+      const raw = (agentAnswers[key] ?? '').trim();
+      if (!raw) return;
+      value = activeQuestion.type === 'NUMBER' ? Number(raw)
+        : activeQuestion.type === 'BOOLEAN' ? raw === 'true'
+          : raw;
+    } else {
+      const isPicker = (activeQuestion.options?.length ?? 0) > 0 || !!activeQuestion.customInput?.enabled;
+      if (isPicker) {
+        const picked = activeQuestion.selectionMode === 'multiple'
+          ? (agentOptions[key] ?? [])
+          : agentAnswers[key] ? [agentAnswers[key]] : [];
+        const custom = (agentCustom[key] ?? '').trim();
+        const merged = custom ? [...picked, custom] : picked;
+        value = activeQuestion.selectionMode === 'multiple'
+          ? merged
+          : merged[0] ?? '';
+        // Coerce a number-styled "Other" value so the agent receives 24, not "24".
+        if (typeof value === 'string' && value !== ''
+            && activeQuestion.customInput?.inputType === 'number'
+            && Number.isFinite(Number(value))) {
+          value = Number(value);
+        }
+        if (value === '' || (Array.isArray(value) && value.length === 0)) return;
+      } else {
+        const raw = (agentAnswers[key] ?? '').trim();
+        if (!raw) return;
+        value = raw;
+      }
+    }
+
     setAnsweringAgent(true);
     try {
-      if (question) {
-        const value = question.type === 'NUMBER' ? Number(raw)
-          : question.type === 'BOOLEAN' ? raw === 'true'
-            : raw;
-        await calculatorApi.answerCalculationQuestion(id, {
-          questionId: question.questionId,
-          resource: question.resource,
-          semanticField: question.semanticField || question.field,
-          value,
-          applyToSimilarResources: !!applyToSimilar[key],
-        });
-      } else {
-        await calculatorApi.answerCalculationQuestion(id, raw);
-      }
-      setAgentAnswer('');
+      await calculatorApi.answerCalculationQuestion(id, {
+        questionId: activeQuestion.questionId,
+        resource: activeQuestion.resource,
+        semanticField: activeQuestion.semanticField || activeQuestion.field,
+        value,
+        applyToSimilarResources: !!applyToSimilar[key],
+      });
       setAgentAnswers({});
+      setAgentOptions({});
+      setAgentCustom({});
       setApplyToSimilar({});
       await fetchResult();
     } catch (err: unknown) {
@@ -236,6 +287,151 @@ function CalculationDetailContent() {
       clearTimeout(timer);
     };
   }, [id, fetchResult]);
+
+  /**
+   * The interactive control for the ACTIVE question (the single question a pause asks).
+   *
+   * Three kinds, decided without reference to the agent's status flags:
+   *   - legacy typed question (type CHOICE/NUMBER/BOOLEAN/TEXT): the control it always had;
+   *   - generic question (options and/or customInput, no type): an option picker plus an
+   *     optional inline "Other / give your own input" field, honoring selectionMode;
+   *   - a bare question with neither: free text.
+   */
+  const renderQuestionControl = (question: AgentQuestion): ReactNode => {
+    const key = questionKey(question);
+    const commonClass = 'mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent';
+
+    if (question.type) {
+      if (question.type === 'CHOICE' && question.choices?.length) {
+        return (
+          <select
+            value={agentAnswers[key] ?? ''}
+            onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+            className={commonClass}
+          >
+            <option value="">Select an option</option>
+            {question.choices.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+          </select>
+        );
+      }
+      if (question.type === 'BOOLEAN') {
+        return (
+          <select
+            value={agentAnswers[key] ?? ''}
+            onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+            className={commonClass}
+          >
+            <option value="">Select yes or no</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        );
+      }
+      return (
+        <input
+          type={question.type === 'NUMBER' ? 'number' : 'text'}
+          value={agentAnswers[key] ?? ''}
+          onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+          placeholder={question.type === 'NUMBER' && question.unit ? `Enter value in ${question.unit}` : 'Enter your answer'}
+          className={commonClass}
+        />
+      );
+    }
+
+    const options = question.options ?? [];
+    const hasCustom = !!question.customInput?.enabled;
+    if (options.length > 0 || hasCustom) {
+      const multiple = question.selectionMode === 'multiple';
+      return (
+        <div className="mt-3 space-y-2.5">
+          {options.length > 0 && (multiple ? (
+            <div className="space-y-1.5">
+              {options.map((option) => {
+                const checked = (agentOptions[key] ?? []).includes(option.value);
+                return (
+                  <label key={option.value} className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) => {
+                        setAgentOptions((current) => {
+                          const next = new Set(current[key] ?? []);
+                          if (event.target.checked) next.add(option.value); else next.delete(option.value);
+                          return { ...current, [key]: [...next] };
+                        });
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-border text-accent"
+                    />
+                    <span className="min-w-0">
+                      <span className="font-semibold text-text-primary">{option.label}</span>
+                      {option.description && <span className="mt-0.5 block text-xs leading-5 text-text-muted">{option.description}</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {options.map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-sm ${
+                    agentAnswers[key] === option.value
+                      ? 'border-accent bg-accent/5'
+                      : 'border-border bg-background'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name={`question-${key}`}
+                    value={option.value}
+                    checked={agentAnswers[key] === option.value}
+                    onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+                    className="mt-0.5 h-4 w-4 border-border text-accent"
+                  />
+                  <span className="min-w-0">
+                    <span className="font-semibold text-text-primary">{option.label}</span>
+                    {option.description && <span className="mt-0.5 block text-xs leading-5 text-text-muted">{option.description}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ))}
+          {hasCustom && (
+            <div className="rounded-lg border border-dashed border-border bg-surface/50 px-3 py-2.5">
+              <label className="text-xs font-semibold text-text-secondary" htmlFor={`custom-${key}`}>
+                {question.customInput?.label || 'Other / give your own input'}
+              </label>
+              <input
+                id={`custom-${key}`}
+                type={question.customInput?.inputType === 'number' ? 'number' : 'text'}
+                value={agentCustom[key] ?? ''}
+                onChange={(event) => setAgentCustom((current) => ({ ...current, [key]: event.target.value }))}
+                placeholder={question.customInput?.placeholder
+                  || (question.customInput?.inputType === 'number' && question.customInput?.unit
+                    ? `Enter value in ${question.customInput.unit}`
+                    : 'Type your own answer')}
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <textarea
+        id={`agent-answer-${key}`}
+        value={agentAnswers[key] ?? ''}
+        onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+        rows={4}
+        placeholder="Type your answer for the calculator agent."
+        className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+      />
+    );
+  };
 
   if (!id) {
     return (
@@ -376,51 +572,12 @@ function CalculationDetailContent() {
                       <p className="text-sm font-semibold text-text-primary">{question.title || question.question}</p>
                       {question.title && <p className="mt-1 text-sm leading-6 text-text-secondary">{question.question}</p>}
                       {question.reason && <p className="mt-1 text-xs leading-5 text-text-muted">{question.reason}</p>}
-                      {(question.resource || question.semanticField || question.field) && (
+                      {(question.scope || question.resource || question.semanticField || question.field) && (
                         <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                          {[question.resource, question.semanticField || question.field].filter(Boolean).join(' · ')}
+                          {[question.scope || question.resource, question.semanticField || question.field].filter(Boolean).join(' · ')}
                         </p>
                       )}
-                      {index === 0 && (() => {
-                        const key = question.questionId || `${question.resource || 'question'}-${index}`;
-                        const commonClass = 'mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent';
-                        if (question.type === 'CHOICE' && question.choices?.length) {
-                          return (
-                            <select
-                              value={agentAnswers[key] ?? ''}
-                              onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
-                              className={commonClass}
-                            >
-                              <option value="">Select an option</option>
-                              {question.choices.map((choice) => (
-                                <option key={choice.value} value={choice.value}>{choice.label}</option>
-                              ))}
-                            </select>
-                          );
-                        }
-                        if (question.type === 'BOOLEAN') {
-                          return (
-                            <select
-                              value={agentAnswers[key] ?? ''}
-                              onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
-                              className={commonClass}
-                            >
-                              <option value="">Select yes or no</option>
-                              <option value="true">Yes</option>
-                              <option value="false">No</option>
-                            </select>
-                          );
-                        }
-                        return (
-                          <input
-                            type={question.type === 'NUMBER' ? 'number' : 'text'}
-                            value={agentAnswers[key] ?? ''}
-                            onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
-                            placeholder={question.type === 'NUMBER' && question.unit ? `Enter value in ${question.unit}` : 'Enter your answer'}
-                            className={commonClass}
-                          />
-                        );
-                      })()}
+                      {index === 0 && renderQuestionControl(question)}
                       {index === 0 && question.allowApplyToSimilarResources && (
                         <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-text-secondary">
                           <input
@@ -437,28 +594,11 @@ function CalculationDetailContent() {
                       )}
                     </div>
                   ))}
-                  <div className="rounded-xl border border-border bg-surface p-3">
-                    <label htmlFor="agent-answer" className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-                      {data.agent_questions[0]?.type ? 'Continue with this answer' : 'Answer for the calculator agent'}
-                    </label>
-                    {!data.agent_questions[0]?.type && (
-                      <textarea
-                        id="agent-answer"
-                        value={agentAnswer}
-                        onChange={(event) => setAgentAnswer(event.target.value)}
-                        rows={4}
-                        placeholder="Example: Treat rows 185-320 as Windows Server, use 1-year no-upfront Savings Plan, and keep grouped entries acceptable for this estimate."
-                        className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
-                      />
-                    )}
+                  <div className="flex justify-end">
                     <button
                       type="button"
                       onClick={() => void answerAgent()}
-                      disabled={answeringAgent || (() => {
-                        const question = data.agent_questions[0];
-                        const key = question?.questionId || `${question?.resource || 'question'}-0`;
-                        return question?.type ? !(agentAnswers[key] ?? '').trim() : !agentAnswer.trim();
-                      })()}
+                      disabled={answeringAgent || (!!activeQuestion && !canContinue())}
                       className="btn-primary mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
                     >
                       {answeringAgent && <Loader2 size={14} className="animate-spin" />}

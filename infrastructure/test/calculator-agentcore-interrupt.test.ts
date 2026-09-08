@@ -78,6 +78,72 @@ describe('request_user_input: tool input → agent question projection', () => {
     const { toolInputToAgentQuestion } = load();
     expect(toolInputToAgentQuestion({ type: 'TEXT', title: 'no question body' })).toBeUndefined();
   });
+
+  it('projects a GENERIC question (options + single selection, no type) with type absent', () => {
+    const { toolInputToAgentQuestion } = load();
+    const question = toolInputToAgentQuestion({
+      questionId: 'q-savings-plan',
+      title: 'Savings Plan term',
+      question: 'Which commitment would you like on the EC2 fleet?',
+      reason: 'A commitment materially changes the monthly cost.',
+      scope: 'all EC2 instances',
+      selectionMode: 'single',
+      options: [
+        { value: 'on_demand', label: 'On-Demand', description: 'No commitment, highest unit price.' },
+        { value: 'sp_1yr_no_upfront', label: '1 year, no upfront' },
+      ],
+      customInput: { enabled: true, label: 'Other', inputType: 'text' },
+      allowApplyToSimilarResources: true,
+    });
+    expect(question).toMatchObject({
+      questionId: 'q-savings-plan',
+      title: 'Savings Plan term',
+      question: 'Which commitment would you like on the EC2 fleet?',
+      reason: 'A commitment materially changes the monthly cost.',
+      scope: 'all EC2 instances',
+      selectionMode: 'single',
+      customInput: { enabled: true, label: 'Other', inputType: 'text' },
+      allowApplyToSimilarResources: true,
+    });
+    expect(question?.type).toBeUndefined();
+    expect(question?.choices).toBeUndefined();
+    expect(question?.options).toEqual([
+      { value: 'on_demand', label: 'On-Demand', description: 'No commitment, highest unit price.' },
+      { value: 'sp_1yr_no_upfront', label: '1 year, no upfront' },
+    ]);
+  });
+
+  it('projects a GENERIC multiple question with a numbered custom input', () => {
+    const { toolInputToAgentQuestion } = load();
+    const question = toolInputToAgentQuestion({
+      questionId: 'q-hours',
+      title: 'Running hours',
+      question: 'Which hours apply to these servers?',
+      reason: 'Hours change the monthly total.',
+      selectionMode: 'multiple',
+      options: [
+        { value: '24x7', label: '24x7' },
+        { value: 'business', label: 'Business hours' },
+      ],
+      customInput: { enabled: true, inputType: 'number', unit: 'hours/day', placeholder: 'e.g. 12' },
+    });
+    expect(question?.type).toBeUndefined();
+    expect(question?.selectionMode).toBe('multiple');
+    expect(question?.customInput).toEqual({ enabled: true, inputType: 'number', unit: 'hours/day', placeholder: 'e.g. 12' });
+  });
+
+  it('a bare question with no type, options or custom input stays a free-text question', () => {
+    const { toolInputToAgentQuestion } = load();
+    const question = toolInputToAgentQuestion({
+      questionId: 'q-freetext',
+      title: 'Anything else',
+      question: 'Tell us anything else about the workload that affects cost.',
+    });
+    expect(question?.type).toBeUndefined();
+    expect(question?.options).toBeUndefined();
+    expect(question?.customInput).toBeUndefined();
+    expect(question?.question).toBe('Tell us anything else about the workload that affects cost.');
+  });
 });
 
 describe('request_user_input: resume continuation messages (Part 16)', () => {
@@ -116,6 +182,23 @@ describe('request_user_input: resume continuation messages (Part 16)', () => {
     });
     const body = JSON.parse((messages[1] as any).content[0].toolResult.content[0].text as string);
     expect(body).toEqual({ value: 'ap-south-1', applyToSimilarResources: true });
+  });
+
+  it('serialises an array answer for a selectionMode "multiple" question unchanged', () => {
+    const { buildResumeMessages } = load();
+    const input = {
+      questionId: 'q-hours',
+      question: 'Which hours apply to these servers?',
+      selectionMode: 'multiple',
+      options: [{ value: '24x7', label: '24x7' }],
+    };
+    const messages = buildResumeMessages(
+      [{ toolUseId: 'tooluse_1', name: 'request_user_input', input }],
+      [{ questionId: 'q-hours', value: ['24x7', 'until 18:00 local'] }],
+    );
+    const body = JSON.parse((messages[1] as any).content[0].toolResult.content[0].text as string);
+    expect(body.value).toEqual(['24x7', 'until 18:00 local']);
+    expect(body.applyToSimilarResources).toBe(false);
   });
 
   it('pairs each paused tool use to the answer that names the same questionId', () => {

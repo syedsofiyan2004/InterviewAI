@@ -349,11 +349,22 @@ export interface CalculationResultResponse {
     resource?: string;
     semanticField?: string;
     field?: string;
+    // Legacy typed questions only; generic questions omit `type` and carry options.
     type?: 'CHOICE' | 'NUMBER' | 'BOOLEAN' | 'TEXT';
     title?: string;
     question: string;
     reason?: string;
-    choices?: Array<{ value: string; label: string }>;
+    choices?: Array<{ value: string; label: string; description?: string }>;
+    options?: Array<{ value: string; label: string; description?: string }>;
+    selectionMode?: 'single' | 'multiple';
+    customInput?: {
+      enabled?: boolean;
+      label?: string;
+      inputType?: 'text' | 'number';
+      unit?: string;
+      placeholder?: string;
+    };
+    scope?: string;
     recommended?: string | number | boolean | null;
     unit?: string;
     allowApplyToSimilarResources?: boolean;
@@ -552,7 +563,9 @@ export const calculatorApi = {
       questionId?: string;
       resource?: string;
       semanticField?: string;
-      value: string | number | boolean;
+      // An array of values when the customer selected several options (a selectionMode
+      // "multiple" question), possibly ending in their own "Other" free-text value.
+      value: string | number | boolean | Array<string | number | boolean>;
       applyToSimilarResources?: boolean;
     },
   ): Promise<{ calculation_id: string; status: CalculationStatus }> {

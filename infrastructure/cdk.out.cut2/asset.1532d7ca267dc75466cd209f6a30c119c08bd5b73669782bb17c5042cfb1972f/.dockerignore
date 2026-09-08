@@ -1,0 +1,16 @@
+# Docker build context for the MCP sidecar image.
+#
+# node_modules must be excluded for two reasons. The Dockerfile installs
+# dependencies itself (COPY package.json + npm install), so shipping a host copy
+# would be redundant and could carry platform-specific binaries built for the wrong
+# architecture. More importantly, CDK hashes this directory to decide whether the
+# image asset changed — so a stray local `npm install` here (for instance to run the
+# server on a workstation) would change the hash and force a full image rebuild and
+# ECR push on the next deploy, which also means the deploy suddenly requires Docker.
+node_modules/
+npm-debug.log*
+
+# Never part of an image.
+.env
+.env.*
+*.log

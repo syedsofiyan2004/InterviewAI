@@ -1203,7 +1203,7 @@ export async function answerCalculationQuestion(
     questionId?: string;
     resource?: string;
     semanticField?: string;
-    value: string | number | boolean;
+    value: string | number | boolean | Array<string | number | boolean>;
     applyToSimilarResources?: boolean;
     answered_at: number;
     session_id: string;
@@ -1215,14 +1215,20 @@ export async function answerCalculationQuestion(
       : body.answer && typeof body.answer === 'object'
         ? [body.answer]
         : [];
+    // A scalar answer, or an array of scalars for a selectionMode "multiple" question
+    // (possibly including the customer's own "Other" value appended by the frontend).
     structuredAnswers = (rawStructured as Array<Record<string, unknown>>)
       .flatMap((entry) => {
-        if (!['string', 'number', 'boolean'].includes(typeof entry.value)) return [];
+        const raw = entry.value;
+        const isScalar = ['string', 'number', 'boolean'].includes(typeof raw);
+        const isScalarArray = Array.isArray(raw)
+          && raw.every((item) => ['string', 'number', 'boolean'].includes(typeof item));
+        if (!isScalar && !isScalarArray) return [];
         return [{
           questionId: typeof entry.questionId === 'string' ? entry.questionId : undefined,
           resource: typeof entry.resource === 'string' ? entry.resource : undefined,
           semanticField: typeof entry.semanticField === 'string' ? entry.semanticField : undefined,
-          value: entry.value as string | number | boolean,
+          value: raw as string | number | boolean | Array<string | number | boolean>,
           applyToSimilarResources: typeof entry.applyToSimilarResources === 'boolean' ? entry.applyToSimilarResources : undefined,
           answered_at: Date.now(),
           session_id: sessionId,
@@ -1233,7 +1239,8 @@ export async function answerCalculationQuestion(
       answer = structuredAnswers.map((entry, index) => {
         const label = [entry.resource, entry.semanticField].filter(Boolean).join(' / ') || entry.questionId || `question ${index + 1}`;
         const scope = entry.applyToSimilarResources ? ' (apply to similar resources)' : '';
-        return `${label}: ${String(entry.value)}${scope}`;
+        const rendered = Array.isArray(entry.value) ? entry.value.join(', ') : String(entry.value);
+        return `${label}: ${rendered}${scope}`;
       }).join('\n');
     }
   } catch {
@@ -1415,6 +1422,10 @@ export async function getCalculationResult(
     // URLs and cost totals while polling, before the full result is loaded.
     scenario_summaries: item!.scenario_summaries ?? null,
     unresolved_critical_count: item!.unresolved_critical_count ?? null,
+    // A paused request_user_input question (WAITING_FOR_INPUT) rides on this same poll so
+    // the view page can render the question inline the moment the agent pauses.
+    agent_questions: item!.agent_questions ?? [],
+    question_count: item!.question_count ?? null,
   });
 }
 

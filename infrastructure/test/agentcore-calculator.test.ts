@@ -465,4 +465,56 @@ describe('Agent system prompt', () => {
     expect(prompt).toContain('Every source workload/resource that must be priced must be represented individually in AWS Pricing Calculator');
     expect(prompt).toContain('Do not merge several independent source resources into one Calculator line item');
   });
+
+  it('tells the agent to read every cost-relevant evidence row before pricing', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('moreAvailable=false');
+    expect(prompt).toContain('costRelevantOnly=true');
+    expect(prompt).toContain('Never assume the first evidence response is the whole workbook');
+  });
+
+  it('batches add_service and reuses schema discovery instead of re-running it per resource', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('Discover each service');
+    expect(prompt).toContain('schema once');
+    expect(prompt).toContain('Do not validate after every batch');
+    expect(prompt).toContain('add_service calls');
+    expect(prompt).toContain('batched add_service');
+  });
+
+  it('makes coverage a completion condition: priced, excluded, unsupported or awaiting the customer — never silently dropped', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('Coverage is a completion condition');
+    expect(prompt).toContain('evidenceConsumed');
+    expect(prompt).toContain('evidenceExcluded');
+    expect(prompt).toContain('evidenceUnsupported');
+    expect(prompt).toContain('call request_user_input instead of returning COMPLETED');
+  });
+
+  it('treats statuses as UI states and material mismatches as questions, not ask-rules or nearest-fit', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('not rules about when you may ask');
+    expect(prompt).toContain('Material mismatches are questions, not nearest-fit assumptions');
+    expect(prompt).toContain('A guess that materially changes cost is a request_user_input, not a warning');
+  });
+
+  it('offers 2-4 options plus an Other/customInput path and honours allowApplyToSimilarResources', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('Offer 2-4 useful contextual options');
+    expect(prompt).toContain('customInput');
+    expect(prompt).toContain('allowApplyToSimilarResources');
+    expect(prompt).toContain('Call request_user_input for one material question at a time');
+  });
+
+  it('applies a commercial pricing strategy only to eligible resources and never silently picks On-Demand', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('do not silently pick On-Demand');
+    expect(prompt).toContain('only to the resources actually eligible for it');
+  });
+
+  it('requires one final validate -> export -> import readback before COMPLETED', () => {
+    const prompt = readSource('prompts/calculator-agent-system.txt');
+    expect(prompt).toContain('validate_estimate, then export_estimate, then import_estimate once');
+    expect(prompt).toContain('nothing was aggregated or duplicated');
+  });
 });

@@ -1,0 +1,161 @@
+{
+  "results": [
+    {
+      "index": 1,
+      "url": "https://calculator.aws/#/estimate?id=118a105b39ef876afcfa66c4c627c8ed7d26073a",
+      "services": 1,
+      "name": "MIMO session acceptance 1 2026-09-07T02:36:01.314Z"
+    },
+    {
+      "index": 2,
+      "url": "https://calculator.aws/#/estimate?id=d7bf2bd69f6d955336388fa92b0e9537755bab07",
+      "services": 1,
+      "name": "MIMO session acceptance 2 2026-09-07T02:36:03.890Z"
+    },
+    {
+      "index": 3,
+      "url": "https://calculator.aws/#/estimate?id=79597313cf6b7c3a36e74e83d628097b9476dcd2",
+      "services": 1,
+      "name": "MIMO session acceptance 3 2026-09-07T02:36:05.818Z"
+    },
+    {
+      "index": 4,
+      "url": "https://calculator.aws/#/estimate?id=81db9c95c6b3894e37194dc9b0881f65b00603fd",
+      "services": 1,
+      "name": "MIMO session acceptance 4 2026-09-07T02:36:07.933Z"
+    },
+    {
+      "index": 5,
+      "url": "https://calculator.aws/#/estimate?id=56b0ccf9dcbf608e56e13d5b3efbc03eef85567b",
+      "services": 1,
+      "name": "MIMO session acceptance 5 2026-09-07T02:36:10.332Z"
+    }
+  ],
+  "calls": [
+    {
+      "kind": "gateway",
+      "phase": "setup",
+      "call": 1,
+      "timestamp": "2026-09-07T02:36:55.167Z",
+      "method": "initialize",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "11e1f772-30d6-47d2-8d5b-56906cb84277",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 135
+    },
+    {
+      "kind": "gateway",
+      "phase": "setup",
+      "call": 2,
+      "timestamp": "2026-09-07T02:36:55.302Z",
+      "method": "notifications/initialized",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 202,
+      "requestId": "d660c717-eeaf-41b2-b8b5-83cf7f00d512",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 58
+    },
+    {
+      "kind": "gateway",
+      "phase": "setup",
+      "call": 3,
+      "timestamp": "2026-09-07T02:36:55.360Z",
+      "method": "tools/list",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "fc0f70be-2b50-4802-8409-4c39b5a1b901",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 80
+    },
+    {
+      "kind": "gateway",
+      "phase": "import-verify",
+      "call": 4,
+      "timestamp": "2026-09-07T02:36:55.440Z",
+      "method": "tools/call",
+      "tool": "calcmcp___import_estimate",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "7631c349-d343-4492-bcaa-a485541a589e",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 2058
+    },
+    {
+      "kind": "gateway",
+      "phase": "import-verify",
+      "call": 5,
+      "timestamp": "2026-09-07T02:36:57.499Z",
+      "method": "tools/call",
+      "tool": "calcmcp___import_estimate",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "118961fb-9ae0-412e-9141-ee347ab1c608",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 1068
+    },
+    {
+      "kind": "gateway",
+      "phase": "import-verify",
+      "call": 6,
+      "timestamp": "2026-09-07T02:36:58.567Z",
+      "method": "tools/call",
+      "tool": "calcmcp___import_estimate",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "d4860c4c-5d6a-4ea9-b05f-dc36a844f198",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 1128
+    },
+    {
+      "kind": "gateway",
+      "phase": "import-verify",
+      "call": 7,
+      "timestamp": "2026-09-07T02:36:59.696Z",
+      "method": "tools/call",
+      "tool": "calcmcp___import_estimate",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "af9e4b63-114f-451e-aa26-8d93cf24efe6",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 1055
+    },
+    {
+      "kind": "gateway",
+      "phase": "import-verify",
+      "call": 8,
+      "timestamp": "2026-09-07T02:37:00.751Z",
+      "method": "tools/call",
+      "tool": "calcmcp___import_estimate",
+      "sessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "protocol": "2025-03-26",
+      "httpStatus": 200,
+      "requestId": "e2b775be-9ca4-491f-86a6-17f466bdb9d2",
+      "traceId": null,
+      "responseSessionId": "7b21bfd6-b1b1-4dd3-a862-e9ace20ffd95",
+      "success": true,
+      "latencyMs": 1167
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+region      : ap-south-1
+api handler : iep-dev-api-handler-996122083346-ap-south-1
+workload    : agentcore-e2e-s3.csv (59 bytes)
+
+upload-url  OK  users/e2e-agentcore-0000-0000-000000000001/calculator/uploads/92102db0-d643-4e01-845c-51a001e82636-agentcore-e2e-s3.csv
+upload      OK
+create      OK  calculation_id=75d6038c-7579-450e-ae10-0338af6cf19d  status=PROCESSING
+confirm     OK
+run         HTTP 200  {"calculationId":"75d6038c-7579-450e-ae10-0338af6cf19d","status":"ANALYZING"}
+     20s  status=BUILDING  stage=narrating  "Writing up assumptions and warnings"  tools=0
+     40s  status=COMPLETED  stage=done  "Validated estimate ready"  tools=11
+
+final status     : COMPLETED
+executionArn     : arn:aws:states:ap-south-1:996122083346:execution:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1:75d6038c-7579-450e-ae10-0338af6cf19d-mtq2aji7
+agent session    : mimo-75d6038c-7579-450e-ae10-0338af6cf19d-mtq2ajfk
+evidence index   : users/e2e-agentcore-0000-0000-000000000001/calculator/75d6038c-7579-450e-ae10-0338af6cf19d/evidence/index.json
+evidence chunks  : 1  rows=2
+calculator URL   : https://calculator.aws/#/estimate?id=f09a5f77b1d688aa7f4e70f16da5f6678681baa6
+mcp tools used   : -
+record bytes     : 11099
+sfn status       : RUNNING
+sfn segments     : 2
+
+LEGACY FINGERPRINT in progress text: Validated estimate ready, Workbook baseline:
+waiting 180s for Lambda invocation metrics to publish...

@@ -1,0 +1,23 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "transitGatewayVpc",
+  "displayName": "Transit Gateway",
+  "templateId": "transitGateway",
+  "status": "verified",
+  "traps": [
+    "transitGatewayVpc is a SUB-SERVICE of amazonVirtualPrivateCloud (manifest subType: 'subService'). When the agent calls add_service('transitGatewayVpc', ...), EstimateBuilder automatically wraps it in the VPC parent envelope at save time. Same pattern as networkAddressTranslationNatGatewayVpc and the other VPC children — call add_service with the child code, not the parent.",
+    "Pricing has TWO components: $0.05/attachment-hour (always-on while provisioned, regardless of traffic) plus $0.02/GB ingress data processed. One always-on attachment alone is ~$36.50/mo (730 × $0.05); data processed adds the per-GB component on top.",
+    "The multicast fields (Number_of_multicast_receivers, Multicast_data_processed_per_Transit_Gateway_receiver) only apply if the TGW attachment has multicast enabled. Most production TGW usage is non-multicast — safe to omit those fields entirely. They use snake_case_with_underscores, unusual for the calculator (most fields are camelCase)."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "1 TGW attachment, 100 GB/mo ingress",
+    "numberOfTransitGatewayAttachments": "1",
+    "dataProcessedPerTransitGatewayAttachment": {
+      "value": "100",
+      "unit": "gb|month"
+    }
+  },
+  "lastVerifiedAt": "2026-05-30",
+  "verifiedEstimateId": "62b9c1757aa88f2b445756c148d61ce74e601a4e"
+}

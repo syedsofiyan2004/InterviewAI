@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AWS Pricing Calculator Service Catalog Entry",
+  "type": "object",
+  "required": ["serviceCode", "displayName", "status", "minimalConfig"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "serviceCode": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9]*$",
+      "description": "Canonical service code from manifest/en_US.json (e.g. aWSLambda, ec2Enhancement)."
+    },
+    "displayName": { "type": "string", "minLength": 1 },
+    "templateId": {
+      "type": "string",
+      "description": "The estimateFor value the calculator expects. Optional for parent envelopes whose children carry their own template ids."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["verified", "partial", "unverified", "broken"],
+      "description": "verified = round-trip test passes; partial = saves+renders but with Required-input; unverified = not yet probed; broken = known to fail."
+    },
+    "lastVerifiedAt": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO date of the most recent successful round-trip. Required when status is 'verified' or 'partial'."
+    },
+    "verifiedEstimateId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "description": "SHA1 estimate id from the most recent successful round-trip. Required when status is 'verified' or 'partial'."
+    },
+    "required": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/field" },
+      "default": []
+    },
+    "traps": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Human-readable gotchas an agent or author should know. Free-form prose.",
+      "default": []
+    },
+    "subServices": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/subService" },
+      "description": "For parent envelopes only — describes each child's serviceCode, estimateFor, and required fields.",
+      "default": []
+    },
+    "minimalConfig": {
+      "type": "object",
+      "description": "The smallest config that produces an editable estimate. For parent envelopes, keyed by sub-service code; for plain services, the config object itself."
+    },
+    "defaultFields": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-field literal saved-blob shapes injected at add_service time when the agent omits the key. Use for fields the calculator silently demands but the manifest does NOT mark validations.required (the case where get_service_fields doesn't expose them and the lint can't refuse without them). Authors declare the canonical envelope; lib/mcp/handler-helpers.js#applyDefaultFields merges any missing keys into the user's config before estimate.addService."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["status"], "properties": { "status": { "enum": ["verified", "partial"] } } },
+      "then": { "required": ["lastVerifiedAt", "verifiedEstimateId"] }
+    }
+  ],
+  "definitions": {
+    "field": {
+      "type": "object",
+      "required": ["field", "hint"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "hint": { "type": "string", "minLength": 1 },
+        "shape": { "type": "string" },
+        "enum": { "type": "array", "items": { "type": "string" } },
+        "default": {},
+        "example": {}
+      }
+    },
+    "subService": {
+      "type": "object",
+      "required": ["serviceCode", "estimateFor"],
+      "properties": {
+        "serviceCode": { "type": "string", "minLength": 1 },
+        "estimateFor": { "type": "string", "minLength": 1 },
+        "required": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/field" },
+          "default": []
+        },
+        "productCodes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Manifest service codes (subType:'subService') that route under this provider but are not in the parent's templates[]. Lets the lint hint redirect agents from a product code (e.g. titanTextEmbeddingsV2) to the provider code (e.g. amazon) that the calculator's parent envelope actually claims."
+        }
+      }
+    }
+  }
+}

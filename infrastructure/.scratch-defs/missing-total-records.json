@@ -1,0 +1,67 @@
+﻿{
+    "Items": [
+        {
+            "result_s3_key": {
+                "S": "users/e2e-plan-spill-0000-0000-000000000001/calculator/87dbfb2b-44d3-4b0e-88b2-ee20aea7be91/result.json"
+            },
+            "updated_at": {
+                "N": "1788752197491"
+            },
+            "calculator_url": {
+                "S": "https://calculator.aws/#/estimate?id=63125868c584e77884ddbb759c4fcb7fa65d696e"
+            },
+            "owner_user_id": {
+                "S": "e2e-plan-spill-0000-0000-000000000001"
+            },
+            "calculation_id": {
+                "S": "87dbfb2b-44d3-4b0e-88b2-ee20aea7be91"
+            },
+            "name": {
+                "S": "Plan spill regression 2026-09-07T03:24:42.106Z"
+            }
+        },
+        {
+            "result_s3_key": {
+                "S": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/62550abb-3935-472c-b165-1a556bb1667b/result.json"
+            },
+            "updated_at": {
+                "N": "1788757715018"
+            },
+            "calculator_url": {
+                "S": "https://calculator.aws/#/estimate?id=f8347c414d0938d70cba4589cb5bcb9ffa2bfab0"
+            },
+            "owner_user_id": {
+                "S": "61f3cd5a-2031-7084-4466-eaa83ab5b034"
+            },
+            "calculation_id": {
+                "S": "62550abb-3935-472c-b165-1a556bb1667b"
+            },
+            "name": {
+                "S": "Template Project"
+            }
+        },
+        {
+            "result_s3_key": {
+                "S": "users/e2e-agentcore-0000-0000-000000000001/calculator/bda8cbb9-0645-4737-acaf-a05530388869/result.json"
+            },
+            "updated_at": {
+                "N": "1788749306878"
+            },
+            "calculator_url": {
+                "S": "https://calculator.aws/#/estimate?id=d96e28911775c2edc37f35ce894874944596a5b7"
+            },
+            "owner_user_id": {
+                "S": "e2e-agentcore-0000-0000-000000000001"
+            },
+            "calculation_id": {
+                "S": "bda8cbb9-0645-4737-acaf-a05530388869"
+            },
+            "name": {
+                "S": "AgentCore E2E 2026-09-07T02:45:45.679Z"
+            }
+        }
+    ],
+    "Count": 3,
+    "ScannedCount": 13,
+    "ConsumedCapacity": null
+}

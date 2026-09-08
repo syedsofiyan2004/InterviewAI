@@ -1,0 +1,60 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "awsAppSync",
+  "displayName": "AWS AppSync",
+  "templateId": "appSyncClassesGroup",
+  "status": "partial",
+  "lastVerifiedAt": "2026-05-15",
+  "verifiedEstimateId": "0260e936d61d8b7e64366d6df2395b1abeb15446",
+  "required": [],
+  "traps": [
+    "awsAppSync is a subServiceSelector parent — call addService(<childCode>, ...) for each aspect (appSyncApiCall, appSyncCaching, appSyncRealTime, appsyncDataTransfer, appSyncEventApi). EstimateBuilder merges all children into a single parent envelope; do not call addService('awsAppSync', ...) directly."
+  ],
+  "subServices": [
+    {
+      "serviceCode": "appSyncApiCall",
+      "estimateFor": "apiquerydatamodification",
+      "required": [
+        {
+          "field": "requestVolume",
+          "hint": "API/query/data-modification operations per month",
+          "shape": "{ value: '<n>', unit: 'millionPerMonth' }",
+          "example": {
+            "value": "5",
+            "unit": "millionPerMonth"
+          }
+        }
+      ]
+    },
+    {
+      "serviceCode": "appSyncCaching",
+      "estimateFor": "cacheSpeed",
+      "required": []
+    },
+    {
+      "serviceCode": "appSyncRealTime",
+      "estimateFor": "apiquerydatamodification",
+      "required": []
+    },
+    {
+      "serviceCode": "appsyncDataTransfer",
+      "estimateFor": "awsDatatransfer",
+      "required": []
+    },
+    {
+      "serviceCode": "appSyncEventApi",
+      "estimateFor": "appSyncEventAPI_calcs",
+      "required": []
+    }
+  ],
+  "minimalConfig": {
+    "appSyncApiCall": {
+      "region": "us-east-1",
+      "description": "API queries",
+      "requestVolume": {
+        "value": "5",
+        "unit": "millionPerMonth"
+      }
+    }
+  }
+}

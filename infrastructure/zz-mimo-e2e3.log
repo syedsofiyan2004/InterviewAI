@@ -1,0 +1,33 @@
+region      : ap-south-1
+api handler : iep-dev-api-handler-996122083346-ap-south-1
+workload    : agentcore-e2e-s3.csv (59 bytes)
+
+upload-url  OK  users/e2e-agentcore-0000-0000-000000000001/calculator/uploads/4a97be2c-95dc-43e0-b7c3-82c2260311ad-agentcore-e2e-s3.csv
+upload      OK
+create      OK  calculation_id=e10ab649-4edc-4443-bc4c-27a4af6d2c10  status=ANALYZING
+confirm     OK
+run         HTTP 200  {"calculationId":"e10ab649-4edc-4443-bc4c-27a4af6d2c10","status":"ANALYZING"}
+    424s  status=FAILED  stage=FAILED  "We couldn't complete this AWS estimate automatically."  tools=0
+
+final status     : FAILED
+executionArn     : arn:aws:states:ap-south-1:996122083346:execution:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1:e10ab649-4edc-4443-bc4c-27a4af6d2c10-mtq2fyky
+agent session    : mimo-e10ab649-4edc-4443-bc4c-27a4af6d2c10-mtq2fyja
+evidence index   : users/e2e-agentcore-0000-0000-000000000001/calculator/e10ab649-4edc-4443-bc4c-27a4af6d2c10/evidence/index.json
+evidence chunks  : 1  rows=2
+calculator URL   : (none)
+mcp tools used   : -
+record bytes     : 4719
+sfn status       : FAILED
+sfn segments     : 5
+
+No legacy progress fingerprint in the record.
+calculator-agent-orchestrator      invocations during run: 0
+calculator-mcp-proxy               invocations during run: 0
+calculator-mcp-sidecar             invocations during run: 0
+calculator-orchestrator            invocations during run: 0
+
+COMPLETED with a real calculator.aws URL : NO
+Legacy infrastructure untouched          : YES
+DynamoDB record under 100 KB             : YES
+RESULT: FAILED
+EXIT=1

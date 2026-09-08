@@ -1,0 +1,39 @@
+region      : ap-south-1
+api handler : iep-dev-api-handler-996122083346-ap-south-1
+workload    : agentcore-e2e-s3.csv (59 bytes)
+
+upload-url  OK  users/e2e-agentcore-0000-0000-000000000001/calculator/uploads/650fe53a-4274-4730-878f-a9d47a36283d-agentcore-e2e-s3.csv
+upload      OK
+create      OK  calculation_id=a0c855bc-e4ba-47ca-b122-85d53e589eb5  status=ANALYZING
+confirm     OK
+run         HTTP 200  {"calculationId":"a0c855bc-e4ba-47ca-b122-85d53e589eb5","status":"ANALYZING"}
+     20s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+     40s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+     60s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+   1188s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+   1208s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+   1229s  status=BUILDING  stage=ANALYZING  "Reading your workbook..."  tools=0
+   1249s  status=FAILED  stage=failed  "Estimate failed"  tools=0
+
+final status     : FAILED
+executionArn     : arn:aws:states:ap-south-1:996122083346:execution:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1:a0c855bc-e4ba-47ca-b122-85d53e589eb5-mtq3qewz
+agent session    : mimo-a0c855bc-e4ba-47ca-b122-85d53e589eb5-mtq3qevg
+evidence index   : users/e2e-agentcore-0000-0000-000000000001/calculator/a0c855bc-e4ba-47ca-b122-85d53e589eb5/evidence/index.json
+evidence chunks  : 1  rows=2
+calculator URL   : (none)
+mcp tools used   : -
+record bytes     : 4701
+sfn status       : ABORTED
+sfn segments     : 2
+
+No legacy progress fingerprint in the record.
+calculator-agent-orchestrator      invocations during run: 0
+calculator-mcp-proxy               invocations during run: 0
+calculator-mcp-sidecar             invocations during run: 0
+calculator-orchestrator            invocations during run: 0
+
+COMPLETED with a real calculator.aws URL : NO
+Legacy infrastructure untouched          : YES
+DynamoDB record under 100 KB             : YES
+RESULT: FAILED
+EXIT=1

@@ -1,0 +1,316 @@
+{
+  "status": "COMPLETED",
+  "monthly_total": 10193.65,
+  "calculator_url": "https://calculator.aws/#/estimate?id=66382eddd9bb6530325a6663043ddc8fb48b6a92",
+  "input_file_name": "e212ca77-7363-4782-902e-c3c190835b96-Digital_Assets.xlsx",
+  "evidence_row_count": 80,
+  "workbook_semantic_model_s3_key": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/analysis/a8377962f1f68d9dad4d2e11f08cd899b9be751f84111df7b72171c193f1091f/workbook-semantic-model.json",
+  "scenario_manifest_s3_key": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/analysis/a8377962f1f68d9dad4d2e11f08cd899b9be751f84111df7b72171c193f1091f/scenario-manifest.json",
+  "scenario_requirements_s3_key": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/analysis/a8377962f1f68d9dad4d2e11f08cd899b9be751f84111df7b72171c193f1091f/scenario-requirements.json",
+  "resources_s3_key": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/parsed/0b1157a9-7160-4e53-97dc-8409992de225.json",
+  "result_s3_key": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/0b1157a9-7160-4e53-97dc-8409992de225/result.json",
+  "plan_status": "CONFIRMED",
+  "scenarios": [
+    {
+      "label": "26-27",
+      "scope": "26-27",
+      "pricing_model": "sheet-specified",
+      "environments": []
+    },
+    {
+      "scope": "27-28",
+      "label": "27-28",
+      "pricing_model": "sheet-specified",
+      "environments": []
+    },
+    {
+      "pricing_model": "sheet-specified",
+      "environments": [],
+      "label": "28-29",
+      "scope": "28-29"
+    },
+    {
+      "pricing_model": "sheet-specified",
+      "scope": "29-30",
+      "label": "29-30",
+      "environments": []
+    },
+    {
+      "label": "30-31",
+      "environments": [],
+      "pricing_model": "sheet-specified",
+      "scope": "30-31"
+    },
+    {
+      "pricing_model": "sheet-specified",
+      "label": "Dev",
+      "environments": [],
+      "scope": "Dev"
+    },
+    {
+      "label": "Testing (QA)",
+      "scope": "Testing (QA)",
+      "environments": [],
+      "pricing_model": "sheet-specified"
+    },
+    {
+      "scope": "UAT",
+      "pricing_model": "sheet-specified",
+      "label": "UAT",
+      "environments": []
+    }
+  ],
+  "unresolved": [
+    {
+      "id": "question-e25630437d40f9f453b6",
+      "field": "sagemaker.inference_configuration",
+      "impact": "medium",
+      "prompt": "Choose the SageMaker workload type and instance class for model hosting.",
+      "scope": [
+        "service:SageMaker"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-3c4ba91471c34db1a479",
+      "field": "lambda.execution_profile",
+      "impact": "medium",
+      "prompt": "Provide the Lambda execution profile: memory in MB and average duration in ms. Aggregate GB-seconds will not be converted into a guessed profile.",
+      "scope": [
+        "service:Lambda"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-f3c3ba2398c7814f0b51",
+      "field": "bedrock.model",
+      "impact": "medium",
+      "prompt": "Choose the Bedrock model/provider used by this workload.",
+      "scope": [
+        "service:Bedrock"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-f94692193880c6934cd6",
+      "field": "bedrock.tokens_per_call",
+      "impact": "medium",
+      "prompt": "Provide average input and output tokens per Bedrock model call.",
+      "scope": [
+        "service:Bedrock"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-a4d15d76751694c8ec06",
+      "field": "cognito.tier",
+      "impact": "medium",
+      "prompt": "Choose the Cognito tier and provide monthly token requests; include federated MAU only when SAML/OIDC is used.",
+      "scope": [
+        "service:Cognito"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-214aa213e808d1d9a308",
+      "field": "sns.delivery_type",
+      "impact": "medium",
+      "prompt": "Choose the SNS delivery type represented by the notification volume.",
+      "scope": [
+        "service:SNS"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-1caefe6ebe5706a6893f",
+      "field": "nat_gateway.configuration",
+      "impact": "medium",
+      "prompt": "Choose Regional NAT Gateway and provide its Availability Zone count, or explicitly request legacy NAT Gateway.",
+      "scope": [
+        "service:NAT Gateway"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-f6988727a51a7530444f",
+      "field": "database.engine",
+      "impact": "medium",
+      "prompt": "Choose the Aurora compatibility engine: MySQL or PostgreSQL.",
+      "scope": [
+        "service:Aurora"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-97c1908c9c62a39c6167",
+      "field": "quicksight.subscription_profile",
+      "impact": "medium",
+      "prompt": "Provide the QuickSight author billing mix (annual and monthly percentages) and SPICE capacity in GB. Author and reader counts already present in the workbook will be preserved.",
+      "scope": [
+        "service:QuickSight"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-0733a56024ef600252f2",
+      "field": "api_gateway.api_type",
+      "impact": "medium",
+      "prompt": "Confirm whether API Gateway traffic is HTTP API, REST API, or WebSocket API.",
+      "scope": [
+        "service:API Gateway"
+      ],
+      "resolved": false
+    },
+    {
+      "id": "question-2af5e6cb99eadd25866c",
+      "field": "ses.send_source",
+      "impact": "medium",
+      "prompt": "Confirm whether SES email is sent from EC2 or another email client.",
+      "scope": [
+        "service:SES"
+      ],
+      "resolved": false
+    }
+  ],
+  "warnings": [
+    "Pinecone vector database (rows 37-41) is a third-party SaaS product not in AWS Pricing Calculator. Its cost must be quoted separately from Pinecone.",
+    "Bedrock Guardrails (row 55) has no dedicated Calculator entry; guardrails cost is embedded in Bedrock usage pricing.",
+    "MSK was explicitly set to 0 brokers in the workbook (rows 32, 82) and is excluded from the estimate.",
+    "FY26-27 is priced; FY27-28 through FY30-31 require separate estimates with updated instance counts, storage, and request volumes from the workbook columns C-F.",
+    "Cognito shows 0 MAU for FY26-27; it becomes billable from FY28-29 onward (10K MAU). Separate estimates should include Cognito.",
+    "SageMaker instance types for VLM and reasoning models are assumptions. Actual instance requirements depend on model size (Gemma/Qwen parameter count) and latency targets.",
+    "Step Functions state transitions total (row 53: 23.65M/yr) is priced as 1.97M executions/month × 8 transitions. Actual state machine design may differ.",
+    "Lower environment rows for SQS, SNS, SES, CloudFront, NAT Gateway are present in the workbook (rows 79-84) but were omitted from the Calculator as the volumes are very small and below free-tier thresholds for Dev/QA."
+  ],
+  "assumptions": [
+    "Estimate represents FY26-27 (Year 1 / 26-27 column) as the primary priced scenario. The workbook contains 5 fiscal years (26-27 through 30-31); subsequent years would require separate estimates.",
+    "Aurora MySQL chosen for Aurora (workbook only specifies instance class, not engine variant). Assumption: MySQL-compatible.",
+    "Aurora configured as Aurora Standard (not I/O-Optimized) since workbook does not specify optimization tier.",
+    "Aurora I/O baseline set to 40 I/O/sec derived from workbook row 12 (1.27M IOs/yr / 12 months / ~30 days / 86400 sec ≈ 0.04/sec; rounded to 40/sec for a realistic baseline scenario). I/O charge materializes in the calculator.",
+    "SageMaker VLM/OCR instance type assumed ml.g5.xlarge (vision-language model; workbook names Gemma/Qwen but does not specify ML instance type). Assumption: lowest g5 GPU instance capable of serving a 7B VLM.",
+    "SageMaker Reasoning instance type assumed ml.g5.2xlarge (text reasoning model; workbook names Gemma/Qwen but does not specify instance type).",
+    "Bedrock model assumed Amazon Nova Lite (workbook references 'Bedrock GenAI' model calls but does not specify the model). Nova Lite is a cost-effective multimodal model available in ap-south-1.",
+    "Bedrock configured at 1 request/minute for 8 hours/day with 1,000 input / 500 output tokens per request as a representative workload basis. Actual spend scales with real call volume.",
+    "Bedrock Guardrails (rows 55) is not directly configurable as a separate service in the Calculator; its cost is captured via the Bedrock service entry. Noted as assumption.",
+    "Step Functions state transitions estimated at 8 per execution average (workbook row 53: 23.6M transitions / 2.96M docs ≈ 8 transitions/execution).",
+    "Lambda BFF duration assumed 150ms; Lambda RAG ingestion assumed 500ms (typical document processing). Workbook provides GB-seconds but not separate duration and memory; 512MB × 150ms = 76.8 GB-ms per invocation is consistent with reported GB-seconds.",
+    "Lambda RAG invocations converted from 14,785,500/yr to 1,232,125/month.",
+    "Cognito: 0 MAU in FY26-27 per workbook row 26. Excluded from Production estimate (zero cost).",
+    "NAT Gateway data processed derived from workbook row 27: 1.52GB/yr ÷ 12 ≈ 0.13GB/month.",
+    "S3 PUT requests converted from 0.127M/yr ÷ 12 ≈ 10,583/month; GET from 0.636M/yr ÷ 12 ≈ 52,999/month.",
+    "API Gateway requests from 0.382M/yr ÷ 12 ≈ 31,833/month configured as REST API.",
+    "SQS requests from 0.954M/yr ÷ 12 ≈ 79,499/month, rounded to 0.08M/month.",
+    "SNS notifications from 317,995/yr ÷ 12 ≈ 26,500/month. Configured as HTTP/HTTPS delivery.",
+    "SES emails from 158,998/yr ÷ 12 ≈ 13,250/month, configured as EC2-sourced sends.",
+    "EventBridge from 0.318M/yr ÷ 12 ≈ 26,500/month. Payload size defaulted to 1KB per MCP baseline.",
+    "Redshift Serverless: 2,920 active query hours/yr ÷ 365 days ≈ 8 hrs/day used as Query_period.",
+    "QuickSight configured with SPICE minimum 10GB (workbook provides user counts only, not SPICE volume).",
+    "DR cross-region data replication cost (row 49) is captured implicitly through the Aurora DR secondary instance; direct S3/data-transfer replication cost line not added separately as workbook does not itemize it per-service.",
+    "Pinecone (rows 37-41) is a third-party vector database not available in AWS Pricing Calculator. Excluded with note.",
+    "MSK broker count is 0 in all columns per workbook rows 32/82 ('excluded from baseline'). MSK excluded.",
+    "Lower environment SQS (rows 80) and SNS/SES/CloudFront/NAT for Dev/QA/UAT not separately added since volumes are negligible (within free tier) and workbook does not provide monthly breakdowns for lower environments beyond the listed metrics.",
+    "On-Demand pricing used for all services (no Reserved Instances or Savings Plans). For steady-state production workloads, Reserved Instances or Savings Plans would reduce cost materially.",
+    "All services deployed in ap-south-1 (Asia Pacific Mumbai) per scenario specification."
+  ],
+  "renderedTotals": {
+    "total12Months": 122323.8,
+    "title": "Digital Assets - FY26-27 (Year 1) - ap-south-1 - AWS Pricing Calculator",
+    "monthly": 10193.65,
+    "validUrl": true,
+    "upfront": 0,
+    "services": [
+      {
+        "upfront": 0,
+        "monthly": 8279.95,
+        "configSummary": "-",
+        "service": "Production"
+      },
+      {
+        "service": "Dev",
+        "upfront": 0,
+        "monthly": 316.86,
+        "configSummary": "-"
+      },
+      {
+        "configSummary": "-",
+        "service": "QA",
+        "upfront": 0,
+        "monthly": 397.44
+      },
+      {
+        "upfront": 0,
+        "monthly": 1199.4,
+        "service": "UAT",
+        "configSummary": "-"
+      }
+    ]
+  },
+  "servicesConfigured": [
+    "Production/Compute: AWS Fargate - Primary (10 tasks, 1vCPU, 2GB) - ap-south-1",
+    "Production/DR: AWS Fargate - DR Warm Standby (5 tasks, 1vCPU, 2GB) - ap-south-1",
+    "Production/Database: Amazon Aurora MySQL-Compatible - Production (2x db.r6g.large, Multi-AZ, 101GB) - ap-south-1",
+    "Production/DR: Amazon Aurora MySQL-Compatible - DR Global DB Secondary (1x db.r6g.large) - ap-south-1",
+    "Production/Database: Amazon ElastiCache Redis - Production (2x cache.r6g.large) - ap-south-1",
+    "Production/Search: Amazon OpenSearch Service - Production (2x r6g.large.search, 100GB GP3) - ap-south-1",
+    "Production/Storage: S3 Standard - Production (200GB, 10,583 PUT/month, 52,999 GET/month) - ap-south-1",
+    "Production/Compute: AWS Lambda BFF - Production (26,500 invocations/month, 150ms, 512MB) - ap-south-1",
+    "Production/Compute: AWS Lambda RAG Ingestion - Production (1,232,125 invocations/month, 500ms, 512MB) - ap-south-1",
+    "Production/API: Amazon API Gateway REST - Production (31,833 requests/month) - ap-south-1",
+    "Production/CDN: Amazon CloudFront - Production (50GB/month, 40K HTTPS requests India) - ap-south-1",
+    "Production/Networking: NAT Gateway - Production (1 regional GW, 2 AZs, 0.13GB/month) - ap-south-1",
+    "Production/Messaging: Amazon EventBridge - Production (26,500 custom events/month) - ap-south-1",
+    "Production/Messaging: Amazon SQS - Production (0.08M requests/month) - ap-south-1",
+    "Production/Messaging: Amazon SNS Standard - Production (26,500 notifications/month) - ap-south-1",
+    "Production/Messaging: Amazon SES - Production (13,250 emails/month) - ap-south-1",
+    "Production/Compute: AWS Step Functions Standard - RAG Ingestion (1.97M executions/month, 8 transitions avg) - ap-south-1",
+    "Production/ML: SageMaker Real-Time Inference VLM/OCR (2x ml.g5.xlarge, 24hr/day, 30 days) - ap-south-1",
+    "Production/ML: SageMaker Real-Time Inference Reasoning (2x ml.g5.2xlarge, 24hr/day, 30 days) - ap-south-1",
+    "Production/AI: Amazon Bedrock Nova Lite - In-Region Standard inference (1 rpm, 8hr/day, 1K in / 500 out tokens) - ap-south-1",
+    "Production/Analytics: Amazon Redshift Serverless (8 RPU, 8 hrs/day, 501GB managed storage) - ap-south-1",
+    "Production/Analytics: Amazon QuickSight (5 Authors, 20 Readers, 10GB SPICE) - ap-south-1",
+    "Dev: AWS Fargate (5 tasks, 1vCPU, 2GB)",
+    "Dev: Amazon Aurora MySQL db.t4g.medium (1 node, 20GB)",
+    "Dev: Amazon ElastiCache cache.t4g.micro (1 node)",
+    "Dev: Amazon OpenSearch t3.small.search (1 node, 20GB)",
+    "Dev: S3 Standard (50GB)",
+    "Dev: AWS Lambda BFF (30,000/month)",
+    "Dev: API Gateway REST (30,000/month)",
+    "Dev: EventBridge (417 events/month)",
+    "QA: AWS Fargate (7 tasks, 1vCPU, 2GB)",
+    "QA: Amazon Aurora MySQL db.t4g.medium (1 node, 35GB)",
+    "QA: Amazon ElastiCache cache.t4g.micro (1 node)",
+    "QA: Amazon OpenSearch t3.small.search (1 node, 35GB)",
+    "QA: S3 Standard (75GB)",
+    "QA: AWS Lambda BFF (150,000/month)",
+    "QA: API Gateway REST (150,000/month)",
+    "QA: EventBridge (833 events/month)",
+    "UAT: AWS Fargate (10 tasks, 1vCPU, 2GB)",
+    "UAT: Amazon Aurora MySQL db.r6g.large (1 node, 50GB)",
+    "UAT: Amazon ElastiCache cache.r6g.large (1 node)",
+    "UAT: Amazon OpenSearch r6g.large.search (2 nodes, 50GB)",
+    "UAT: S3 Standard (100GB)",
+    "UAT: AWS Lambda BFF (300,000/month)",
+    "UAT: API Gateway REST (300,000/month)",
+    "UAT: EventBridge (1,667 events/month)",
+    "UAT: SageMaker ml.g5.xlarge (1 model, 8hr/day, 20 days)"
+  ],
+  "inputWarnings": [
+    "All 213 rows are priced; this page lists the first 22.",
+    "Digital Assets: DR: Fargate warm-standby task count (30% of primary, min. 5) (26-27): no billing quantity could be read from it -- Fargate is billed per vCPU-hour and per GB-hour, and neither a task vCPU size nor a task memory size was stated, so there is nothing to decompose the task count into.",
+    "Digital Assets: DR: Fargate warm-standby task count (30% of primary, min. 5) (27-28): no billing quantity could be read from it -- Fargate is billed per vCPU-hour and per GB-hour, and neither a task vCPU size nor a task memory size was stated, so there is nothing to decompose the task count into.",
+    "Digital Assets: DR: Fargate warm-standby task count (30% of primary, min. 5) (28-29): no billing quantity could be read from it -- Fargate is billed per vCPU-hour and per GB-hour, and neither a task vCPU size nor a task memory size was stated, so there is nothing to decompose the task count into.",
+    "Digital Assets: DR: Fargate warm-standby task count (30% of primary, min. 5) (29-30): no billing quantity could be read from it -- Fargate is billed per vCPU-hour and per GB-hour, and neither a task vCPU size nor a task memory size was stated, so there is nothing to decompose the task count into.",
+    "Digital Assets: DR: Fargate warm-standby task count (30% of primary, min. 5) (30-31): no billing quantity could be read from it -- Fargate is billed per vCPU-hour and per GB-hour, and neither a task vCPU size nor a task memory size was stated, so there is nothing to decompose the task count into.",
+    "Digital Assets: read as 5 scenario(s) (26-27: 32 row(s); 27-28: 32 row(s); 28-29: 33 row(s); 29-30: 33 row(s); 30-31: 33 row(s)) -- consecutive periods, so their totals run one after another and must never be added together.",
+    "Digital Assets: the machine and storage totals describe \"26-27\" only, because the scenarios restate one estate rather than adding to it.",
+    "Digital Assets: Aurora I/O requests (millions/yr): millions expanded, per-year divided by 12",
+    "Digital Assets: S3 PUT/COPY/POST/LIST requests (millions/yr): millions expanded, per-year divided by 12",
+    "Digital Assets: S3 GET/SELECT requests (millions/yr): millions expanded, per-year divided by 12",
+    "Digital Assets: API Gateway requests (millions/yr): millions expanded, per-year divided by 12",
+    "Digital Assets: Lambda (BFF) invocations/yr: per-year divided by 12",
+    "Digital Assets: Lambda (BFF) GB-seconds/yr: per-year divided by 12",
+    "Digital Assets: Cognito billable MAU (26-27) was not priced -- stated as 0 in 26-27, so it is not priced in that scenario.",
+    "Digital Assets: MSK broker class + MSK broker count (Optional — excluded from baseline) + MSK storage per broker (GB) (26-27) was not priced -- its count is 0 in 26-27, so it is not priced in that scenario."
+  ],
+  "tracePath": "users/61f3cd5a-2031-7084-4466-eaa83ab5b034/calculator/0b1157a9-7160-4e53-97dc-8409992de225/agent/traces/mimo-0b1157a9-7160-4e53-97dc-8409992de225-mtr446oh-0.json"
+}

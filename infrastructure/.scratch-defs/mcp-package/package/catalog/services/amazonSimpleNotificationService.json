@@ -1,0 +1,40 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonSimpleNotificationService",
+  "displayName": "Amazon SNS",
+  "templateId": "amazonSnsClassesGroup",
+  "status": "verified",
+  "lastVerifiedAt": "2026-05-16",
+  "verifiedEstimateId": "62712d29a45e33d4cc11ea14ffa84dfba849c4bd",
+  "required": [],
+  "traps": [
+    "amazonSimpleNotificationService is a subServiceSelector parent. Call addService('standardTopics', ...) (or 'fifoTopics', etc.) for the actual configuration. EstimateBuilder wraps the child in the parent envelope; do not call addService('amazonSimpleNotificationService', ...) directly."
+  ],
+  "subServices": [
+    {
+      "serviceCode": "standardTopics",
+      "estimateFor": "sns_t1",
+      "required": [
+        {
+          "field": "numberOfRequests",
+          "hint": "Topic publishes per month",
+          "shape": "{ value: '<n>', unit: 'millionPerMonth' }",
+          "example": {
+            "value": "4",
+            "unit": "millionPerMonth"
+          }
+        }
+      ]
+    }
+  ],
+  "minimalConfig": {
+    "standardTopics": {
+      "region": "us-east-1",
+      "description": "SNS publishes",
+      "numberOfRequests": {
+        "value": "4",
+        "unit": "millionPerMonth"
+      }
+    }
+  }
+}

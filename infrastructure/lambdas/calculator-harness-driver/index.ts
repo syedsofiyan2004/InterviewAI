@@ -115,7 +115,11 @@ export interface StructuredQuestionAnswer {
   questionId?: string;
   resource?: string;
   semanticField?: string;
-  value: string | number | boolean;
+  /**
+   * A single value, or an array of values when the customer selected several options in a
+   * selectionMode "multiple" question (the "Other" value, when supplied, is appended).
+   */
+  value: string | number | boolean | Array<string | number | boolean>;
   applyToSimilarResources?: boolean;
 }
 
@@ -124,34 +128,80 @@ const stringValue = (value: unknown): string | undefined =>
 
 /**
  * Project a request_user_input tool input onto the frontend's agent_question shape.
- * The tool's semantic schema already matches AgentQuestion 1:1, so this is a light
- * coercion rather than a second pricing/semantic model.
+ *
+ * The modern tool input is the GENERIC semantic schema (questionId/title/question/reason +
+ * scope/selectionMode/options/customInput/allowApplyToSimilarResources): there is no type,
+ * so the projection passes those fields through and the UI renders an option picker rather
+ * than guessing at an input control. The LEGACY typed schema (type/choices/unit/resource/
+ * semanticField) is still accepted and projected to the same fields it always produced, so
+ * an in-flight older caller keeps rendering until it is fully cut over. Nothing here
+ * decides WHETHER to ask — that belongs to the agent — it only makes a question the UI can
+ * render and the customer can answer.
  */
 export function toolInputToAgentQuestion(input: Record<string, unknown>): AgentQuestion | undefined {
   const question = stringValue(input.question);
   if (!question) return undefined;
+
+  const optionItems = (value: unknown): AgentOption[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const items = value
+      .map((item): AgentOption | undefined => {
+        if (!item || typeof item !== 'object') return undefined;
+        const entry = item as Record<string, unknown>;
+        const optionValue = stringValue(entry.value) ?? stringValue(entry.label);
+        const label = stringValue(entry.label) ?? stringValue(entry.value);
+        if (!optionValue || !label) return undefined;
+        const description = stringValue(entry.description);
+        return { value: optionValue, label, ...(description ? { description } : {}) };
+      })
+      .filter((item): item is AgentOption => item !== undefined);
+    return items.length ? items : undefined;
+  };
+
+  const parsedCustomInput = (value: unknown): AgentCustomInput | undefined => {
+    if (!value || typeof value !== 'object') return undefined;
+    const entry = value as Record<string, unknown>;
+    const parsed: AgentCustomInput = {};
+    if (typeof entry.enabled === 'boolean') parsed.enabled = entry.enabled;
+    const label = stringValue(entry.label);
+    if (label) parsed.label = label;
+    const inputType = stringValue(entry.inputType)?.toLowerCase();
+    if (inputType === 'text' || inputType === 'number') parsed.inputType = inputType;
+    const unit = stringValue(entry.unit);
+    if (unit) parsed.unit = unit;
+    const placeholder = stringValue(entry.placeholder);
+    if (placeholder) parsed.placeholder = placeholder;
+    return parsed.enabled === undefined && !parsed.label && !parsed.inputType && !parsed.unit && !parsed.placeholder
+      ? undefined
+      : parsed;
+  };
+
   const type = stringValue(input.type)?.toUpperCase();
+  const isLegacyType = ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'].includes(type ?? '');
+  const options = isLegacyType ? optionItems(input.choices) : optionItems(input.options ?? input.choices);
+  const customInput = parsedCustomInput(input.customInput);
+  const selectionMode = input.selectionMode === 'multiple' || input.selectionMode === 'single'
+    ? input.selectionMode
+    : undefined;
+
   return {
     questionId: stringValue(input.questionId),
     resource: stringValue(input.resource),
     semanticField: stringValue(input.semanticField),
     field: stringValue(input.semanticField),
-    type: ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'].includes(type ?? '')
-      ? type as AgentQuestionType
-      : 'TEXT',
+    ...(isLegacyType ? { type: type as AgentQuestionType } : {}),
     title: stringValue(input.title),
     question,
     reason: stringValue(input.reason),
-    choices: Array.isArray(input.choices)
-      ? (input.choices as Array<Record<string, unknown>>)
-        .map((choice) => ({
-          value: String(choice.value ?? choice.label ?? ''),
-          label: String(choice.label ?? choice.value ?? ''),
-          ...(stringValue(choice.description) ? { description: stringValue(choice.description) as string } : {}),
-        }))
-        .filter((choice) => choice.value && choice.label)
-      : undefined,
+    ...(isLegacyType
+      ? { choices: options }
+      : options
+        ? { options }
+        : {}),
     unit: stringValue(input.unit),
+    scope: stringValue(input.scope),
+    ...(selectionMode ? { selectionMode } : {}),
+    ...(customInput ? { customInput } : {}),
     allowApplyToSimilarResources: typeof input.allowApplyToSimilarResources === 'boolean'
       ? input.allowApplyToSimilarResources
       : undefined,
@@ -283,16 +333,46 @@ interface AgentCompleted {
 
 type AgentQuestionType = 'CHOICE' | 'NUMBER' | 'BOOLEAN' | 'TEXT';
 
+/** One customer-facing choice offered by a generic request_user_input question. */
+interface AgentOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+/** The "Other / give your own input" affordance of a generic question. */
+interface AgentCustomInput {
+  enabled?: boolean;
+  label?: string;
+  inputType?: 'text' | 'number';
+  unit?: string;
+  placeholder?: string;
+}
+
+/**
+ * The shape the UI renders for a paused request_user_input question.
+ *
+ * A GENERIC question carries options (and optionally customInput / multiple selection) and
+ * has no `type` — the UI renders an option picker. A LEGACY typed question (type + choices/
+ * unit) is kept for older callers. Both are projected from the same tool input, so exactly
+ * one representation is ever persisted per question.
+ */
 interface AgentQuestion {
   questionId?: string;
   resource?: string;
   semanticField?: string;
   field?: string;
-  type: AgentQuestionType;
+  /** Present only for legacy typed questions; generic questions rely on options/customInput. */
+  type?: AgentQuestionType;
   title?: string;
   question: string;
   reason?: string;
-  choices?: Array<{ value: string; label: string }>;
+  choices?: AgentOption[];
+  options?: AgentOption[];
+  selectionMode?: 'single' | 'multiple';
+  customInput?: AgentCustomInput;
+  /** What the decision applies to (resource, group or broad scope). */
+  scope?: string;
   recommended?: string | number | boolean | null;
   unit?: string;
   allowApplyToSimilarResources?: boolean;

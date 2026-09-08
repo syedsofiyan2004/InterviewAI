@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonElasticBlockStore",
+  "displayName": "Amazon Elastic Block Store (EBS)",
+  "templateId": "elasticBlockStore",
+  "status": "partial",
+  "lastVerifiedAt": "2026-06-17",
+  "verifiedEstimateId": "23290262d80f4d88c38df1ce90524f8d129db99f",
+  "traps": [
+    "gp3Throughput is a throughput-type field. The correct format is {\"value\": \"<number>\", \"unit\": \"mbps\"}. Do NOT use the options id from get_service_fields — the unit is always \"mbps\".",
+    "gp3Throughput minimum is 125 MBps (included in baseline), maximum is 2000 MBps. Only throughput above 125 MBps incurs additional cost.",
+    "gp3Iops minimum is 3000 (included in baseline), maximum is 80000. Only IOPS above 3000 incur additional cost.",
+    "storageType must be one of the full option IDs from the dropdown (e.g. \"Storage General Purpose gp3 GB Mo\"), not shorthand like \"gp3\".",
+    "snapshotFrequency uses numeric string IDs (e.g. \"0\" for no snapshots, \"30\" for daily, \"729\" for hourly) — not human-readable labels."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "EBS gp3 Volume",
+    "numberOfInstances": "1",
+    "durationOfInstanceRuns": {"value": "730", "unit": "hours"},
+    "storageType": "Storage General Purpose gp3 GB Mo",
+    "storageAmount": {"value": "30", "unit": "gb|NA"},
+    "gp3Iops": "3000",
+    "gp3Throughput": {"value": "125", "unit": "mbps"},
+    "snapshotFrequency": "0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "awsFargate",
+  "displayName": "AWS Fargate",
+  "templateId": "template",
+  "status": "verified",
+  "traps": [
+    "vcpuPerTask is a dropdown of fixed values: 0.25, 0.5, 1, 2, 4, 8, 16. Off-list values silently rehydrate as the field's default."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Fargate workload",
+    "numberOfTasks": {
+      "value": "1",
+      "unit": "perSecond"
+    },
+    "taskDuration": {
+      "value": "1",
+      "unit": "min"
+    },
+    "vcpuPerTask": "0.25",
+    "smallMemory": "0.5"
+  },
+  "lastVerifiedAt": "2026-05-31",
+  "verifiedEstimateId": "b2c43dfb2bb96e0c70e91cd38ff6a29e4c8ddb0c"
+}

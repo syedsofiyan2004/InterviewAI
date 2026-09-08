@@ -1,0 +1,26 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "aWSDataTransfer",
+  "displayName": "AWS Data Transfer",
+  "templateId": "awsDatatransfer",
+  "status": "verified",
+  "lastVerifiedAt": "2026-06-17",
+  "verifiedEstimateId": "0000000000000000000000000000000000000000",
+  "traps": [
+    "The dataTransfer field is a composite dataTransferV2 widget. Its value must be an array of transfer entries, each with entryType, value, unit, and a region field. Valid entryTypes: INBOUND, OUTBOUND, INTRA_REGION.",
+    "Unit must be \"tb_month\" or \"gb_month\".",
+    "OUTBOUND entries require a \"toRegion\" field — use \"External\" for internet or \"other\" for other AWS regions. INBOUND entries require a \"fromRegion\" field with the same options. INTRA_REGION requires neither.",
+    "All three entryTypes (INBOUND, OUTBOUND, INTRA_REGION) must be present in the array even if their value is \"0\"."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Data Transfer",
+    "dataTransfer": {
+      "value": [
+        { "entryType": "INBOUND", "value": "0", "unit": "tb_month", "fromRegion": "External" },
+        { "entryType": "OUTBOUND", "value": "1", "unit": "tb_month", "toRegion": "External" },
+        { "entryType": "INTRA_REGION", "value": "1", "unit": "tb_month" }
+      ]
+    }
+  }
+}

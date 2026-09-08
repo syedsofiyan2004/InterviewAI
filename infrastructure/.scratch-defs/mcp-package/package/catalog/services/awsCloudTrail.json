@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "awsCloudTrail",
+  "displayName": "AWS CloudTrail",
+  "templateId": "template",
+  "status": "verified",
+  "traps": [
+    "The *Mult fields (OpsMult, dataOpsMult, networkActivityOpsMult, eventMult) are dropdowns whose option ids ARE the multiplier numbers ('1000000' = millions). They don't multiply unless paired with a count field (numberOfS3Ops, numberOfWriteEvents, etc.) — sending only multipliers produces $0 because there's nothing to multiply against.",
+    "CloudTrail's FIRST management trail is free. To get non-zero management-events cost set numberOfWriteTrails to >= 2. Data event trails (S3, Lambda, network activity) are paid from the first trail — modeling those is the cheapest way to a meaningful CloudTrail estimate.",
+    "There's both numberOfWriteEvents and numberOfWMEvents — they're different. WriteEvents/ReadEvents are CloudTrail management events (count of API calls); WMEvents is the input to Insights ('total management events to be analyzed for unusual activity'). Don't confuse them."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "S3 data events on one trail",
+    "OpsMult": "1000000",
+    "dataOpsMult": "1000000",
+    "networkActivityOpsMult": "1000000",
+    "eventMult": "1000000",
+    "numberOfS3Ops": {
+      "value": "10",
+      "unit": "perMonth"
+    },
+    "numberOfS3Trails": "1"
+  },
+  "lastVerifiedAt": "2026-05-30",
+  "verifiedEstimateId": "05f5ce754621ef365d92fa3315172afc6982a5a7"
+}

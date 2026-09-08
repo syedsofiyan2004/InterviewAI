@@ -1,0 +1,200 @@
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+Bundling asset IepStack-dev/ApiHandler/Code/Stage...
+
+  ...09eb94bc58c836e9dd86cd00e7db548303a35a8667f5b-building\index.js   6.9mb
+  ...94bc58c836e9dd86cd00e7db548303a35a8667f5b-building\index.js.map  25.9mb
+
+Done in 1302ms
+Bundling asset IepStack-dev/AsyncWorker/Code/Stage...
+
+  ...640687b13a95ba12f672fe5e9df12908984985d6c02bf-building\index.js   5.0mb
+  ...87b13a95ba12f672fe5e9df12908984985d6c02bf-building\index.js.map  18.5mb
+
+Done in 1409ms
+Bundling asset IepStack-dev/MomProcessor/Code/Stage...
+
+  ...7971cdf24a54221f2ee55c18021877e7b53995b6da829-building\index.js   5.0mb
+  ...cdf24a54221f2ee55c18021877e7b53995b6da829-building\index.js.map  18.5mb
+
+Done in 1375ms
+Bundling asset IepStack-dev/CalculatorOrchestrator/Code/Stage...
+
+  ...1a161933ad83699d8bcc9b2e96a7518fe64837789dd817-building\index.js  217.6kb
+  ...1933ad83699d8bcc9b2e96a7518fe64837789dd817-building\index.js.map    1.0mb
+
+Done in 37ms
+Bundling asset IepStack-dev/CalculatorAgentCore/EvidenceTool/Code/Stage...
+
+  ...a39221ddd98687f0e87ba68fa359abe012f805c3909915c-building\index.js  12.9kb
+  ...21ddd98687f0e87ba68fa359abe012f805c3909915c-building\index.js.map  55.2kb
+
+Done in 23ms
+Bundling asset IepStack-dev/CalculatorAgentCore/HarnessProvisioner/Code/Stage...
+
+  ...f26b6af7d288be04cd1c2e33b17d1da555182ddf8eb844-building\index.js  581.2kb
+  ...6af7d288be04cd1c2e33b17d1da555182ddf8eb844-building\index.js.map    2.2mb
+
+Done in 257ms
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+Bundling asset IepStack-dev/CalculatorAgentCore/HarnessDriver/Code/Stage...
+
+  ...d8472eb76a6e8355a1b66dcd3d9df9237c451e946ab0b8-building\index.js  1.1mb
+  ...2eb76a6e8355a1b66dcd3d9df9237c451e946ab0b8-building\index.js.map  4.0mb
+
+Done in 286ms
+Bundling asset IepStack-dev/CalculatorAgentCore/McpProxy/Code/Stage...
+
+  ...3f9231a4ea93a362bf29b2e9f0a10f972ab1b13b65d77edf-building\index.js  2.7kb
+  ...31a4ea93a362bf29b2e9f0a10f972ab1b13b65d77edf-building\index.js.map  8.2kb
+
+Done in 6ms
+Bundling asset IepStack-dev/CalculatorAgentCore/AgentOrchestrator/Code/Stage...
+
+  ...e2e371823c4b3f4d07f5d74c48bb2bc441e13d655614f9-building\index.js   88.2kb
+  ...71823c4b3f4d07f5d74c48bb2bc441e13d655614f9-building\index.js.map  374.8kb
+
+Done in 36ms
+Bundling asset IepStack-dev/ChatFunction/Code/Stage...
+
+  ...e67ba9de2f8b90fcafa6813e518b7daa5739058def8ab-building\index.js   4.6mb
+  ...a9de2f8b90fcafa6813e518b7daa5739058def8ab-building\index.js.map  17.4mb
+
+Done in 1149ms
+[Info at /IepStack-dev] Number of resources: 469 is approaching allowed maximum of 500
+
+✨  Synthesis time: 45.35s
+
+IepStack-dev: start: Building ApiHandler/Code
+IepStack-dev: success: Built ApiHandler/Code
+IepStack-dev: start: Building CalculatorAgentCore/EvidenceTool/Code
+IepStack-dev: success: Built CalculatorAgentCore/EvidenceTool/Code
+IepStack-dev: start: Building CalculatorAgentCore/HarnessDriver/Code
+IepStack-dev: success: Built CalculatorAgentCore/HarnessDriver/Code
+IepStack-dev: start: Building IepStack-dev Template
+IepStack-dev: success: Built IepStack-dev Template
+IepStack-dev: start: Publishing CalculatorAgentCore/EvidenceTool/Code (996122083346-ap-south-1-55659af0)
+IepStack-dev: start: Publishing IepStack-dev Template (996122083346-ap-south-1-74694246)
+IepStack-dev: start: Publishing CalculatorAgentCore/HarnessDriver/Code (996122083346-ap-south-1-1d5242eb)
+IepStack-dev: start: Publishing ApiHandler/Code (996122083346-ap-south-1-3135e6d2)
+IepStack-dev: success: Published CalculatorAgentCore/EvidenceTool/Code (996122083346-ap-south-1-55659af0)
+IepStack-dev: success: Published IepStack-dev Template (996122083346-ap-south-1-74694246)
+IepStack-dev: success: Published CalculatorAgentCore/HarnessDriver/Code (996122083346-ap-south-1-1d5242eb)
+IepStack-dev: success: Published ApiHandler/Code (996122083346-ap-south-1-3135e6d2)
+IepStack-dev: creating CloudFormation changeset...
+Changeset arn:aws:cloudformation:ap-south-1:996122083346:changeSet/cdk-deploy-change-set/a70be4bf-5a7a-464b-ad77-54a12bbad6a1 created and waiting in review for manual execution (--no-execute)
+IepStack-dev: deploying... [1/1]
+IepStack-dev |   0/102 | 9:55:42 pm | UPDATE_IN_PROGRESS   | AWS::CloudFormation::Stack             | IepStack-dev User Initiated
+IepStack-dev |   0/102 | 9:55:45 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/HarnessDriver/ServiceRole (CalculatorAgentCoreHarnessDriverServiceRole1B889810) 
+IepStack-dev |   0/102 | 9:55:45 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/EvidenceTool/ServiceRole (CalculatorAgentCoreEvidenceToolServiceRoleEBE4F4C1) 
+IepStack-dev |   0/102 | 9:55:45 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/CalculatorExecution/Role (CalculatorAgentCoreCalculatorExecutionRoleEBC164BE) 
+IepStack-dev |   0/102 | 9:55:45 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/CalculatorExecutionLogs (CalculatorAgentCoreCalculatorExecutionLogs53D32E81) 
+IepStack-dev |   0/102 | 9:55:46 pm | UPDATE_IN_PROGRESS   | AWS::CDK::Metadata                     | CDKMetadata/Default (CDKMetadata) 
+IepStack-dev |   0/102 | 9:55:46 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/CalculatorExecutionLogs (CalculatorAgentCoreCalculatorExecutionLogs53D32E81) Resource creation Initiated
+IepStack-dev |   1/102 | 9:55:46 pm | UPDATE_COMPLETE      | AWS::CDK::Metadata                     | CDKMetadata/Default (CDKMetadata) 
+IepStack-dev |   1/102 | 9:55:46 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/CalculatorExecution/Role (CalculatorAgentCoreCalculatorExecutionRoleEBC164BE) Resource creation Initiated
+IepStack-dev |   1/102 | 9:55:47 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/HarnessDriver/ServiceRole (CalculatorAgentCoreHarnessDriverServiceRole1B889810) Resource creation Initiated
+IepStack-dev |   1/102 | 9:55:47 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorOrchestrator (CalculatorOrchestrator3C3F89B5) 
+IepStack-dev |   1/102 | 9:55:47 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | AsyncWorker (AsyncWorker1360F16D) 
+IepStack-dev |   1/102 | 9:55:47 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | MomProcessor (MomProcessor6D4C29AD) 
+IepStack-dev |   1/102 | 9:55:48 pm | CREATE_IN_PROGRESS   | AWS::IAM::Role                         | CalculatorAgentCore/EvidenceTool/ServiceRole (CalculatorAgentCoreEvidenceToolServiceRoleEBE4F4C1) Resource creation Initiated
+IepStack-dev |   2/102 | 9:55:54 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | AsyncWorker (AsyncWorker1360F16D) 
+IepStack-dev |   3/102 | 9:55:54 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | MomProcessor (MomProcessor6D4C29AD) 
+IepStack-dev |   4/102 | 9:55:54 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | CalculatorOrchestrator (CalculatorOrchestrator3C3F89B5) 
+IepStack-dev |   5/102 | 9:55:55 pm | CREATE_COMPLETE      | AWS::Logs::LogGroup                    | CalculatorAgentCore/CalculatorExecutionLogs (CalculatorAgentCoreCalculatorExecutionLogs53D32E81) 
+IepStack-dev |   6/102 | 9:56:03 pm | CREATE_COMPLETE      | AWS::IAM::Role                         | CalculatorAgentCore/CalculatorExecution/Role (CalculatorAgentCoreCalculatorExecutionRoleEBC164BE) 
+IepStack-dev |   7/102 | 9:56:03 pm | CREATE_COMPLETE      | AWS::IAM::Role                         | CalculatorAgentCore/HarnessDriver/ServiceRole (CalculatorAgentCoreHarnessDriverServiceRole1B889810) 
+IepStack-dev |   8/102 | 9:56:05 pm | CREATE_COMPLETE      | AWS::IAM::Role                         | CalculatorAgentCore/EvidenceTool/ServiceRole (CalculatorAgentCoreEvidenceToolServiceRoleEBE4F4C1) 
+IepStack-dev |   8/102 | 9:56:06 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/EvidenceTool/ServiceRole/DefaultPolicy (CalculatorAgentCoreEvidenceToolServiceRoleDefaultPolicyCAE9CE96) 
+IepStack-dev |   8/102 | 9:56:07 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/EvidenceTool/ServiceRole/DefaultPolicy (CalculatorAgentCoreEvidenceToolServiceRoleDefaultPolicyCAE9CE96) Resource creation Initiated
+IepStack-dev |   9/102 | 9:56:23 pm | CREATE_COMPLETE      | AWS::IAM::Policy                       | CalculatorAgentCore/EvidenceTool/ServiceRole/DefaultPolicy (CalculatorAgentCoreEvidenceToolServiceRoleDefaultPolicyCAE9CE96) 
+IepStack-dev |   9/102 | 9:56:24 pm | CREATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorAgentCore/EvidenceTool (CalculatorAgentCoreEvidenceToolA4787CEF) 
+IepStack-dev |   9/102 | 9:56:25 pm | CREATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorAgentCore/EvidenceTool (CalculatorAgentCoreEvidenceToolA4787CEF) Resource creation Initiated
+IepStack-dev |  10/102 | 9:56:33 pm | CREATE_COMPLETE      | AWS::Lambda::Function                  | CalculatorAgentCore/EvidenceTool (CalculatorAgentCoreEvidenceToolA4787CEF) 
+IepStack-dev |  10/102 | 9:56:33 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/EvidenceTool/LogGroup (CalculatorAgentCoreEvidenceToolLogGroup83E0507E) 
+IepStack-dev |  10/102 | 9:56:33 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/GatewayExecRole/DefaultPolicy (CalculatorAgentCoreGatewayExecRoleDefaultPolicyE2A8D3F9) 
+IepStack-dev |  10/102 | 9:56:34 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/EvidenceTool/LogGroup (CalculatorAgentCoreEvidenceToolLogGroup83E0507E) Resource creation Initiated
+IepStack-dev |  10/102 | 9:56:35 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/GatewayExecRole/DefaultPolicy (CalculatorAgentCoreGatewayExecRoleDefaultPolicyE2A8D3F9) Resource creation Initiated
+IepStack-dev |  11/102 | 9:56:43 pm | CREATE_COMPLETE      | AWS::Logs::LogGroup                    | CalculatorAgentCore/EvidenceTool/LogGroup (CalculatorAgentCoreEvidenceToolLogGroup83E0507E) 
+IepStack-dev |  12/102 | 9:56:50 pm | CREATE_COMPLETE      | AWS::IAM::Policy                       | CalculatorAgentCore/GatewayExecRole/DefaultPolicy (CalculatorAgentCoreGatewayExecRoleDefaultPolicyE2A8D3F9) 
+IepStack-dev |  13/102 | 9:56:52 pm | UPDATE_COMPLETE      | AWS::BedrockAgentCore::GatewayTarget   | CalculatorAgentCore/CalculatorRuntimeMcpTarget (CalculatorAgentCoreCalculatorRuntimeMcpTarget1EF11DDF) 
+IepStack-dev |  13/102 | 9:56:52 pm | CREATE_IN_PROGRESS   | AWS::BedrockAgentCore::GatewayTarget   | CalculatorAgentCore/EvidenceToolTarget (CalculatorAgentCoreEvidenceToolTargetD71FA883) 
+IepStack-dev |  13/102 | 9:56:53 pm | CREATE_IN_PROGRESS   | AWS::BedrockAgentCore::GatewayTarget   | CalculatorAgentCore/EvidenceToolTarget (CalculatorAgentCoreEvidenceToolTargetD71FA883) Resource creation Initiated
+IepStack-dev |  14/102 | 9:56:59 pm | CREATE_COMPLETE      | AWS::BedrockAgentCore::GatewayTarget   | CalculatorAgentCore/EvidenceToolTarget (CalculatorAgentCoreEvidenceToolTargetD71FA883) 
+IepStack-dev |  14/102 | 9:57:02 pm | UPDATE_IN_PROGRESS   | Custom::AgentCoreHarness               | CalculatorAgentCore/CalculatorHarness/Default (CalculatorAgentCoreCalculatorHarness5E839209) 
+IepStack-dev |  15/102 | 9:57:25 pm | UPDATE_COMPLETE      | Custom::AgentCoreHarness               | CalculatorAgentCore/CalculatorHarness/Default (CalculatorAgentCoreCalculatorHarness5E839209) 
+IepStack-dev |  15/102 | 9:57:26 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/HarnessDriver/ServiceRole/DefaultPolicy (CalculatorAgentCoreHarnessDriverServiceRoleDefaultPolicyE525AFE8) 
+IepStack-dev |  15/102 | 9:57:28 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/HarnessDriver/ServiceRole/DefaultPolicy (CalculatorAgentCoreHarnessDriverServiceRoleDefaultPolicyE525AFE8) Resource creation Initiated
+IepStack-dev |  16/102 | 9:57:43 pm | CREATE_COMPLETE      | AWS::IAM::Policy                       | CalculatorAgentCore/HarnessDriver/ServiceRole/DefaultPolicy (CalculatorAgentCoreHarnessDriverServiceRoleDefaultPolicyE525AFE8) 
+IepStack-dev |  16/102 | 9:57:45 pm | CREATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorAgentCore/HarnessDriver (CalculatorAgentCoreHarnessDriver0C48436A) 
+IepStack-dev |  16/102 | 9:57:46 pm | CREATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorAgentCore/HarnessDriver (CalculatorAgentCoreHarnessDriver0C48436A) Resource creation Initiated
+IepStack-dev |  17/102 | 9:57:54 pm | CREATE_COMPLETE      | AWS::Lambda::Function                  | CalculatorAgentCore/HarnessDriver (CalculatorAgentCoreHarnessDriver0C48436A) 
+IepStack-dev |  17/102 | 9:57:55 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/HarnessDriver/LogGroup (CalculatorAgentCoreHarnessDriverLogGroup4B8CC210) 
+IepStack-dev |  17/102 | 9:57:55 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/CalculatorExecution/Role/DefaultPolicy (CalculatorAgentCoreCalculatorExecutionRoleDefaultPolicyADA61385) 
+IepStack-dev |  17/102 | 9:57:55 pm | CREATE_IN_PROGRESS   | AWS::Logs::LogGroup                    | CalculatorAgentCore/HarnessDriver/LogGroup (CalculatorAgentCoreHarnessDriverLogGroup4B8CC210) Resource creation Initiated
+IepStack-dev |  17/102 | 9:57:57 pm | CREATE_IN_PROGRESS   | AWS::IAM::Policy                       | CalculatorAgentCore/CalculatorExecution/Role/DefaultPolicy (CalculatorAgentCoreCalculatorExecutionRoleDefaultPolicyADA61385) Resource creation Initiated
+IepStack-dev |  18/102 | 9:58:04 pm | CREATE_COMPLETE      | AWS::Logs::LogGroup                    | CalculatorAgentCore/HarnessDriver/LogGroup (CalculatorAgentCoreHarnessDriverLogGroup4B8CC210) 
+IepStack-dev |  19/102 | 9:58:12 pm | CREATE_COMPLETE      | AWS::IAM::Policy                       | CalculatorAgentCore/CalculatorExecution/Role/DefaultPolicy (CalculatorAgentCoreCalculatorExecutionRoleDefaultPolicyADA61385) 
+IepStack-dev |  19/102 | 9:58:14 pm | CREATE_IN_PROGRESS   | AWS::StepFunctions::StateMachine       | CalculatorAgentCore/CalculatorExecution (CalculatorAgentCoreCalculatorExecution697EDAED) 
+IepStack-dev |  19/102 | 9:58:15 pm | CREATE_IN_PROGRESS   | AWS::StepFunctions::StateMachine       | CalculatorAgentCore/CalculatorExecution (CalculatorAgentCoreCalculatorExecution697EDAED) Resource creation Initiated
+IepStack-dev |  20/102 | 9:58:31 pm | CREATE_COMPLETE      | AWS::StepFunctions::StateMachine       | CalculatorAgentCore/CalculatorExecution (CalculatorAgentCoreCalculatorExecution697EDAED) 
+IepStack-dev |  20/102 | 9:58:34 pm | UPDATE_IN_PROGRESS   | AWS::IAM::Policy                       | ApiHandler/ServiceRole/DefaultPolicy (ApiHandlerServiceRoleDefaultPolicy10321D87) 
+IepStack-dev |  21/102 | 9:58:50 pm | UPDATE_COMPLETE      | AWS::IAM::Policy                       | ApiHandler/ServiceRole/DefaultPolicy (ApiHandlerServiceRoleDefaultPolicy10321D87) 
+IepStack-dev |  21/102 | 9:58:53 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | ApiHandler (ApiHandler5E7490E8) 
+IepStack-dev |  22/102 | 9:59:06 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | ApiHandler (ApiHandler5E7490E8) 
+IepStack-dev |  23/102 | 9:59:14 pm | UPDATE_COMPLETE_CLEA | AWS::CloudFormation::Stack             | IepStack-dev 
+IepStack-dev |  24/102 | 9:59:15 pm | UPDATE_COMPLETE      | AWS::CloudFormation::Stack             | IepStack-dev 
+
+ ✅  IepStack-dev
+
+✨  Deployment time: 215.74s
+
+Outputs:
+IepStack-dev.AdminTableName = iep-dev-admin-996122083346-ap-south-1
+IepStack-dev.ApiUrl = https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/
+IepStack-dev.BucketName = iep-dev-files-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreAgentLambdaArn54A23170 = arn:aws:lambda:ap-south-1:996122083346:function:iep-dev-calculator-agent-orchestrator-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreExecutionStateMachineArnE5CDE96B = arn:aws:states:ap-south-1:996122083346:stateMachine:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreGatewayArn5A929F69 = arn:aws:bedrock-agentcore:ap-south-1:996122083346:gateway/iep-dev-calculator-996122083346-ap-south-1-30f1pfwnsb
+IepStack-dev.CalculatorAgentCoreHarnessArnOutputCE851553 = arn:aws:bedrock-agentcore:ap-south-1:996122083346:harness/mimoCalc_dev-dAmgUcz1zg
+IepStack-dev.CalculatorAgentCoreRuntimeArnEFC8726C = arn:aws:bedrock-agentcore:ap-south-1:996122083346:runtime/mimoCalcMcp_dev-G46E17C4q8
+IepStack-dev.CalculatorTableName = iep-dev-calculations-996122083346-ap-south-1
+IepStack-dev.ChatFunctionUrl = https://glcqd3wjwtevajlzl7bywacafy0gotsl.lambda-url.ap-south-1.on.aws/
+IepStack-dev.ChatTableName = iep-dev-chat-threads-996122083346-ap-south-1
+IepStack-dev.FrontendUrl = https://d2itpe2tuxdkli.cloudfront.net
+IepStack-dev.IepApiEndpointE361331A = https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/
+IepStack-dev.InterviewIntelligenceTableName = iep-dev-interview-intelligence-996122083346-ap-south-1
+IepStack-dev.MomTableName = iep-dev-moms-996122083346-ap-south-1
+IepStack-dev.TableName = iep-dev-interviews-v2-996122083346-ap-south-1
+IepStack-dev.UserPoolClientId = 271dcg295cdk7dm64ec8e7cq5o
+IepStack-dev.UserPoolId = ap-south-1_S38e41Psu
+Stack ARN:
+arn:aws:cloudformation:ap-south-1:996122083346:stack/IepStack-dev/75453c80-7430-11f1-ada8-02ce20bbb2df
+
+✨  Total time: 261.1s
+
+EXIT=0

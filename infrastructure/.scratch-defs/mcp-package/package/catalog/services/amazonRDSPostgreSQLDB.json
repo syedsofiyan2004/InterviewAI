@@ -1,0 +1,48 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonRDSPostgreSQLDB",
+  "displayName": "Amazon RDS for PostgreSQL",
+  "templateId": "rdsForPostgreSQL",
+  "status": "verified",
+  "traps": [
+    "Instance configuration uses a columnFormIPM matrix — send the WRAPPED shape, NOT dotted-path keys. Shape: { columnFormIPM: { value: [{ <selectorId>: { value: '<n>' }, ... }] } }. Selector ids: 'Number of Nodes', 'Instance Type', 'Deployment Option', 'TermType', 'LeaseContractLength', 'PurchaseOption'. The literal string 'undefined' is the utilization slot key, and its inner value is itself an object: { value: { unit: '<percent>', selectedId: '%Utilized/Month' } }. The dotted-path syntax (e.g. 'columnFormIPM[0].Instance Type') is silently dropped by the pricing engine — saves succeed, lint passes, but the rehydrated estimate renders $0 because the row's content is not in the canonical shape. Verified empirically 2026-05-30 against a UI-built reference save.",
+    "storageVolume options: 'General Purpose' (gp2), 'General Purpose-GP3' (gp3), 'Provisioned IOPS' (io1), 'Provisioned IOPS-IO2' (io2), 'Magnetic'. The provisioning IOPS and gp3 IOPS/throughput fields are conditional on the storage volume choice.",
+    "Deployment Option choices: 'Single-AZ' (default, lowest cost), 'Multi-AZ', 'Multi-AZ DB cluster' (read replicas). Multi-AZ doubles DB instance cost.",
+    "RDS Extended Support pricing kicks in only when the engine version is past EOL. Set addRDSExtendedSupport=1 only if you've explicitly chosen extended-support pricing; otherwise leave at 0 (default)."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Single-AZ db.r6g.large with gp3 storage",
+    "columnFormIPM": {
+      "value": [
+        {
+          "Number of Nodes": {
+            "value": "1"
+          },
+          "Instance Type": {
+            "value": "db.r6g.large"
+          },
+          "Deployment Option": {
+            "value": "Single-AZ"
+          },
+          "TermType": {
+            "value": "OnDemand"
+          },
+          "undefined": {
+            "value": {
+              "unit": "100",
+              "selectedId": "%Utilized/Month"
+            }
+          }
+        }
+      ]
+    },
+    "storageVolume": "General Purpose-GP3",
+    "storageAmount": {
+      "value": "100",
+      "unit": "gb|NA"
+    }
+  },
+  "lastVerifiedAt": "2026-05-30",
+  "verifiedEstimateId": "1764bef1f5e20a3b1b9b9881ac11621a6ad29af4"
+}

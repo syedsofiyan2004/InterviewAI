@@ -1,0 +1,142 @@
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_dynamodb.TableOptions#pointInTimeRecovery is deprecated.
+  use `pointInTimeRecoverySpecification` instead
+  This API will be removed in the next major release.
+Bundling asset IepStack-dev/ApiHandler/Code/Stage...
+
+  ...fb18f890d96d59a24fc4e1fb96ef193acdbef795c8407-building\index.js   6.9mb
+  ...f890d96d59a24fc4e1fb96ef193acdbef795c8407-building\index.js.map  25.9mb
+
+Done in 1462ms
+Bundling asset IepStack-dev/AsyncWorker/Code/Stage...
+
+  ...9c5cb32e75cbfb3c6f917d2b3237a835b25a918c62499-building\index.js   5.0mb
+  ...b32e75cbfb3c6f917d2b3237a835b25a918c62499-building\index.js.map  18.5mb
+
+Done in 1488ms
+Bundling asset IepStack-dev/MomProcessor/Code/Stage...
+
+  ...a35e796bb57cc305888ce47f5fc770f5b8dc8f42b8e30-building\index.js   5.0mb
+  ...796bb57cc305888ce47f5fc770f5b8dc8f42b8e30-building\index.js.map  18.5mb
+
+Done in 1465ms
+Bundling asset IepStack-dev/CalculatorOrchestrator/Code/Stage...
+
+  ...a989166903c5f25af9e6335f16fe631c74f62d7234ab21-building\index.js  217.6kb
+  ...166903c5f25af9e6335f16fe631c74f62d7234ab21-building\index.js.map    1.0mb
+
+Done in 252ms
+Bundling asset IepStack-dev/CalculatorAgentCore/EvidenceTool/Code/Stage...
+
+  ...27c97f3a0575adacbc33c7d1e862ddffd740f8ef3ed9fd2-building\index.js  12.9kb
+  ...7f3a0575adacbc33c7d1e862ddffd740f8ef3ed9fd2-building\index.js.map  55.2kb
+
+Done in 245ms
+Bundling asset IepStack-dev/CalculatorAgentCore/HarnessProvisioner/Code/Stage...
+
+  ...c02eb19f28640314052771982eba2ba1be8c09669e0da6-building\index.js  581.2kb
+  ...b19f28640314052771982eba2ba1be8c09669e0da6-building\index.js.map    2.2mb
+
+Done in 1644ms
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+[WARNING] aws-cdk-lib.aws_lambda.FunctionOptions#logRetention is deprecated.
+  use `logGroup` instead
+  This API will be removed in the next major release.
+Bundling asset IepStack-dev/CalculatorAgentCore/HarnessDriver/Code/Stage...
+
+  ...89c515ec09ba16c4d915a729d5566c43a4922f5aaddf4e-building\index.js  1.1mb
+  ...15ec09ba16c4d915a729d5566c43a4922f5aaddf4e-building\index.js.map  4.0mb
+
+Done in 749ms
+Bundling asset IepStack-dev/CalculatorAgentCore/McpProxy/Code/Stage...
+
+  ...0b1ef53a4c34f94d7c1da71b76a2cf6963e63b139c6cf139-building\index.js  2.7kb
+  ...f53a4c34f94d7c1da71b76a2cf6963e63b139c6cf139-building\index.js.map  8.2kb
+
+Done in 29ms
+Bundling asset IepStack-dev/CalculatorAgentCore/AgentOrchestrator/Code/Stage...
+
+  ...851c9ae745f6163a277e834fff8c520953f93857508ef5-building\index.js   88.2kb
+  ...9ae745f6163a277e834fff8c520953f93857508ef5-building\index.js.map  374.8kb
+
+Done in 61ms
+Bundling asset IepStack-dev/ChatFunction/Code/Stage...
+
+  ...f1d384d0e055842ca81e34d9c17c102e510a656d077f6-building\index.js   4.6mb
+  ...84d0e055842ca81e34d9c17c102e510a656d077f6-building\index.js.map  17.4mb
+
+Done in 1265ms
+[Info at /IepStack-dev] Number of resources: 469 is approaching allowed maximum of 500
+
+✨  Synthesis time: 1086.56s
+
+IepStack-dev: start: Building ApiHandler/Code
+IepStack-dev: success: Built ApiHandler/Code
+IepStack-dev: start: Building IepStack-dev Template
+IepStack-dev: success: Built IepStack-dev Template
+IepStack-dev: start: Publishing ApiHandler/Code (996122083346-ap-south-1-7160ba15)
+IepStack-dev: start: Publishing IepStack-dev Template (996122083346-ap-south-1-7b1c10b6)
+IepStack-dev: success: Published IepStack-dev Template (996122083346-ap-south-1-7b1c10b6)
+IepStack-dev: success: Published ApiHandler/Code (996122083346-ap-south-1-7160ba15)
+IepStack-dev: creating CloudFormation changeset...
+Changeset arn:aws:cloudformation:ap-south-1:996122083346:changeSet/cdk-deploy-change-set/c60a9f4b-8bda-4590-af36-77e900659631 created and waiting in review for manual execution (--no-execute)
+IepStack-dev: deploying... [1/1]
+IepStack-dev |   0/102 | 10:35:20 pm | UPDATE_IN_PROGRESS   | AWS::CloudFormation::Stack             | IepStack-dev User Initiated
+IepStack-dev |   0/102 | 10:35:25 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | AsyncWorker (AsyncWorker1360F16D) 
+IepStack-dev |   0/102 | 10:35:25 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | MomProcessor (MomProcessor6D4C29AD) 
+IepStack-dev |   0/102 | 10:35:25 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | CalculatorOrchestrator (CalculatorOrchestrator3C3F89B5) 
+IepStack-dev |   1/102 | 10:35:33 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | AsyncWorker (AsyncWorker1360F16D) 
+IepStack-dev |   2/102 | 10:35:33 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | CalculatorOrchestrator (CalculatorOrchestrator3C3F89B5) 
+IepStack-dev |   3/102 | 10:35:33 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | MomProcessor (MomProcessor6D4C29AD) 
+IepStack-dev |   3/102 | 10:35:39 pm | UPDATE_IN_PROGRESS   | AWS::Lambda::Function                  | ApiHandler (ApiHandler5E7490E8) 
+IepStack-dev |   4/102 | 10:35:52 pm | UPDATE_COMPLETE      | AWS::Lambda::Function                  | ApiHandler (ApiHandler5E7490E8) 
+IepStack-dev |   5/102 | 10:36:04 pm | UPDATE_COMPLETE_CLEA | AWS::CloudFormation::Stack             | IepStack-dev 
+IepStack-dev |   6/102 | 10:36:06 pm | UPDATE_COMPLETE      | AWS::CloudFormation::Stack             | IepStack-dev 
+
+ ✅  IepStack-dev
+
+✨  Deployment time: 47.35s
+
+Outputs:
+IepStack-dev.AdminTableName = iep-dev-admin-996122083346-ap-south-1
+IepStack-dev.ApiUrl = https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/
+IepStack-dev.BucketName = iep-dev-files-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreAgentLambdaArn54A23170 = arn:aws:lambda:ap-south-1:996122083346:function:iep-dev-calculator-agent-orchestrator-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreExecutionStateMachineArnE5CDE96B = arn:aws:states:ap-south-1:996122083346:stateMachine:iep-dev-calculator-agentcore-exec-996122083346-ap-south-1
+IepStack-dev.CalculatorAgentCoreGatewayArn5A929F69 = arn:aws:bedrock-agentcore:ap-south-1:996122083346:gateway/iep-dev-calculator-996122083346-ap-south-1-30f1pfwnsb
+IepStack-dev.CalculatorAgentCoreHarnessArnOutputCE851553 = arn:aws:bedrock-agentcore:ap-south-1:996122083346:harness/mimoCalc_dev-dAmgUcz1zg
+IepStack-dev.CalculatorAgentCoreRuntimeArnEFC8726C = arn:aws:bedrock-agentcore:ap-south-1:996122083346:runtime/mimoCalcMcp_dev-G46E17C4q8
+IepStack-dev.CalculatorTableName = iep-dev-calculations-996122083346-ap-south-1
+IepStack-dev.ChatFunctionUrl = https://glcqd3wjwtevajlzl7bywacafy0gotsl.lambda-url.ap-south-1.on.aws/
+IepStack-dev.ChatTableName = iep-dev-chat-threads-996122083346-ap-south-1
+IepStack-dev.FrontendUrl = https://d2itpe2tuxdkli.cloudfront.net
+IepStack-dev.IepApiEndpointE361331A = https://1t6ztx9pma.execute-api.ap-south-1.amazonaws.com/dev/
+IepStack-dev.InterviewIntelligenceTableName = iep-dev-interview-intelligence-996122083346-ap-south-1
+IepStack-dev.MomTableName = iep-dev-moms-996122083346-ap-south-1
+IepStack-dev.TableName = iep-dev-interviews-v2-996122083346-ap-south-1
+IepStack-dev.UserPoolClientId = 271dcg295cdk7dm64ec8e7cq5o
+IepStack-dev.UserPoolId = ap-south-1_S38e41Psu
+Stack ARN:
+arn:aws:cloudformation:ap-south-1:996122083346:stack/IepStack-dev/75453c80-7430-11f1-ada8-02ce20bbb2df
+
+✨  Total time: 1133.9s
+

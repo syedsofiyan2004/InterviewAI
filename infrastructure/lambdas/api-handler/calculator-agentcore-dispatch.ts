@@ -194,7 +194,7 @@ export async function continueAgentCoreExecution(input: {
     questionId?: string;
     resource?: string;
     semanticField?: string;
-    value: string | number | boolean;
+    value: string | number | boolean | Array<string | number | boolean>;
     applyToSimilarResources?: boolean;
   }>;
 }): Promise<StartedExecution> {

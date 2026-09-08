@@ -1,0 +1,46 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonSimpleStorageServiceGroup",
+  "displayName": "Amazon S3",
+  "templateId": "simpleStorageServiceClassesGroup",
+  "status": "verified",
+  "lastVerifiedAt": "2026-05-16",
+  "verifiedEstimateId": "a46f65eb62b70852222998a294b067b9991a1b44",
+  "required": [],
+  "traps": [
+    "amazonSimpleStorageServiceGroup is a subServiceSelector parent. Call addService('amazonS3Standard', ...) for storage and addService('awsS3DataTransfer', ...) for data transfer. EstimateBuilder merges children into a single parent envelope; do not call addService('amazonSimpleStorageServiceGroup', ...) directly.",
+    "The storage size field is 's3StandardStorageSize', not 'storageAmount'. Shape: { value: '<n>', unit: 'gb|month' }."
+  ],
+  "subServices": [
+    {
+      "serviceCode": "amazonS3Standard",
+      "estimateFor": "s3Standard",
+      "required": [
+        {
+          "field": "s3StandardStorageSize",
+          "hint": "Average GB stored per month",
+          "shape": "{ value: '<n>', unit: 'gb|month' }",
+          "example": {
+            "value": "500",
+            "unit": "gb|month"
+          }
+        }
+      ]
+    },
+    {
+      "serviceCode": "awsS3DataTransfer",
+      "estimateFor": "awsS3DataTransfer",
+      "required": []
+    }
+  ],
+  "minimalConfig": {
+    "amazonS3Standard": {
+      "region": "us-east-1",
+      "description": "Object storage",
+      "s3StandardStorageSize": {
+        "value": "500",
+        "unit": "gb|month"
+      }
+    }
+  }
+}

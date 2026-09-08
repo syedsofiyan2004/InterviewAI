@@ -1,0 +1,22 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "applicationLoadBalancer",
+  "displayName": "Application Load Balancer",
+  "templateId": "template_0",
+  "status": "verified",
+  "traps": [
+    "outpostsNumberOfApplicationLoadBalancers is a separate field for the Outposts deployment mode. Sending it alongside numberOfApplicationLoadBalancers in a non-Outposts estimate is silently dropped at rehydration; only one or the other surfaces in the CSV summary depending on which mode the estimate selected.",
+    "ALB pricing requires AT LEAST ONE LCU-driver field on top of the count, otherwise the calculator UI shows 'Please specify value for at least one of the fields to compute the monthly cost.' The four LCU drivers are sizeOfDataProcessedForEC2InstanceAndIPAddressTargets, sizeOfBytesProcessedForLambdaFunctionTargets, averageNumberOfNewConnectionsPerALB (paired with averageConnectionDuration), and averageNumberOfRequestsPerALBPerSecond (paired with averageNumberOfRuleEvaluationsPerRequest). minimalConfig ships count + EC2-target processed bytes as the canonical case; agents who model connection-driven or request-driven workloads should swap in those fields instead."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Application Load Balancer",
+    "numberOfApplicationLoadBalancers": "1",
+    "sizeOfDataProcessedForEC2InstanceAndIPAddressTargets": {
+      "value": "5",
+      "unit": "gb|hour"
+    }
+  },
+  "lastVerifiedAt": "2026-05-30",
+  "verifiedEstimateId": "35e4e1b44bab0de10f769d53637efb57bc1cc3c2"
+}

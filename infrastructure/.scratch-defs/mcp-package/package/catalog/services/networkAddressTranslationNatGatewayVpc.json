@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "networkAddressTranslationNatGatewayVpc",
+  "displayName": "Network Address Translation (NAT) Gateway",
+  "templateId": "networkAddressTranslationGateway",
+  "status": "verified",
+  "traps": [
+    "NAT Gateway has two mutually exclusive field sets, make sure to confirm with the user to either use 'Regional NAT Gateway' or 'NAT Gateway'. Regional (regionalNatGatewayCount, regionalNatGatewayAzCount, regionalNatGatewayDataProcessed) is the current UI default. Non-regional/legacy (numberOfGateways, dataProcessedPerNATGateway) also works. Using both will double-count costs.",
+    "All five fields are marked required by the manifest. When using one set, explicitly set the other set to \"0\" to avoid inflated defaults and linter refusals.",
+    "Manifest defaults are 5 gateways × 3 AZs — wildly over-sized for a 'hello world'. minimalConfig overrides to 1×1; agents reading manifest defaults directly will over-estimate ~5×."
+  ],
+  "minimalConfig": {
+    "region": "us-east-1",
+    "description": "Regional NAT Gateway",
+    "regionalNatGatewayCount": "1",
+    "regionalNatGatewayAzCount": "1",
+    "regionalNatGatewayDataProcessed": {
+      "value": "1",
+      "unit": "gb|month"
+    },
+    "numberOfGateways": "0",
+    "dataProcessedPerNATGateway": {
+      "value": "0",
+      "unit": "gb|month"
+    }
+  },
+  "lastVerifiedAt": "2026-05-29",
+  "verifiedEstimateId": "8298a3a15b4e3082bf0fe482c18a1d337cbe3b6a"
+}

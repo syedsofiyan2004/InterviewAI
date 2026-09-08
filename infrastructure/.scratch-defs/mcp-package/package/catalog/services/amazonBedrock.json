@@ -1,0 +1,209 @@
+{
+  "$schema": "../schema.json",
+  "serviceCode": "amazonBedrock",
+  "displayName": "Amazon Bedrock",
+  "templateId": "amazonBedrockClassesGroup",
+  "status": "verified",
+  "required": [],
+  "traps": [
+    "amazonBedrock is a subServiceSelector parent — call addService(<providerCode>, ...) for each model provider (anthropic, amazon, meta, mistral, cohere, ai21, deepseek, lumaAi, openAi, qwen, stabilityAi, twelveLabs, writer). EstimateBuilder merges all children into a single amazonBedrock parent envelope; do NOT call addService('amazonBedrock', ...) directly — it has no fields of its own.",
+    "Each provider child has the SAME field schema (location, tierIR, model selection, token volumes, image inputs, prompt caching) but the model option ids and model-tier numeric ids differ per provider. Probe via get_service_fields(<providerCode>) before using anything other than 'anthropic'.",
+    "Anthropic field set is partitioned by 'location' (global / geo / ir) and 'tierIR' (standard / batch). Active fields use a SUFFIX matching the partition: unsuffixed = global+standard, 'IRstan' = ir+standard, 'Geostan' = geo+standard, 'IRbatch' = ir+batch, 'batch' = global+batch, 'geobatch' = geo+batch. Sending 'avgInputTokensPerRequest' (unsuffixed) when location=ir is silently ignored — use 'avgInputTokensPerRequestIRstan' instead.",
+    "Three model dropdowns must agree: 'modelSelection' (the picker, opaque sha id), 'selectedModel' (mirror, opaque sha id), and 'selectedModel_od' (numeric tier id like '107' for Sonnet 4). Sending only modelSelection without selectedModel/selectedModel_od leaves the model row blank in the rendered estimate. The id sets are NOT interchangeable — copy the matching trio from get_service_fields(anthropic).options.",
+    "selectedModel_od has known DUPLICATE ids in the manifest: 'Anthropic: Claude Sonnet 4.5' and 'Anthropic: Claude Sonnet 4.5 (Long Context)' both report id='1'. Prefer Claude Sonnet 4 (selectedModel_od='107') for stable rehydration if you don't need 4.5 specifically.",
+    "Token volume fields are numericInput strings (not frequency). The calculator computes monthly tokens as avgRequestsPerMin × 60 × hoursPerDayAtThisRate × 30 × avgInputTokensPerRequest. To target 2M input tokens/month with avgRequestsPerMin='1' and hoursPerDayAtThisRate='1' (1800 req/month), set avgInputTokensPerRequest='1111'.",
+    "Prompt caching: set withPromptCaching='1' AND cacheRate='<percent>' AND cacheRead/cacheWrite to provider-model-specific opaque ids. cacheRead/cacheWrite have a SMALLER option set than modelSelection (only models that support caching) — for anthropic that excludes Sonnet 4 and earlier. To enable caching you must pick a Sonnet 4.5+ or Haiku 4.5+ model. Without all four fields surfacing together, caching does not affect cost.",
+    "imageInput / withPromptCaching are dropdown booleans encoded as STRING '1' (Yes) or '0' (No), not actual booleans. Sending true/false fails value validation.",
+    "Bedrock has a 14th sub-service-selector child: 'workload1' (a generic catch-all with templateId 'abc') that surfaces Provisioned Throughput, Model Customization, Image Generation, Embeddings, and Batch — anything that doesn't fit the per-provider on-demand inference page. Call it as addService('workload1', { ... }) — the EstimateBuilder will merge it into the same amazonBedrock parent envelope as anthropic. Adding workload1 at top-level (e.g. as its own parent) triggers the sub-service-active-list lint predicate and produces a read-only estimate.",
+    "User scenarios using the phrases 'provisioned throughput', 'caching', or 'reserved capacity' for token-volume cost optimization should map to anthropic's withPromptCaching='1' + cacheRate (a percentage discount on cached input tokens), NOT to workload1's Provisioned Throughput billing (billing_term + noOfmodels_purchased + noOfhours_used). PT is a flat hourly reservation of a model unit (~$30-40/hr for Sonnet 4) regardless of traffic; prompt caching is a per-token discount when repeated prefixes are cached. For a chatbot with 'X tokens cached', set withPromptCaching='1' and cacheRate='<X/totalInput * 100>'.",
+    "Default to location='global' for the most common 'cheapest cross-region routing' use case. The unsuffixed field family (modelSelection, avgInputTokensPerRequest, etc.) only applies under location='global'+tierIR='standard'. Choosing location='ir' (In Region — slightly higher per-token price for guaranteed in-region inference) requires using the IRstan-suffixed family (modelSelectionIRstan, avgInputTokensPerRequestIRstan, etc.) — DIFFERENT field IDs, not just different values."
+  ],
+  "subServices": [
+    {
+      "serviceCode": "anthropic",
+      "estimateFor": "anthropic",
+      "required": [
+        {
+          "field": "location",
+          "hint": "Inference route. Determines which suffixed family of token-volume fields is active.",
+          "shape": "string id from { global | geo | ir }",
+          "example": "global"
+        },
+        {
+          "field": "tierIR",
+          "hint": "On-demand vs batch. Standard = pay-per-token; batch = bulk records.",
+          "shape": "string id from { standard | batch }",
+          "example": "standard"
+        },
+        {
+          "field": "modelSelection",
+          "hint": "Model picker (opaque sha id). Must match the same Claude SKU as selectedModel and selectedModel_od.",
+          "shape": "string opaque id from get_service_fields(anthropic).modelSelection.options",
+          "example": "zqS7iGKjJL5t5cXEQrz7aPPi661-ZfgIf1Ki2_tw158"
+        },
+        {
+          "field": "selectedModel",
+          "hint": "Mirror of modelSelection (opaque sha id). MUST be set or the model row stays blank.",
+          "shape": "string opaque id from get_service_fields(anthropic).selectedModel.options",
+          "example": "-9YMZcfeZplguZCnKEezh_0pGSLVGy_STd5GLOdvIiw"
+        },
+        {
+          "field": "selectedModel_od",
+          "hint": "Numeric tier id for the on-demand price book (e.g. '107' for Sonnet 4).",
+          "shape": "string numeric id from get_service_fields(anthropic).selectedModel_od.options",
+          "example": "107"
+        },
+        {
+          "field": "avgRequestsPerMin",
+          "hint": "Average inference requests per minute (unsuffixed = global+standard).",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "hoursPerDayAtThisRate",
+          "hint": "Hours per day at the avgRequestsPerMin rate.",
+          "shape": "string (numeric, 1-24)",
+          "example": "1"
+        },
+        {
+          "field": "avgInputTokensPerRequest",
+          "hint": "Average input tokens per request. Combine with rate × hours to back into monthly token volume.",
+          "shape": "string (numeric)",
+          "example": "1111"
+        },
+        {
+          "field": "avgOutputTokensPerRequest",
+          "hint": "Average output tokens per request.",
+          "shape": "string (numeric)",
+          "example": "278"
+        }
+      ]
+    },
+    {
+      "serviceCode": "amazon",
+      "estimateFor": "Amazon",
+      "required": [],
+      "productCodes": [
+        "titanTextEmbeddingsV2",
+        "textEmbeddings",
+        "multimodalEmbeddings",
+        "express",
+        "lite",
+        "imageGenerator",
+        "novaPro",
+        "novaLite",
+        "novaMicro",
+        "novaCanvas",
+        "novaReel"
+      ]
+    },
+    {
+      "serviceCode": "ai21",
+      "estimateFor": "ai21",
+      "required": []
+    },
+    {
+      "serviceCode": "cohere",
+      "estimateFor": "cohere",
+      "required": []
+    },
+    {
+      "serviceCode": "deepseek",
+      "estimateFor": "DeepSeek",
+      "required": []
+    },
+    {
+      "serviceCode": "lumaAi",
+      "estimateFor": "Luma AI",
+      "required": []
+    },
+    {
+      "serviceCode": "meta",
+      "estimateFor": "meta",
+      "required": []
+    },
+    {
+      "serviceCode": "mistral",
+      "estimateFor": "mistral",
+      "required": []
+    },
+    {
+      "serviceCode": "openAi",
+      "estimateFor": "OpenAI",
+      "required": []
+    },
+    {
+      "serviceCode": "qwen",
+      "estimateFor": "qwen",
+      "required": []
+    },
+    {
+      "serviceCode": "stabilityAi",
+      "estimateFor": "Stability AI",
+      "required": []
+    },
+    {
+      "serviceCode": "twelveLabs",
+      "estimateFor": "bedrockTwelve",
+      "required": []
+    },
+    {
+      "serviceCode": "writer",
+      "estimateFor": "writer",
+      "required": []
+    },
+    {
+      "serviceCode": "workload1",
+      "estimateFor": "abc",
+      "required": [
+        {
+          "field": "modelSelection",
+          "hint": "Model picker (opaque sha id). workload1 has its own modelSelection options covering ALL providers; pick one matching the model you reserved.",
+          "shape": "string opaque id from get_service_fields(workload1).modelSelection.options",
+          "example": "zqS7iGKjJL5t5cXEQrz7aPPi661-ZfgIf1Ki2_tw158"
+        },
+        {
+          "field": "selectedModel",
+          "hint": "Mirror of modelSelection. workload1's selectedModel option ids differ from anthropic's even for the same Claude SKU — re-probe.",
+          "shape": "string opaque id",
+          "example": "-9YMZcfeZplguZCnKEezh_0pGSLVGy_STd5GLOdvIiw"
+        },
+        {
+          "field": "billing_term",
+          "hint": "Provisioned Throughput commit term.",
+          "shape": "string id from { 1_month_commit_Lite | 6_month_commit_Lite | no-commit_Lite }",
+          "example": "1_month_commit_Lite"
+        },
+        {
+          "field": "noOfmodels_purchased",
+          "hint": "Number of model units (MUs) reserved per month.",
+          "shape": "string (numeric)",
+          "example": "1"
+        },
+        {
+          "field": "noOfhours_used",
+          "hint": "Hours per month each MU is billed (720 = always-on for 1-month commit).",
+          "shape": "string (numeric)",
+          "example": "720"
+        }
+      ]
+    }
+  ],
+  "minimalConfig": {
+    "anthropic": {
+      "region": "us-east-1",
+      "description": "Bedrock chatbot on Claude Sonnet",
+      "location": "global",
+      "tierIR": "standard",
+      "modelSelection": "zqS7iGKjJL5t5cXEQrz7aPPi661-ZfgIf1Ki2_tw158",
+      "selectedModel": "-9YMZcfeZplguZCnKEezh_0pGSLVGy_STd5GLOdvIiw",
+      "selectedModel_od": "107",
+      "avgRequestsPerMin": "1",
+      "hoursPerDayAtThisRate": "1",
+      "avgInputTokensPerRequest": "1111",
+      "avgOutputTokensPerRequest": "278"
+    }
+  },
+  "lastVerifiedAt": "2026-05-16",
+  "verifiedEstimateId": "1930e4f3845bf67ac3c3a12bf8c0e31b879c2cca"
+}
