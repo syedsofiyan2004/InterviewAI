@@ -19,7 +19,9 @@ import {
 /** A single question the calculator agent asked the customer (mirrors server agent_questions). */
 type AgentQuestion = NonNullable<CalculationResultResponse['agent_questions']>[number];
 
-const POLL_INTERVAL_MS = 3000;
+// Keep the estimate page responsive after an interruption/resume. The backend remains
+// the source of truth; this only reduces the time before a new question is displayed.
+const POLL_INTERVAL_MS = 1200;
 const MONTHS_PER_YEAR = 12;
 
 const annual = (value: number | null | undefined): number | null =>
