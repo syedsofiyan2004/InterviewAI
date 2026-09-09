@@ -31,6 +31,7 @@ const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID
   || process.env.CALCULATOR_FAST_MODEL_ID
   || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const MAX_ITERATIONS = Number(process.env.CALCULATOR_AGENT_MAX_ITERATIONS) || 12;
+const MAX_OUTPUT_TOKENS = 4096;
 const EXECUTION_MODE = 'agentcore-harness';
 
 /**
@@ -155,12 +156,23 @@ async function runAgent(input: AgentCalculatorInput): Promise<AgentCalculatorRes
       accept: 'application/json',
       // Rollback-only path: retain a hard output bound so an accidental
       // re-enable cannot recreate the previous high-token loop.
-      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT, tools: CALCULATOR_TOOLS, messages }),
+      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: MAX_OUTPUT_TOKENS, system: SYSTEM_PROMPT, tools: CALCULATOR_TOOLS, messages }),
     }));
     const payload = JSON.parse(new TextDecoder().decode(response.body));
     const stopReason: string = payload.stop_reason;
     const content: Array<{ type: string; id?: string; name?: string; input?: unknown; text?: string }> = payload.content || [];
     messages.push({ role: 'assistant', content });
+
+    // Never persist a partial response as a completed estimate. Bedrock uses
+    // `max_tokens` when the model reaches the per-response output ceiling;
+    // surface that as an explicit failure so callers can retry deliberately.
+    if (stopReason === 'max_tokens') {
+      return {
+        status: 'FAILED',
+        errorCategory: 'AGENT_OUTPUT_TRUNCATED',
+        message: `The calculator agent reached its ${MAX_OUTPUT_TOKENS}-token response limit before finishing. Retry explicitly to run it again.`,
+      };
+    }
 
     if (stopReason === 'end_turn') {
       const finalText = content.filter(b => b.type === 'text').map(b => b.text).join('\n');

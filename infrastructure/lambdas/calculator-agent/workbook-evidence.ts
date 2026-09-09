@@ -75,6 +75,6 @@ export type AgentCalculatorResult =
     }
   | {
       status: 'FAILED';
-      errorCategory: 'MCP_ERROR' | 'AGENT_TIMEOUT' | 'SCHEMA_ERROR' | 'UNKNOWN';
+      errorCategory: 'MCP_ERROR' | 'AGENT_TIMEOUT' | 'AGENT_OUTPUT_TRUNCATED' | 'SCHEMA_ERROR' | 'UNKNOWN';
       message: string;
     };
