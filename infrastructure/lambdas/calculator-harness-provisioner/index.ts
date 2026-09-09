@@ -99,8 +99,8 @@ const gatewayTool = (gatewayArn: string): HarnessTool => ({
 const REQUEST_USER_INPUT_TOOL_NAME = 'request_user_input';
 
 const REQUEST_USER_INPUT_DESCRIPTION =
-  'Ask the customer ONE material workload, architecture, scope or commercial-pricing '
-  + 'question that only the customer can answer, and whose guess could materially change '
+  'Ask the customer material workload, architecture, scope or commercial-pricing '
+  + 'questions that only the customer can answer, and whose guess could materially change '
   + 'the AWS Pricing Calculator estimate.\n\n'
   + 'Before calling it, try to resolve the value from the workbook, its instructions, user '
   + 'messages, previous answers, or official Pricing Calculator MCP guidance where the '
@@ -113,8 +113,9 @@ const REQUEST_USER_INPUT_DESCRIPTION =
   + '"single". Ask at the broadest useful scope: a decision that applies to many resources '
   + 'is asked once with allowApplyToSimilarResources honoured, and a decision unique to one '
   + 'resource is scoped to that resource.\n\n'
-  + 'Call request_user_input for one material question at a time. Do not issue parallel '
-  + 'request_user_input calls.';
+  + 'When several independent material decisions are already clear after reading the workbook, '
+  + 'ask a compact batch of up to 5 request_user_input questions in the same pause. '
+  + 'If a question depends on a previous answer, ask it as a later follow-up.';
 
 const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
   type: 'object',

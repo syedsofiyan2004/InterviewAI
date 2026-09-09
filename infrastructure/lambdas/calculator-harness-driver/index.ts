@@ -254,8 +254,9 @@ export function readPendingToolUses(record: CalculationRecord): PendingToolUse[]
  * supply the customer's toolResult for the same toolUseId — never a bare
  * "The customer answered: ..." text message.
  *
- * The pause contract is exactly ONE request_user_input per pause and the frontend
- * answers that single question, so every paused tool use must have a customer answer.
+ * The pause contract may include a small batch of request_user_input calls when the agent
+ * has already identified several independent material decisions. The frontend answers the
+ * visible batch together, so every paused tool use must have a customer answer.
  * If one is ever missing, this throws rather than building an error toolResult that
  * tells Claude to "continue without it" — an unanswered MATERIAL customer fact must
  * never be silently dropped. The tool result body is the exact JSON
@@ -482,7 +483,7 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
   lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
-  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask the first unresolved material decision with request_user_input.');
+  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. If several independent decisions are already obvious, ask a compact batch of up to 5 questions in the same pause; ask dependent follow-ups later.');
   lines.push('For compute-heavy workbooks, the pricing plan is material unless explicitly stated. Ask whether to use Compute Savings Plans, EC2 Instance Savings Plans, On-Demand, Spot where appropriate, or another customer-specified plan, and include an Other / give your own input path.');
   lines.push('For ECS/Fargate/Lambda and other usage-based services, ask for missing material usage facts such as per-day vs per-month period, frequency, duration, utilization, prod/non-prod scope, vCPU/memory, task/request count, storage, traffic, and region when the workbook does not define them.');
   lines.push('Do not continue to pricing with guesses for material customer values.');
@@ -1065,27 +1066,12 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       agentQuestions.push(question);
     }
 
-    if (pausedToolUses.length > 1) {
-      // Exactly ONE request_user_input per pause — the answer UI renders one question.
-      // Parallel calls are a protocol error by the agent, never something to paper over
-      // by resuming the extras with an error toolResult that says "continue without it".
-      // Keep only the first material question and surface a diagnostic; the dropped calls
-      // are not replayed into the resumed history, so the agent simply asks again in a
-      // fresh pause if a fact is still needed.
-      const allIds = pausedToolUses.map((entry) => entry.toolUseId).join(', ');
+    if (pausedToolUses.length > 5) {
       streamErrors.push(
-        `request_user_input protocol error: ${pausedToolUses.length} parallel calls in one pause (${allIds}); `
-        + `keeping ${pausedToolUses[0].toolUseId} only. The agent must call request_user_input for one material question at a time.`,
+        `request_user_input batch contained ${pausedToolUses.length} questions; keeping the first 5 so the customer is not overloaded.`,
       );
-      console.log(JSON.stringify({
-        event: 'request_user_input_parallel_calls',
-        calculationId,
-        iteration,
-        sessionId,
-        toolUseIds: pausedToolUses.map((entry) => entry.toolUseId),
-      }));
-      pausedToolUses.length = 1;
-      agentQuestions.length = 1;
+      pausedToolUses.length = 5;
+      agentQuestions.length = 5;
     }
   }
   if (pausedToolUses.length) {
@@ -1282,21 +1268,14 @@ function assistantTextCustomerQuestion(text: string): AgentQuestion | undefined 
 
   const isPricingQuestion = /pricing model|pricing plan|savings plan|reserved instance|on-demand|spot|reservation|commitment|payment|term/i.test(cleaned);
   const optionMarker = [...cleaned.matchAll(/^\s*(?:\*\*)?Options(?:\*\*)?\s*:\s*$/gim)].pop();
-  const optionSource = optionMarker ? cleaned.slice(optionMarker.index! + optionMarker[0].length) : cleaned;
+  const optionSource = optionMarker ? cleaned.slice(optionMarker.index! + optionMarker[0].length) : (isPricingQuestion ? '' : cleaned);
   const options: AgentOption[] = [];
   const optionValues = new Set<string>();
-  for (const line of optionSource.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[*-]\s*)?(?:\*\*)?Option\s+[A-Za-z0-9]+\s*[—–:-]\s*(.+?)(?:\*\*)?\s*(?::|\s+[—–-]\s+)?(.*)$/i)
-      || line.match(/^\s*\d+[\).]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+[—–-]\s+(.*))?$/)
-      || line.match(/^\s*[-*]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+[—–-]\s+(.*))?$/);
-    if (!match) continue;
-    const label = match[1].replace(/\*\*/g, '').trim();
-    const description = match[2]?.replace(/\*\*/g, '').trim();
-    if (!label) continue;
-    if (isPricingQuestion && !/(savings plan|reserved|reservation|\bri\b|on-demand|spot|other)/i.test(`${label} ${description ?? ''}`)) {
-      continue;
-    }
-    const rawValue = `${label} ${description ?? ''}`.toLowerCase()
+  const addOption = (label: string, description?: string) => {
+    const cleanLabel = label.replace(/\*\*/g, '').trim();
+    const cleanDescription = description?.replace(/\*\*/g, '').trim();
+    if (!cleanLabel) return;
+    const rawValue = `${cleanLabel} ${cleanDescription ?? ''}`.toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .slice(0, 80) || `option_${options.length + 1}`;
@@ -1309,14 +1288,39 @@ function assistantTextCustomerQuestion(text: string): AgentQuestion | undefined 
     optionValues.add(value);
     options.push({
       value,
-      label,
-      ...(description ? { description } : {}),
+      label: cleanLabel,
+      ...(cleanDescription ? { description: cleanDescription } : {}),
     });
+  };
+  for (const line of optionSource.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[*-]\s*)?(?:\*\*)?Option\s+[A-Za-z0-9]+\s*(?:[\u2014\u2013:-]| - )\s*(.+?)(?:\*\*)?\s*(?::|\s+(?:[\u2014\u2013-])\s+)?(.*)$/i)
+      || line.match(/^\s*\d+[\).]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+(?:[\u2014\u2013-])\s+(.*))?$/)
+      || line.match(/^\s*[-*]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+(?:[\u2014\u2013-])\s+(.*))?$/);
+    if (!match) continue;
+    const label = match[1].replace(/\*\*/g, '').trim();
+    const description = match[2]?.replace(/\*\*/g, '').trim();
+    if (!label) continue;
+    if (isPricingQuestion && !/(savings plan|reserved|reservation|\bri\b|on-demand|spot|other)/i.test(`${label} ${description ?? ''}`)) {
+      continue;
+    }
+    addOption(label, description);
   }
 
-  const questionLine = [...cleaned.split(/\r?\n/)].reverse()
+  if (isPricingQuestion && options.length === 0) {
+    if (/compute savings plan/i.test(cleaned)) addOption('Compute Savings Plans');
+    if (/ec2 instance savings plan/i.test(cleaned)) addOption('EC2 Instance Savings Plans');
+    if (/reserved instance|\bri\b/i.test(cleaned)) addOption('Reserved Instances');
+    if (/on-demand/i.test(cleaned)) addOption('On-Demand');
+    if (/spot/i.test(cleaned)) addOption('Spot Instances');
+  }
+
+  const questionLines = [...cleaned.split(/\r?\n/)]
     .map((line) => line.replace(/\*\*/g, '').trim())
-    .find((line) => line.includes('?') && line.length <= 500);
+    .filter((line) => line.includes('?') && line.length <= 500);
+  const questionLine = isPricingQuestion
+    ? questionLines.find((line) => /pricing model|pricing plan|savings plan|reserved instance|on-demand|spot|reservation|commitment|payment|term/i.test(line))
+      ?? questionLines[0]
+    : questionLines[questionLines.length - 1];
 
   return {
     questionId: `agent-text-question-${Date.now().toString(36)}`,

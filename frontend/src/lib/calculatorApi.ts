@@ -567,12 +567,23 @@ export const calculatorApi = {
       // "multiple" question), possibly ending in their own "Other" free-text value.
       value: string | number | boolean | Array<string | number | boolean>;
       applyToSimilarResources?: boolean;
-    },
+    } | Array<{
+      questionId?: string;
+      resource?: string;
+      semanticField?: string;
+      value: string | number | boolean | Array<string | number | boolean>;
+      applyToSimilarResources?: boolean;
+    }>,
   ): Promise<{ calculation_id: string; status: CalculationStatus }> {
+    const body = typeof answer === 'string'
+      ? { answer }
+      : Array.isArray(answer)
+        ? { answers: answer }
+        : { answer, answers: [answer] };
     const res = await authFetch(`${API_URL}/calculator/${id}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(typeof answer === 'string' ? { answer } : { answer, answers: [answer] }),
+      body: JSON.stringify(body),
     });
     return handleResponse(res);
   },

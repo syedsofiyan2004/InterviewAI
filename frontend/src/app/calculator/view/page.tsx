@@ -115,27 +115,45 @@ function CalculationDetailContent() {
   const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
 
-  /** The pause contract is one question, so the active question is the first one. */
-  const activeQuestion = data?.agent_questions?.[0];
+  const activeQuestions = data?.agent_questions ?? [];
   const questionKey = (question: AgentQuestion | undefined, index = 0) =>
     question?.questionId || `${question?.resource || 'question'}-${index}`;
 
-  const canContinue = (): boolean => {
-    if (!activeQuestion) return true;
-    const key = questionKey(activeQuestion);
-    if (activeQuestion.type) {
-      if (activeQuestion.type === 'BOOLEAN') return (agentAnswers[key] ?? '') !== '';
-      return ((agentAnswers[key] ?? '').trim()) !== '';
+  const questionValue = (question: AgentQuestion, index = 0): string | number | boolean | Array<string | number | boolean> | null => {
+    const key = questionKey(question, index);
+    if (question.type) {
+      const raw = (agentAnswers[key] ?? '').trim();
+      if (!raw) return null;
+      return question.type === 'NUMBER' ? Number(raw)
+        : question.type === 'BOOLEAN' ? raw === 'true'
+          : raw;
     }
-    const isPicker = (activeQuestion.options?.length ?? 0) > 0 || !!activeQuestion.customInput?.enabled;
+
+    const isPicker = (question.options?.length ?? 0) > 0 || !!question.customInput?.enabled;
     if (isPicker) {
-      const picked = activeQuestion.selectionMode === 'multiple'
+      const picked = question.selectionMode === 'multiple'
         ? (agentOptions[key] ?? [])
         : agentAnswers[key] ? [agentAnswers[key]] : [];
       const custom = (agentCustom[key] ?? '').trim();
-      return picked.length > 0 || custom !== '';
+      const merged = custom ? [...picked, custom] : picked;
+      let value: string | number | boolean | Array<string | number | boolean> = question.selectionMode === 'multiple'
+        ? merged
+        : merged[0] ?? '';
+      if (typeof value === 'string' && value !== ''
+          && question.customInput?.inputType === 'number'
+          && Number.isFinite(Number(value))) {
+        value = Number(value);
+      }
+      return value === '' || (Array.isArray(value) && value.length === 0) ? null : value;
     }
-    return (agentAnswers[key] ?? '').trim() !== '';
+
+    const raw = (agentAnswers[key] ?? '').trim();
+    return raw || null;
+  };
+
+  const canContinue = (): boolean => {
+    if (!activeQuestions.length) return true;
+    return activeQuestions.every((question, index) => questionValue(question, index) !== null);
   };
   // See the list page: window.confirm puts the CloudFront hostname above the message,
   // which reads as a browser warning instead of the app asking.
@@ -157,50 +175,24 @@ function CalculationDetailContent() {
   };
 
   const answerAgent = async () => {
-    if (!id || !activeQuestion) return;
-    const key = questionKey(activeQuestion);
-    let value: string | number | boolean | Array<string | number | boolean>;
-
-    if (activeQuestion.type) {
-      const raw = (agentAnswers[key] ?? '').trim();
-      if (!raw) return;
-      value = activeQuestion.type === 'NUMBER' ? Number(raw)
-        : activeQuestion.type === 'BOOLEAN' ? raw === 'true'
-          : raw;
-    } else {
-      const isPicker = (activeQuestion.options?.length ?? 0) > 0 || !!activeQuestion.customInput?.enabled;
-      if (isPicker) {
-        const picked = activeQuestion.selectionMode === 'multiple'
-          ? (agentOptions[key] ?? [])
-          : agentAnswers[key] ? [agentAnswers[key]] : [];
-        const custom = (agentCustom[key] ?? '').trim();
-        const merged = custom ? [...picked, custom] : picked;
-        value = activeQuestion.selectionMode === 'multiple'
-          ? merged
-          : merged[0] ?? '';
-        // Coerce a number-styled "Other" value so the agent receives 24, not "24".
-        if (typeof value === 'string' && value !== ''
-            && activeQuestion.customInput?.inputType === 'number'
-            && Number.isFinite(Number(value))) {
-          value = Number(value);
-        }
-        if (value === '' || (Array.isArray(value) && value.length === 0)) return;
-      } else {
-        const raw = (agentAnswers[key] ?? '').trim();
-        if (!raw) return;
-        value = raw;
-      }
-    }
+    if (!id || !activeQuestions.length) return;
+    const answers = activeQuestions.map((question, index) => {
+      const key = questionKey(question, index);
+      const value = questionValue(question, index);
+      if (value === null) return null;
+      return {
+        questionId: question.questionId,
+        resource: question.resource,
+        semanticField: question.semanticField || question.field,
+        value,
+        applyToSimilarResources: !!applyToSimilar[key],
+      };
+    });
+    if (answers.some((answer) => answer === null)) return;
 
     setAnsweringAgent(true);
     try {
-      await calculatorApi.answerCalculationQuestion(id, {
-        questionId: activeQuestion.questionId,
-        resource: activeQuestion.resource,
-        semanticField: activeQuestion.semanticField || activeQuestion.field,
-        value,
-        applyToSimilarResources: !!applyToSimilar[key],
-      });
+      await calculatorApi.answerCalculationQuestion(id, answers.filter((answer): answer is NonNullable<typeof answer> => answer !== null));
       setAgentAnswers({});
       setAgentOptions({});
       setAgentCustom({});
@@ -297,8 +289,8 @@ function CalculationDetailContent() {
    *     optional inline "Other / give your own input" field, honoring selectionMode;
    *   - a bare question with neither: free text.
    */
-  const renderQuestionControl = (question: AgentQuestion): ReactNode => {
-    const key = questionKey(question);
+  const renderQuestionControl = (question: AgentQuestion, index = 0): ReactNode => {
+    const key = questionKey(question, index);
     const commonClass = 'mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent';
 
     if (question.type) {
@@ -469,11 +461,13 @@ function CalculationDetailContent() {
   // BUILDING and VALIDATING are sub-states of the execution run emitted by the
   // orchestrator since the architectural refactor; PROCESSING is the legacy alias.
   // CONFIRMED means the plan is locked and the worker is about to start.
-  const isProcessing = ['PROCESSING', 'BUILDING', 'VALIDATING', 'CONFIRMED'].includes(data?.status || '');
+  const isProcessing = ['ANALYZING', 'PROCESSING', 'BUILDING', 'VALIDATING', 'CONFIRMED'].includes(data?.status || '');
   const processingStage = data?.progress_stage ?? '';
   const processingLabel = data?.status === 'CONFIRMED'
     ? 'Preparing to build estimates'
-    : processingStage === 'saving' || data?.status === 'BUILDING'
+    : data?.status === 'ANALYZING' || processingStage === 'ANALYZING'
+      ? 'Reading and understanding the workbook'
+      : processingStage === 'saving' || data?.status === 'BUILDING'
       ? 'Building AWS Pricing Calculator estimates'
       : processingStage === 'validating' || data?.status === 'VALIDATING'
         ? 'Validating saved estimates'
@@ -577,8 +571,8 @@ function CalculationDetailContent() {
                           {[question.scope || question.resource, question.semanticField || question.field].filter(Boolean).join(' · ')}
                         </p>
                       )}
-                      {index === 0 && renderQuestionControl(question)}
-                      {index === 0 && question.allowApplyToSimilarResources && (
+                      {renderQuestionControl(question, index)}
+                      {question.allowApplyToSimilarResources && (
                         <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-text-secondary">
                           <input
                             type="checkbox"
@@ -598,7 +592,7 @@ function CalculationDetailContent() {
                     <button
                       type="button"
                       onClick={() => void answerAgent()}
-                      disabled={answeringAgent || (!!activeQuestion && !canContinue())}
+                      disabled={answeringAgent || !canContinue()}
                       className="btn-primary mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
                     >
                       {answeringAgent && <Loader2 size={14} className="animate-spin" />}
