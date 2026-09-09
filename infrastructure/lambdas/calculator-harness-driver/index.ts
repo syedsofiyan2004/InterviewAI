@@ -481,6 +481,11 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   }
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
+  lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
+  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask the first unresolved material decision with request_user_input.');
+  lines.push('For compute-heavy workbooks, the pricing plan is material unless explicitly stated. Ask whether to use Compute Savings Plans, EC2 Instance Savings Plans, On-Demand, Spot where appropriate, or another customer-specified plan, and include an Other / give your own input path.');
+  lines.push('For ECS/Fargate/Lambda and other usage-based services, ask for missing material usage facts such as per-day vs per-month period, frequency, duration, utilization, prod/non-prod scope, vCPU/memory, task/request count, storage, traffic, and region when the workbook does not define them.');
+  lines.push('Do not continue to pricing with guesses for material customer values.');
   lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
   lines.push('');
@@ -1114,6 +1119,23 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
 
   const result = parseAgentResult(assistantText);
   if (!result) {
+    const customerQuestion = assistantTextCustomerQuestion(assistantText);
+    if (customerQuestion) {
+      await patch(calculationId, {
+        status: 'WAITING_FOR_INPUT',
+        progress_stage: 'WAITING_FOR_INPUT',
+        progress_message: REQUEST_USER_INPUT_MESSAGE,
+        agent_session_id: sessionId,
+        agent_questions: [customerQuestion],
+        question_count: 1,
+        agent_last_activity_at: Date.now(),
+        tool_call_count: toolCalls.length,
+        tool_call_counts: toolCounts,
+        agent_iterations: stepNumber,
+        mcp_tools_used: mcpToolsUsed,
+      });
+      return { calculationId, sessionId, iteration: iteration + 1, done: true, status: 'WAITING_FOR_INPUT' };
+    }
     // The agent has not produced a terminal object yet. Step Functions will re-enter
     // this function on the same session, which is how AgentCore continues a run.
     await patch(calculationId, {
@@ -1245,6 +1267,71 @@ function failedResultCustomerQuestion(result: AgentFailed): AgentQuestion | unde
     title: 'Workload details needed',
     question: `The calculator agent needs these details before it can produce an accurate estimate:\n\n${message}\n\nPlease provide the missing value(s).`,
     reason: 'The agent reported that the missing value(s) materially affect the AWS estimate and cannot be safely defaulted.',
+    allowApplyToSimilarResources: true,
+  };
+}
+
+function assistantTextCustomerQuestion(text: string): AgentQuestion | undefined {
+  const cleaned = text.trim();
+  if (!cleaned || !cleaned.includes('?')) return undefined;
+  const lower = cleaned.toLowerCase();
+  const asksForCustomerDecision =
+    /(before i build|before proceeding|need to confirm|need your input|which|what|please provide)/i.test(cleaned)
+    && /(pricing model|savings plan|reserved instance|on-demand|spot|reservation|commitment|payment|term|region|instance class|multi-az|single-az|availability|duration|frequency|utilization|storage|traffic|count)/i.test(cleaned);
+  if (!asksForCustomerDecision) return undefined;
+
+  const isPricingQuestion = /pricing model|pricing plan|savings plan|reserved instance|on-demand|spot|reservation|commitment|payment|term/i.test(cleaned);
+  const optionMarker = [...cleaned.matchAll(/^\s*(?:\*\*)?Options(?:\*\*)?\s*:\s*$/gim)].pop();
+  const optionSource = optionMarker ? cleaned.slice(optionMarker.index! + optionMarker[0].length) : cleaned;
+  const options: AgentOption[] = [];
+  const optionValues = new Set<string>();
+  for (const line of optionSource.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[*-]\s*)?(?:\*\*)?Option\s+[A-Za-z0-9]+\s*[—–:-]\s*(.+?)(?:\*\*)?\s*(?::|\s+[—–-]\s+)?(.*)$/i)
+      || line.match(/^\s*\d+[\).]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+[—–-]\s+(.*))?$/)
+      || line.match(/^\s*[-*]\s+(?:\*\*)?(.+?)(?:\*\*)?\s*(?:\s+[—–-]\s+(.*))?$/);
+    if (!match) continue;
+    const label = match[1].replace(/\*\*/g, '').trim();
+    const description = match[2]?.replace(/\*\*/g, '').trim();
+    if (!label) continue;
+    if (isPricingQuestion && !/(savings plan|reserved|reservation|\bri\b|on-demand|spot|other)/i.test(`${label} ${description ?? ''}`)) {
+      continue;
+    }
+    const rawValue = `${label} ${description ?? ''}`.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 80) || `option_${options.length + 1}`;
+    let value = rawValue;
+    let suffix = 2;
+    while (optionValues.has(value)) {
+      value = `${rawValue}_${suffix}`.slice(0, 96);
+      suffix += 1;
+    }
+    optionValues.add(value);
+    options.push({
+      value,
+      label,
+      ...(description ? { description } : {}),
+    });
+  }
+
+  const questionLine = [...cleaned.split(/\r?\n/)].reverse()
+    .map((line) => line.replace(/\*\*/g, '').trim())
+    .find((line) => line.includes('?') && line.length <= 500);
+
+  return {
+    questionId: `agent-text-question-${Date.now().toString(36)}`,
+    title: /pricing model|savings plan|reserved instance|on-demand|spot/i.test(cleaned)
+      ? 'Choose pricing plan'
+      : 'Workload details needed',
+    question: questionLine || cleaned.slice(0, 1200),
+    reason: 'The calculator agent identified this as a customer decision that should be answered before the estimate is built.',
+    ...(options.length ? { options: options.slice(0, 6), selectionMode: 'single' as const } : { type: 'TEXT' as const }),
+    customInput: {
+      enabled: true,
+      label: 'Other / give your own input',
+      inputType: 'text',
+      placeholder: 'Describe the plan or value to use',
+    },
     allowApplyToSimilarResources: true,
   };
 }
