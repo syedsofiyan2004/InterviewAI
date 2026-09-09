@@ -655,6 +655,10 @@ export class CalculatorAgentCore extends Construct {
       // status rather than being killed mid-write.
       timeout: cdk.Duration.minutes(10),
       memorySize: 1536,
+      // Serialize calculator jobs globally. A shared AgentCore runtime session
+      // cannot safely be driven by concurrent pumps, and this caps spend if a
+      // client retries the start request.
+      reservedConcurrentExecutions: 1,
       environment: {
         CALCULATOR_TABLE_NAME: props.calculatorTable.tableName,
         BUCKET_NAME: props.filesBucket.bucketName,
@@ -810,6 +814,8 @@ export class CalculatorAgentCore extends Construct {
       runtime: lambda.Runtime.NODEJS_20_X,
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
+      // Rollback-only worker; keep it disabled so it cannot race the Harness path.
+      reservedConcurrentExecutions: 0,
       environment: {
         CALCULATOR_TABLE_NAME: props.calculatorTable.tableName,
         CALCULATOR_MCP_PROXY_LAMBDA_ARN: this.mcpProxyLambda.functionArn,

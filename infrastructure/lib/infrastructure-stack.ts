@@ -507,6 +507,8 @@ export class IepStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
+      // Legacy rollback path; production requests use AgentCore Harness.
+      reservedConcurrentExecutions: 0,
       environment: {
         CALCULATOR_TABLE_NAME: calculatorTable.tableName,
         CALCULATOR_SIDECAR_FUNCTION_NAME: calculatorSidecar.functionName,
@@ -863,6 +865,7 @@ export class IepStack extends cdk.Stack {
     singleIntelligenceInterview.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('resume-upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('confirm-resume').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    singleIntelligenceInterview.addResource('resume').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('generate-questions').addMethod('POST', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('question-topics').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     singleIntelligenceInterview.addResource('case-interview').addMethod('POST', apiHandlerIntegration, authMethodOptions);
@@ -1047,6 +1050,18 @@ export class IepStack extends cdk.Stack {
     const adminQuestionBankQuestion = adminQuestionBankQuestions.addResource('{questionId}');
     adminQuestionBankQuestion.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
     adminQuestionBankQuestion.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
+
+    // Pre-Sales / SOW Peer Review. Kept separate from calculator routes so the
+    // existing estimate workflow and its contracts remain unchanged.
+    const sowPeerReview = api.root.addResource('sow-peer-review');
+    sowPeerReview.addResource('config').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    sowPeerReview.addResource('upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    sowPeerReview.addResource('review').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    const adminSowPeerReview = admin.addResource('sow-peer-review');
+    adminSowPeerReview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    adminSowPeerReview.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
+    adminSowPeerReview.addResource('context-upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
+    adminSowPeerReview.addResource('context-confirm').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const adminMembers = admin.addResource('members');
     adminMembers.addMethod('GET', apiHandlerIntegration, authMethodOptions);
