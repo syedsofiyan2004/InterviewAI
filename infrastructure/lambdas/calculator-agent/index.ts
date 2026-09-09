@@ -28,9 +28,9 @@ const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const MCP_PROXY_LAMBDA_ARN = process.env.CALCULATOR_MCP_PROXY_LAMBDA_ARN!;
 const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID
-  || process.env.BEDROCK_SONNET_46_PROFILE_ARN
-  || 'global.anthropic.claude-sonnet-4-6';
-const MAX_ITERATIONS = Number(process.env.CALCULATOR_AGENT_MAX_ITERATIONS) || 40;
+  || process.env.CALCULATOR_FAST_MODEL_ID
+  || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
+const MAX_ITERATIONS = Number(process.env.CALCULATOR_AGENT_MAX_ITERATIONS) || 12;
 const EXECUTION_MODE = 'agentcore-harness';
 
 /**

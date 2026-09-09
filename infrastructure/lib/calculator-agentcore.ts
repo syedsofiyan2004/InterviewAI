@@ -92,7 +92,7 @@ export class CalculatorAgentCore extends Construct {
     const getUniqueName = (resource: string) =>
       `iep-${props.envName}-${resource}-${props.account}-${props.region}`;
 
-    const agentModelId = props.agentModelId || 'global.anthropic.claude-sonnet-4-6';
+    const agentModelId = props.agentModelId || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 
     // ─── IAM execution role for the AgentCore Runtime ──────────────────────────
 
@@ -581,8 +581,8 @@ export class CalculatorAgentCore extends Construct {
         ModelId: agentModelId,
         SystemPrompt: harnessSystemPrompt,
         GatewayArn: this.gateway.attrGatewayArn,
-        MaxIterations: String(props.maxIterations ?? 60),
-        MaxTokens: '8192',
+        MaxIterations: String(props.maxIterations ?? 12),
+        MaxTokens: '4096',
         // Expose the official AWS Pricing Calculator MCP surface unchanged, plus the
         // one MIMO-owned workbook evidence tool. Harness allowedTools uses @server/tool patterns;
         // calculator_mcp is the Harness tool name and the Gateway supplies the

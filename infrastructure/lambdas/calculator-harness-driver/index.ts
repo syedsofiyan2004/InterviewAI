@@ -45,7 +45,7 @@ import { CalculationResultSchema, type CalculationRecord } from '../../schema/ca
 const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const HARNESS_ARN = process.env.CALCULATOR_HARNESS_ARN!;
-const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-sonnet-4-6';
+const MODEL_ID = process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const GATEWAY_IDENTIFIER = process.env.CALCULATOR_GATEWAY_ARN || '';
 const MCP_RUNTIME_IDENTIFIER = process.env.CALCULATOR_MCP_RUNTIME_ARN || '';
 const BROWSER_VALIDATOR_FUNCTION_NAME = process.env.CALCULATOR_BROWSER_VALIDATOR_FUNCTION_NAME || '';

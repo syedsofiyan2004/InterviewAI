@@ -31,7 +31,7 @@ export function chooseTier(task: SemanticTaskKind, evidence: RoutingEvidence): C
 }
 
 const DEFAULT_FAST = 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
-const DEFAULT_REASONING = 'global.anthropic.claude-sonnet-4-6';
+const DEFAULT_REASONING = 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 export function calculatorModelId(tier: Exclude<CalculatorModelTier, 'CODE'>): string {
   return tier === 'HAIKU_4_5'
@@ -45,4 +45,3 @@ export function calculatorChatTier(message: string): Exclude<CalculatorModelTier
     || (text.match(/\b(ec2|rds|aurora|fargate|opensearch|redshift|lambda|s3|cloudfront)\b/g)?.length || 0) > 1;
   return complex ? 'SONNET_4_6' : 'HAIKU_4_5';
 }
-

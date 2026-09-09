@@ -574,8 +574,8 @@ export class IepStack extends cdk.Stack {
       filesBucket,
       calculatorTable,
       browserValidator: calculatorBrowserValidator,
-      agentModelId: process.env.BEDROCK_SONNET_46_PROFILE_ARN || 'global.anthropic.claude-sonnet-4-6',
-      maxIterations: 40,
+      agentModelId: process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      maxIterations: 12,
     });
 
     // ─── Production path: the API handler starts a Step Functions execution ────
