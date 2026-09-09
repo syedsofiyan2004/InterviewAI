@@ -114,6 +114,7 @@ function CalculationDetailContent() {
   const [agentCustom, setAgentCustom] = useState<Record<string, string>>({});
   const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
+  const [pollNonce, setPollNonce] = useState(0);
 
   // Present one decision at a time so each answer resumes the same agent session
   // unambiguously, even if a model emitted a compact batch.
@@ -201,6 +202,10 @@ function CalculationDetailContent() {
       setAgentCustom({});
       setApplyToSimilar({});
       await fetchResult();
+      // The previous poll loop intentionally stopped at WAITING_FOR_INPUT. Restart
+      // it immediately after an answer so the next interruption appears without a
+      // page revisit.
+      setPollNonce((value) => value + 1);
     } catch (err: unknown) {
       setError(errorMessage(err, "Couldn't continue the estimate with that answer."));
     } finally {
@@ -281,7 +286,7 @@ function CalculationDetailContent() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [id, fetchResult]);
+  }, [id, fetchResult, pollNonce]);
 
   /**
    * The interactive control for the ACTIVE question (the single question a pause asks).

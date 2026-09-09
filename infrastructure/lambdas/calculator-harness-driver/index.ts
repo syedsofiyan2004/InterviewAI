@@ -486,6 +486,7 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. Ask exactly one question per pause; after the customer answers, continue the same runtime session and ask the next independent decision if needed.');
   lines.push('For compute-heavy workbooks, the pricing plan is material unless explicitly stated. Ask whether to use Compute Savings Plans, EC2 Instance Savings Plans, On-Demand, Spot where appropriate, or another customer-specified plan, and include an Other / give your own input path.');
   lines.push('For ECS/Fargate/Lambda and other usage-based services, ask for missing material usage facts such as per-day vs per-month period, frequency, duration, utilization, prod/non-prod scope, vCPU/memory, task/request count, storage, traffic, and region when the workbook does not define them.');
+  lines.push('For EBS, RDS/Aurora, and other storage, ask before pricing when size, storage type, IOPS/throughput, retention, snapshot policy, or availability is missing. Do not use minimum-size, gp3, full-month, or other storage defaults unless the customer explicitly authorizes that assumption.');
   lines.push('Do not continue to pricing with guesses for material customer values.');
   lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
