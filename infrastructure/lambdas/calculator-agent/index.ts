@@ -153,7 +153,9 @@ async function runAgent(input: AgentCalculatorInput): Promise<AgentCalculatorRes
       modelId: MODEL_ID,
       contentType: 'application/json',
       accept: 'application/json',
-      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 8192, system: SYSTEM_PROMPT, tools: CALCULATOR_TOOLS, messages }),
+      // Rollback-only path: retain a hard output bound so an accidental
+      // re-enable cannot recreate the previous high-token loop.
+      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT, tools: CALCULATOR_TOOLS, messages }),
     }));
     const payload = JSON.parse(new TextDecoder().decode(response.body));
     const stopReason: string = payload.stop_reason;

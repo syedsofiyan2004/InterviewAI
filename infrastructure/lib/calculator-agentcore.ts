@@ -815,7 +815,10 @@ export class CalculatorAgentCore extends Construct {
         CALCULATOR_MCP_PROXY_LAMBDA_ARN: this.mcpProxyLambda.functionArn,
         CALCULATOR_GATEWAY_ARN: this.gateway.attrGatewayArn,
         CALCULATOR_AGENT_MODEL_ID: agentModelId,
-        CALCULATOR_AGENT_MAX_ITERATIONS: String(props.maxIterations ?? 40),
+        // Keep the rollback Lambda bounded by the same cap as the production
+        // Harness.  It is disabled in the live path, but a rollback must never
+        // silently restore the old 40-turn spend ceiling.
+        CALCULATOR_AGENT_MAX_ITERATIONS: String(props.maxIterations ?? 12),
         BUCKET_NAME: props.filesBucket.bucketName,
         // Legacy rollback mode only — see the file header. Named for what it is
         // rather than for what it was mislabelled as.
