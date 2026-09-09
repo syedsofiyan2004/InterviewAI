@@ -114,7 +114,7 @@ const REQUEST_USER_INPUT_DESCRIPTION =
   + 'is asked once with allowApplyToSimilarResources honoured, and a decision unique to one '
   + 'resource is scoped to that resource.\n\n'
   + 'When several independent material decisions are already clear after reading the workbook, '
-  + 'ask a compact batch of up to 5 request_user_input questions in the same pause. '
+  + 'ask exactly one request_user_input question per pause so the customer can answer decisions in sequence. '
   + 'If a question depends on a previous answer, ask it as a later follow-up.';
 
 const REQUEST_USER_INPUT_SCHEMA: DocumentType = {

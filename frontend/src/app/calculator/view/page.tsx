@@ -115,7 +115,9 @@ function CalculationDetailContent() {
   const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
 
-  const activeQuestions = data?.agent_questions ?? [];
+  // Present one decision at a time so each answer resumes the same agent session
+  // unambiguously, even if a model emitted a compact batch.
+  const activeQuestions = (data?.agent_questions ?? []).slice(0, 1);
   const questionKey = (question: AgentQuestion | undefined, index = 0) =>
     question?.questionId || `${question?.resource || 'question'}-${index}`;
 
@@ -135,7 +137,8 @@ function CalculationDetailContent() {
         ? (agentOptions[key] ?? [])
         : agentAnswers[key] ? [agentAnswers[key]] : [];
       const custom = (agentCustom[key] ?? '').trim();
-      const merged = custom ? [...picked, custom] : picked;
+      // "Other" is an alternative to the suggested choices.
+      const merged = custom ? [custom] : picked;
       let value: string | number | boolean | Array<string | number | boolean> = question.selectionMode === 'multiple'
         ? merged
         : merged[0] ?? '';
@@ -380,7 +383,10 @@ function CalculationDetailContent() {
                     name={`question-${key}`}
                     value={option.value}
                     checked={agentAnswers[key] === option.value}
-                    onChange={(event) => setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }))}
+                    onChange={(event) => {
+                      setAgentAnswers((answers) => ({ ...answers, [key]: event.target.value }));
+                      setAgentCustom((current) => ({ ...current, [key]: '' }));
+                    }}
                     className="mt-0.5 h-4 w-4 border-border text-accent"
                   />
                   <span className="min-w-0">
@@ -400,7 +406,10 @@ function CalculationDetailContent() {
                 id={`custom-${key}`}
                 type={question.customInput?.inputType === 'number' ? 'number' : 'text'}
                 value={agentCustom[key] ?? ''}
-                onChange={(event) => setAgentCustom((current) => ({ ...current, [key]: event.target.value }))}
+                onChange={(event) => {
+                  setAgentCustom((current) => ({ ...current, [key]: event.target.value }));
+                  if (event.target.value.trim()) setAgentAnswers((answers) => ({ ...answers, [key]: '' }));
+                }}
                 placeholder={question.customInput?.placeholder
                   || (question.customInput?.inputType === 'number' && question.customInput?.unit
                     ? `Enter value in ${question.customInput.unit}`
@@ -601,9 +610,7 @@ function CalculationDetailContent() {
                   </div>
                 </div>
               )}
-              <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="mt-3 inline-flex text-sm font-semibold text-accent hover:underline">
-                Continue review
-              </Link>
+              <p className="mt-3 text-xs text-text-muted">Answer this decision to continue the same agent session.</p>
             </div>
           </div>
         </div>
@@ -625,9 +632,7 @@ function CalculationDetailContent() {
                   {result.validationErrors.map((message, index) => (
                     <div key={index} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
                       <span className="text-sm leading-6 text-text-secondary">{message}</span>
-                      <Link href={`/calculator/new?review=${encodeURIComponent(id)}`} className="btn-secondary px-3 py-1.5 text-xs font-semibold">
-                        Review
-                      </Link>
+                      <a href="#warnings" className="btn-secondary px-3 py-1.5 text-xs font-semibold">Review details</a>
                     </div>
                   ))}
                 </div>
@@ -1090,7 +1095,7 @@ function CalculationDetailContent() {
           )}
 
           {result.warnings.length > 0 && (
-            <div className="card border-warning/30 bg-warning/5 p-6">
+            <div id="warnings" className="card border-warning/30 bg-warning/5 p-6">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={16} className="text-warning" />
                 <h2 className="text-lg font-semibold text-text-primary">Warnings</h2>

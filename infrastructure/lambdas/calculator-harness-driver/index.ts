@@ -483,7 +483,7 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
   lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
-  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. If several independent decisions are already obvious, ask a compact batch of up to 5 questions in the same pause; ask dependent follow-ups later.');
+  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. Ask exactly one question per pause; after the customer answers, continue the same runtime session and ask the next independent decision if needed.');
   lines.push('For compute-heavy workbooks, the pricing plan is material unless explicitly stated. Ask whether to use Compute Savings Plans, EC2 Instance Savings Plans, On-Demand, Spot where appropriate, or another customer-specified plan, and include an Other / give your own input path.');
   lines.push('For ECS/Fargate/Lambda and other usage-based services, ask for missing material usage facts such as per-day vs per-month period, frequency, duration, utilization, prod/non-prod scope, vCPU/memory, task/request count, storage, traffic, and region when the workbook does not define them.');
   lines.push('Do not continue to pricing with guesses for material customer values.');
@@ -800,6 +800,9 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
   }
 
   const pendingToolUses = readPendingToolUses(record);
+  // Keep interruptions sequential. A model can emit several input tools in one
+  // response; the customer resolves the first, then the same session continues.
+  if (pendingToolUses.length > 1) pendingToolUses.splice(1);
   // The pause contract is exactly ONE request_user_input per pause — the answer UI
   // renders a single question. Only that single-pending case can be resumed by replaying
   // the original assistant toolUse and supplying the customer's toolResult.
@@ -1066,12 +1069,12 @@ export const handler = async (event: DriverStepInput): Promise<DriverStepOutput>
       agentQuestions.push(question);
     }
 
-    if (pausedToolUses.length > 5) {
+    if (pausedToolUses.length > 1) {
       streamErrors.push(
-        `request_user_input batch contained ${pausedToolUses.length} questions; keeping the first 5 so the customer is not overloaded.`,
+        `request_user_input batch contained ${pausedToolUses.length} questions; keeping the first so decisions are answered one at a time.`,
       );
-      pausedToolUses.length = 5;
-      agentQuestions.length = 5;
+      pausedToolUses.length = 1;
+      agentQuestions.length = 1;
     }
   }
   if (pausedToolUses.length) {
