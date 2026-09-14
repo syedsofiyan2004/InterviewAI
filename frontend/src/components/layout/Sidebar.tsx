@@ -8,7 +8,6 @@ import {
   CalendarDays,
   Calculator,
   FileCheck,
-  FileSpreadsheet,
   FolderPlus,
   Home,
   LayoutDashboard,
@@ -72,7 +71,6 @@ const BASE_SECTIONS: NavSection[] = [
     name: 'Pre-Sales Tools',
     items: [
       { name: 'AWS Cost Calculator', href: '/calculator', icon: Calculator },
-      { name: 'Excel Converter', href: '/calculator/convert', icon: FileSpreadsheet },
       { name: 'SOW Peer Review', href: '/sow-peer-review', icon: FileCheck },
     ],
   },

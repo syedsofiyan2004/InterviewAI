@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   FolderKanban,
+  FileSpreadsheet,
   Loader2,
   Plus,
   Trash2,
@@ -145,13 +146,16 @@ export default function CalculatorPage() {
             {stats.total === 1 ? '' : 's'} / {stats.completed} priced / {stats.processing} in progress
           </p>
         </div>
-        <Link
-          href="/calculator/project/new"
-          className="btn-primary inline-flex shrink-0 items-center gap-2 px-4 py-2.5 text-sm font-semibold"
-        >
-          <Plus size={16} />
-          New Project
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/calculator/convert" className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+            <FileSpreadsheet size={16} />
+            Format an Excel workbook
+          </Link>
+          <Link href="/calculator/project/new" className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+            <Plus size={16} />
+            New Project
+          </Link>
+        </div>
       </div>
 
       {error && (
