@@ -19,6 +19,11 @@ import { generateCalculatorDocxReport, type CalculatorDocxOptions } from '../sha
 import { estimateProgress } from '../shared/progress-eta';
 import { calculationResultKey, loadFullCalculationResult } from '../shared/calculator-result-storage';
 import { buildWorkbookSemanticArtifacts } from '../shared/workbook-semantic-model';
+import { readWorkbookDocument } from '../shared/workbook';
+import {
+  generatePricingIntakeWorkbook,
+  type PricingIntakeSummary,
+} from '../shared/calculator-pricing-intake';
 import { analyseWorkbook } from './calculator-workbook';
 import {
   EXECUTION_MODE,
@@ -43,7 +48,6 @@ import {
 import {
   CreateCalculationSchema,
   CreateCalculationProjectSchema,
-  DEFAULT_ENVIRONMENT_HOURS,
   type CalculationProjectSummary,
   type CalculationRecord,
   type CalculationResource,
@@ -314,7 +318,7 @@ function countUnresolvedCritical(plan: { unresolved?: Array<{ impact: string; re
   return (plan?.unresolved || []).filter((q) => q.impact === 'high' && !q.resolved).length;
 }
 
-/** Submitted hours, cleaned; falls back to the documented defaults. */
+/** Submitted hours, cleaned. Blank means the workbook/standardizer must supply them. */
 function resolveEnvironmentHours(input: EnvironmentHours[] | undefined): EnvironmentHours[] {
   const cleaned = (input || [])
     .map((entry) => ({
@@ -322,7 +326,7 @@ function resolveEnvironmentHours(input: EnvironmentHours[] | undefined): Environ
       hoursPerDay: Math.min(24, Math.max(1, Math.round(Number(entry?.hoursPerDay)))),
     }))
     .filter((entry) => entry.name && Number.isFinite(entry.hoursPerDay));
-  return cleaned.length ? cleaned : DEFAULT_ENVIRONMENT_HOURS;
+  return cleaned;
 }
 
 async function createCalculationInternal(
@@ -382,6 +386,9 @@ async function createCalculationInternal(
   let workbookSemanticModelS3Key: string | undefined;
   let scenarioManifestS3Key: string | undefined;
   let scenarioRequirementsS3Key: string | undefined;
+  let pricingIntakeWorkbookS3Key: string | undefined;
+  let pricingIntakeWorkbookIrS3Key: string | undefined;
+  let pricingIntake: PricingIntakeSummary | undefined;
 
   if (input.input_s3_key) {
     // The key is built server-side in getCalculationUploadUrl and namespaced per
@@ -436,11 +443,13 @@ async function createCalculationInternal(
     }
 
     if (!resources.length) {
-      return errorResponse(
-        400,
-        'VALIDATION_ERROR',
-        'No resource rows were found in that file. Download the template to see the expected columns.',
-      );
+      // An unfamiliar workbook is still valid input. Return an empty prepared intake
+      // instead of rejecting it: the customer can add only the important billable rows
+      // to the standard sheet while the original workbook remains preserved as evidence.
+      inputWarnings = [
+        'No billable resource rows could be identified automatically. Add the material workloads to the prepared Pricing Intake sheet.',
+        ...inputWarnings,
+      ].slice(0, MAX_INPUT_WARNINGS);
     }
 
     resourceCount = resources.length;
@@ -498,12 +507,52 @@ async function createCalculationInternal(
       console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
     }
   }
+  if (input.input_s3_key) {
+    try {
+      const intakeArtifact = await generatePricingIntakeWorkbook({
+        resources: planResources.length ? planResources : resources,
+        workbook,
+        plan: planV2,
+        sourceFileName: inputFileName,
+        defaultRegion: input.region,
+      });
+      pricingIntake = intakeArtifact.summary;
+      // The prepared workbook is the only technical-input gate for uploaded files.
+      // Keep the old review-plan code for rollback, but remove its generated questions
+      // from this production path so confirmPlan cannot reintroduce the questionnaire.
+      planV2 = {
+        ...planV2,
+        status: pricingIntake.status === 'READY' ? 'READY' : 'NEEDS_INPUT',
+        unresolved: [],
+      };
+      pricingIntakeWorkbookS3Key = `users/${userId}/calculator/${calculationId}/pricing-intake-v2.xlsx`;
+      pricingIntakeWorkbookIrS3Key = `users/${userId}/calculator/${calculationId}/pricing-intake-v2-ir.json`;
+      const intakeDocument = await readWorkbookDocument(intakeArtifact.workbook, 'pricing-intake-v2.xlsx');
+      await Promise.all([
+        saveFileContent(
+          BUCKET_NAME,
+          pricingIntakeWorkbookS3Key,
+          intakeArtifact.workbook,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ),
+        saveFileContent(
+          BUCKET_NAME,
+          pricingIntakeWorkbookIrS3Key,
+          JSON.stringify(intakeDocument.ir),
+          'application/json',
+        ),
+      ]);
+    } catch (error) {
+      console.error('[createCalculation] could not generate pricing intake workbook:', error);
+      return errorResponse(500, 'INTERNAL_ERROR', 'The workbook was read but its standardized pricing intake could not be generated. Please try again.');
+    }
+  }
   const unresolvedCriticalCount = countUnresolvedCritical(planV2);
   // Production AgentCore mode starts immediately. MIMO may keep its legacy review plan
   // for rollback/analyze flows, but it must not turn MIMO-generated questions into the
   // active pricing decision path. Claude decides whether a material customer fact is
   // missing and returns NEEDS_INPUT from the same AgentCore session.
-  const shouldStartWorker = startWorker;
+  const shouldStartWorker = startWorker && pricingIntake?.status !== 'NEEDS_INPUT';
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
@@ -520,6 +569,9 @@ async function createCalculationInternal(
     ...(workbook ? { workbook } : {}),
     ...(workbookIrS3Key ? { workbook_ir_s3_key: workbookIrS3Key } : {}),
     ...(workbookHash ? { workbook_hash: workbookHash } : {}),
+    ...(pricingIntakeWorkbookS3Key ? { pricing_intake_workbook_s3_key: pricingIntakeWorkbookS3Key } : {}),
+    ...(pricingIntakeWorkbookIrS3Key ? { pricing_intake_workbook_ir_s3_key: pricingIntakeWorkbookIrS3Key } : {}),
+    ...(pricingIntake ? { pricing_intake: pricingIntake } : {}),
     ...(canonicalModelS3Key ? { canonical_model_s3_key: canonicalModelS3Key } : {}),
     ...(workbookSemanticModelS3Key ? { workbook_semantic_model_s3_key: workbookSemanticModelS3Key } : {}),
     ...(scenarioManifestS3Key ? { scenario_manifest_s3_key: scenarioManifestS3Key } : {}),
@@ -554,6 +606,7 @@ async function createCalculationInternal(
       calculation_id: record.calculation_id,
       status: record.status,
       plan: planV2,
+      pricing_intake: pricingIntake,
     });
   }
 
@@ -569,7 +622,7 @@ async function createCalculationInternal(
       const evidence = await persistWorkbookEvidence({
         owner: userId,
         calculationId: record.calculation_id,
-        workbookIrS3Key: workbookIrS3Key,
+        workbookIrS3Key: pricingIntakeWorkbookIrS3Key || workbookIrS3Key,
         userInstructions: [
           ...(prompt ? [prompt] : []),
           ...(input.region ? [`Primary region: ${input.region}`] : []),
@@ -601,7 +654,7 @@ async function createCalculationInternal(
         },
       }));
 
-      return createdResponse({ calculation_id: record.calculation_id, status: 'ANALYZING' });
+      return createdResponse({ calculation_id: record.calculation_id, status: 'ANALYZING', pricing_intake: pricingIntake });
     } catch (error) {
       console.error(JSON.stringify({
         event: 'calculator_create_dispatch_failed',
@@ -647,7 +700,7 @@ async function createCalculationInternal(
     return errorResponse(502, 'INTERNAL_ERROR', 'Could not start the estimate worker. Please retry.');
   }
 
-  return createdResponse({ calculation_id: record.calculation_id, status: record.status });
+  return createdResponse({ calculation_id: record.calculation_id, status: record.status, pricing_intake: pricingIntake });
 }
 
 /** Legacy immediate-build endpoint retained for existing callers. */
@@ -845,7 +898,11 @@ export async function getCalculationPlan(
   const { item, error } = await loadOwned(id, userId);
   if (error) return error;
   if (!item!.plan_v2) return errorResponse(409, 'CONFLICT', 'This estimate predates the review plan workflow.');
-  return successResponse({ calculation_id: item!.calculation_id, plan: item!.plan_v2 });
+  return successResponse({
+    calculation_id: item!.calculation_id,
+    plan: item!.plan_v2,
+    pricing_intake: item!.pricing_intake,
+  });
 }
 
 const REVIEW_CATALOG_SERVICES: Record<string, string> = {
@@ -978,6 +1035,13 @@ export async function confirmCalculationPlan(
   const { item, error } = await loadOwned(id, userId);
   if (error) return error;
   if (!item!.plan_v2) return errorResponse(409, 'CONFLICT', 'This estimate has no review plan.');
+  if (item!.pricing_intake?.status === 'NEEDS_INPUT') {
+    return errorResponse(
+      409,
+      'PRICING_INTAKE_NEEDS_INPUT',
+      'Fill the yellow required cells in the prepared pricing workbook and upload it again before building the estimate.',
+    );
+  }
   let revisionId: string;
   try {
     revisionId = ConfirmPlanSchema.parse(JSON.parse(event.body || '{}')).revision_id;
@@ -1029,6 +1093,13 @@ export async function runCalculationPlan(
   if (!plan || plan.status !== 'CONFIRMED' || item!.confirmed_plan_revision_id !== plan.currentRevisionId) {
     return errorResponse(409, 'CONFLICT', 'Confirm the current plan revision before building estimates.');
   }
+  if (item!.pricing_intake?.status === 'NEEDS_INPUT') {
+    return errorResponse(
+      409,
+      'PRICING_INTAKE_NEEDS_INPUT',
+      'The prepared pricing workbook still has material cells to complete.',
+    );
+  }
   // ANALYZING belongs here too: it is the first state an AgentCore execution enters.
   if (['PROCESSING', 'ANALYZING', 'BUILDING', 'VALIDATING'].includes(item!.status)) {
     return errorResponse(409, 'CONFLICT', 'This estimate is already running.');
@@ -1072,7 +1143,7 @@ export async function runCalculationPlan(
       const evidence = await persistWorkbookEvidence({
         owner: userId,
         calculationId,
-        workbookIrS3Key: item!.workbook_ir_s3_key,
+        workbookIrS3Key: item!.pricing_intake_workbook_ir_s3_key || item!.workbook_ir_s3_key,
         userInstructions: [
           ...(item!.prompt ? [item!.prompt] : []),
           ...(item!.region ? [`Primary region: ${item!.region}`] : []),
@@ -1408,6 +1479,7 @@ export async function getCalculationResult(
 
   return successResponse({
     calculation_id: item!.calculation_id,
+    project_id: item!.project_id ?? null,
     status: item!.status,
     result,
     error_message: item!.error_message ?? null,
@@ -1421,6 +1493,7 @@ export async function getCalculationResult(
     // when each scenario completes. Used by the frontend to show per-scenario Calculator
     // URLs and cost totals while polling, before the full result is loaded.
     scenario_summaries: item!.scenario_summaries ?? null,
+    map_eligibility: item!.map_eligibility ?? null,
     unresolved_critical_count: item!.unresolved_critical_count ?? null,
     // A paused request_user_input question (WAITING_FOR_INPUT) rides on this same poll so
     // the view page can render the question inline the moment the agent pauses.
@@ -1466,6 +1539,8 @@ export async function deleteCalculation(
     item!.input_s3_key,
     item!.resources_s3_key,
     item!.workbook_ir_s3_key,
+    item!.pricing_intake_workbook_s3_key,
+    item!.pricing_intake_workbook_ir_s3_key,
     item!.canonical_model_s3_key,
     item!.result_s3_key,
     ...generatedArtifactKeys(userId, item!.calculation_id),
@@ -1621,6 +1696,29 @@ export async function getCalculationWorkbook(
   id: string | undefined,
   event: APIGatewayProxyEvent,
 ): Promise<APIGatewayProxyResult> {
+  if (event.queryStringParameters?.type === 'prepared') {
+    const userId = getUserId(event);
+    if (!userId) return errorResponse(401, 'ACCESS_DENIED', 'Not authenticated');
+    const loaded = await loadOwned(id, userId);
+    if (loaded.error) return loaded.error;
+    const item = loaded.item!;
+    if (!item.pricing_intake_workbook_s3_key) {
+      return errorResponse(409, 'PRICING_INTAKE_UNAVAILABLE', 'No prepared pricing workbook exists for this estimate.');
+    }
+    const preparedName = `mimo-pricing-intake-${(item.name || 'estimate')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')}.xlsx`;
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: item.pricing_intake_workbook_s3_key,
+      ResponseContentDisposition: `attachment; filename="${preparedName}"`,
+    });
+    return successResponse({
+      download_url: await getSignedUrl(s3Client, command, { expiresIn: 300 }),
+      pricing_intake: item.pricing_intake,
+    });
+  }
+
   const loaded = await loadDownloadable(id, event, 'an Excel workbook');
   if ('error' in loaded) return loaded.error;
   const { userId, item, result } = loaded;
@@ -2329,6 +2427,8 @@ export async function deleteCalculationProject(
       estimate.input_s3_key,
       estimate.resources_s3_key,
       estimate.workbook_ir_s3_key,
+      estimate.pricing_intake_workbook_s3_key,
+      estimate.pricing_intake_workbook_ir_s3_key,
       estimate.canonical_model_s3_key,
       estimate.result_s3_key,
       ...generatedArtifactKeys(userId, estimate.calculation_id),

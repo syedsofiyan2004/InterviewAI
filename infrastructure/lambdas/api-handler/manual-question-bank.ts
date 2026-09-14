@@ -438,3 +438,8 @@ export function selectQuestionsFromBank(input: {
     questions,
   };
 }
+
+/** A bank is meaningful for a role only when it contributes curated role rows. */
+export function hasMeaningfulRoleCoverage(questions: SelectedBankQuestion[], minimum = 2): boolean {
+  return questions.filter((question) => question.bankQuestionId.startsWith('minfy-')).length >= minimum;
+}

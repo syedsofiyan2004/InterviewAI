@@ -321,6 +321,16 @@ export default function InterviewIntelligenceViewPage() {
     }
   };
 
+  const openResume = async () => {
+    if (!record?.candidate.resumeS3Key) return;
+    try {
+      const { download_url } = await api.getIntelligenceResumeUrl(record.intelligence_id);
+      window.open(download_url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The resume could not be opened.');
+    }
+  };
+
   return (
     <div className="space-y-6 pb-10">
       <BackButton defaultHref="/my-interviews" defaultLabel="HireRite" />
@@ -404,17 +414,25 @@ export default function InterviewIntelligenceViewPage() {
               {record.candidate.resumeS3Key && record.candidate.resumeFileName && <p className="mt-2 text-xs font-semibold text-success">Ready: {record.candidate.resumeFileName}</p>}
               {!record.candidate.resumeS3Key && record.candidate.resumeText && <p className="mt-2 text-xs font-semibold text-success">Imported from the candidate record</p>}
             </div>
-            {record.source_mode !== 'keka_live' || !record.candidate.resumeText ? (
-              <label className="btn-primary inline-flex cursor-pointer items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold">
-                <Upload size={16} />
-                {record.candidate.resumeS3Key ? 'Replace resume' : 'Upload resume'}
-                <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void uploadResume(file);
-                  event.currentTarget.value = '';
-                }} />
-              </label>
-            ) : null}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {record.candidate.resumeS3Key && (
+                <button type="button" onClick={() => void openResume()} className="btn-secondary inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold">
+                  <ExternalLink size={16} />
+                  View resume
+                </button>
+              )}
+              {record.source_mode !== 'keka_live' || !record.candidate.resumeText ? (
+                <label className="btn-primary inline-flex cursor-pointer items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                  <Upload size={16} />
+                  {record.candidate.resumeS3Key ? 'Replace resume' : 'Upload resume'}
+                  <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void uploadResume(file);
+                    event.currentTarget.value = '';
+                  }} />
+                </label>
+              ) : null}
+            </div>
           </div>
         </div>
         {record.candidate.resumeS3Key && organizerEmail.trim() && (
@@ -517,10 +535,9 @@ export default function InterviewIntelligenceViewPage() {
               ))}
             </div>
             {record.questionPlan.panelPlan.map((plan) => {
-              const member = record.panel.find((item) => item.interviewerId === plan.interviewerId);
               return (
                 <div key={plan.interviewerId} className="rounded-2xl border border-border bg-surface p-5">
-                  <p className="text-sm font-semibold text-text-primary">{member?.name || 'Interviewer'} / {plan.focusArea}</p>
+                  <p className="text-sm font-semibold text-text-primary">{plan.focusArea || 'Role assessment'}</p>
                   <div className="mt-4 space-y-4">
                     {plan.questions.map((question, index) => (
                       <div key={`${plan.interviewerId}-${index}`}>
@@ -870,9 +887,34 @@ export default function InterviewIntelligenceViewPage() {
               AI-assisted recommendation. Final hiring decision requires human review.
             </div>
             {record.status === 'approved' ? (
-              <div className="inline-flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-2 text-sm font-semibold text-success">
-                <CheckCircle2 size={16} />
-                Approved
+              <div className="space-y-3">
+                <div className="inline-flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-4 py-2 text-sm font-semibold text-success">
+                  <CheckCircle2 size={16} />
+                  Approved
+                </div>
+                <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">Keka Feedback</p>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">
+                      {record.keka.feedbackStatus === 'sent'
+                        ? record.keka.feedbackMode === 'candidate_note'
+                          ? 'The approved PDF link and review comments were added to the candidate note in Keka Hire.'
+                          : 'The approved PDF and review comments were sent to the candidate Feedback section in Keka.'
+                        : record.keka.feedbackStatus === 'failed'
+                          ? record.keka.feedbackError || 'The Keka Feedback submission failed. You can retry after fixing the configuration.'
+                          : 'Send the approved PDF and reviewer comments to this candidate in Keka.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => runAction('keka feedback', () => api.sendIntelligenceFeedbackToKeka(record.intelligence_id))}
+                    disabled={busy === 'keka feedback' || record.keka.feedbackStatus === 'sent'}
+                    className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {busy === 'keka feedback' ? <RefreshCw size={16} className="animate-spin" /> : <ExternalLink size={16} />}
+                    {record.keka.feedbackStatus === 'sent' ? 'Sent to Keka' : busy === 'keka feedback' ? 'Sending...' : 'Send to Keka Feedback'}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-3">

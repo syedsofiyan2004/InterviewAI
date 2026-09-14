@@ -7,6 +7,7 @@ import {
   CheckSquare,
   CalendarDays,
   Calculator,
+  FileCheck,
   FolderPlus,
   Home,
   LayoutDashboard,
@@ -67,10 +68,10 @@ const BASE_SECTIONS: NavSection[] = [
     ],
   },
   {
-    name: 'Cost Calculator',
+    name: 'Pre-Sales Tools',
     items: [
-      { name: 'Projects', href: '/calculator', icon: Calculator },
-      { name: 'New Project', href: '/calculator/project/new', icon: FolderPlus },
+      { name: 'AWS Cost Calculator', href: '/calculator', icon: Calculator },
+      { name: 'SOW Peer Review', href: '/sow-peer-review', icon: FileCheck },
     ],
   },
 ];
@@ -93,6 +94,7 @@ function buildNavSections(isAdmin: boolean, tier: AdminTier | null): NavSection[
   add(0, 'All Interviews', '/admin/interviews', LayoutDashboard);
   add(1, 'All Meetings', '/admin/moms', ListChecks);
   add(2, 'All Cost Estimates', '/admin/calculator', Calculator);
+  add(2, 'SOW Review Context', '/admin/sow-peer-review', FileCheck);
   if (rank >= TIER_RANK.APPROVER) add(0, 'Approval Queue', '/admin/approvals', CheckSquare);
   if (rank >= TIER_RANK.OWNER) add(0, 'Question Bank', '/admin/question-bank', LibraryBig);
   const adminItems: NavItem[] = [{ name: 'Overview', href: '/admin', icon: Shield }];
@@ -133,6 +135,7 @@ function isActiveNavItem(pathname: string, href: string): boolean {
   if (href === '/candidates') return pathname.startsWith('/candidates/');
   if (href === '/mom') return pathname.startsWith('/mom/') && pathname !== '/mom/new';
   if (href === '/calculator') return pathname.startsWith('/calculator/') && pathname !== '/calculator/project/new';
+  if (href === '/sow-peer-review') return pathname.startsWith('/sow-peer-review');
   if (href === '/admin/candidates' || href === '/admin/question-bank' || href === '/admin/conversations') {
     return pathname.startsWith(`${href}/`);
   }

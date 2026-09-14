@@ -99,23 +99,14 @@ const gatewayTool = (gatewayArn: string): HarnessTool => ({
 const REQUEST_USER_INPUT_TOOL_NAME = 'request_user_input';
 
 const REQUEST_USER_INPUT_DESCRIPTION =
-  'Ask the customer material workload, architecture, scope or commercial-pricing '
-  + 'questions that only the customer can answer, and whose guess could materially change '
-  + 'the AWS Pricing Calculator estimate.\n\n'
-  + 'Before calling it, try to resolve the value from the workbook, its instructions, user '
-  + 'messages, previous answers, or official Pricing Calculator MCP guidance where the '
-  + 'value is only a Calculator implementation/default detail.\n\n'
-  + 'Do not ask customers for internal Calculator fields.\n\n'
-  + 'Offer 2-4 useful contextual options, each with a value and a label (and a short '
-  + 'description when it helps the customer choose), and set customInput.enabled so the '
-  + 'customer can give their own value outside those options. Set selectionMode to '
-  + '"multiple" only when several of the options genuinely combine; otherwise use '
-  + '"single". Ask at the broadest useful scope: a decision that applies to many resources '
-  + 'is asked once with allowApplyToSimilarResources honoured, and a decision unique to one '
-  + 'resource is scoped to that resource.\n\n'
-  + 'When several independent material decisions are already clear after reading the workbook, '
-  + 'ask exactly one request_user_input question per pause so the customer can answer decisions in sequence. '
-  + 'If a question depends on a previous answer, ask it as a later follow-up.';
+  'Use this tool only for one of two prepared-workbook decisions: '
+  + '(1) commercial_pricing_strategy, using official Pricing Calculator MCP-supported '
+  + 'purchasing choices and complete plan/term/payment packages, or '
+  + '(2) scenario_link_selection, using the workbook scenario names and multiple selection. '
+  + 'MIMO handles missing technical workload data in the prepared workbook, so never use this '
+  + 'tool for region, runtime, environment, sizing, storage, availability, usage or Calculator '
+  + 'implementation fields. Ask each applicable category at most once and one question per pause. '
+  + 'Always provide customer-facing options plus customInput so the customer can enter another value.';
 
 const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
   type: 'object',
@@ -135,7 +126,7 @@ const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
     },
     options: {
       type: 'array',
-      description: '2-4 distinct customer-facing choices.',
+      description: 'Distinct customer-facing choices supported by the workbook context and official Calculator MCP.',
       items: {
         type: 'object',
         properties: {
@@ -164,7 +155,11 @@ const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
     // Legacy typed fields (pre-generic shape). Retained so an older request_user_input
     // input still parses; new callers should use options/customInput instead.
     resource: { type: 'string' },
-    semanticField: { type: 'string' },
+    semanticField: {
+      type: 'string',
+      enum: ['commercial_pricing_strategy', 'scenario_link_selection'],
+      description: 'The only two runtime decision categories supported by the prepared-workbook flow.',
+    },
     type: { type: 'string', enum: ['CHOICE', 'NUMBER', 'BOOLEAN', 'TEXT'] },
     choices: {
       type: 'array',
@@ -180,7 +175,7 @@ const REQUEST_USER_INPUT_SCHEMA: DocumentType = {
     },
     unit: { type: 'string' },
   },
-  required: ['questionId', 'title', 'question', 'reason'],
+  required: ['questionId', 'semanticField', 'title', 'question', 'reason'],
 };
 
 const requestUserInputTool = (): HarnessTool => ({

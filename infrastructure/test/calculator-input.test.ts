@@ -300,9 +300,8 @@ describe('Mapping a sheet onto resources', () => {
   });
 
   test('a template with headers and no rows yields nothing to price', async () => {
-    // The route turns this into "No resource rows were found in that file. Download the
-    // template...", which is the actionable message. What must NOT happen is the
-    // heading row being passed through as a resource and priced as a machine.
+    // The route now turns this into an empty prepared Pricing Intake sheet. What must
+    // NOT happen is the heading row being passed through as a resource and priced.
     const { resources } = await analyseWorkbook(await xlsxBuffer([TEMPLATE_HEADER]), 'headers-only.xlsx');
 
     expect(resources).toEqual([]);

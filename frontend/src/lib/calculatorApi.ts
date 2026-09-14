@@ -214,6 +214,50 @@ export interface CalculationResult {
   validationErrors?: string[];
 }
 
+export interface PricingIntakeSummary {
+  version: string;
+  status: 'READY' | 'NEEDS_INPUT';
+  normalizedResourceCount: number;
+  scenarioSheets: string[];
+  missing: Array<{
+    field: string;
+    column: string;
+    scope: string;
+    affectedCount: number;
+    reason: string;
+    sourceRefs: string[];
+  }>;
+  safeAssumptions: string[];
+}
+
+export interface MapEligibilityFinding {
+  service: string;
+  productCode?: string;
+  category?: 'General' | 'DB&A' | 'SAP & Oracle';
+  monthlyCost?: number | null;
+  annualCost?: number | null;
+  eligibility: 'Eligible' | 'Partially eligible' | 'Not eligible' | 'Needs manual review';
+  notes?: string;
+}
+
+export interface MapEligibilityReport {
+  status: 'COMPLETED' | 'NEEDS_INPUT' | 'FAILED';
+  arr?: number | null;
+  tier?: string;
+  eligibleAnnualSpend?: number | null;
+  estimatedPartnerCash?: number | null;
+  estimatedCredits?: number | null;
+  assessCash?: number | null;
+  mobilizeCash?: number | null;
+  migrateModernizeCredits?: number | null;
+  modifierInputs: { greenfield?: boolean; vmwarePercent?: number; modernizationPercent?: number; migratedVms?: number };
+  findings: MapEligibilityFinding[];
+  openQuestions: string[];
+  assumptions: string[];
+  disclaimer: string;
+  generatedAt?: number;
+}
+
 export interface EnvironmentHours {
   name: string;
   hoursPerDay: number;
@@ -320,6 +364,7 @@ export interface ScenarioSummary {
 
 export interface CalculationResultResponse {
   calculation_id: string;
+  project_id?: string | null;
   status: CalculationStatus;
   result: CalculationResult | null;
   error_message: string | null;
@@ -341,6 +386,7 @@ export interface CalculationResultResponse {
    * Null until at least one scenario finishes.
    */
   scenario_summaries?: ScenarioSummary[] | null;
+  map_eligibility?: MapEligibilityReport | null;
   /** How many critical requirements remain unresolved. Null until plan is ready. */
   unresolved_critical_count?: number | null;
   /** Questions returned by the AgentCore calculator when it needs user input mid-run. */
@@ -384,15 +430,18 @@ export interface CreateCalculationInput {
   input_s3_key?: string;
 }
 
-/** The template a user downloads, fills in, and uploads. Kept in sync with the server's header aliases. */
-export const TEMPLATE_COLUMNS = ['Environment', 'Service', 'Instance / Size', 'Qty', 'Region', 'Hours/Day', 'Notes'];
+/** General pricing-intake template. Unknown layouts are converted to this same contract server-side. */
+export const TEMPLATE_COLUMNS = [
+  'Resource Name', 'Scenario / Year', 'Environment', 'AWS Service', 'Region',
+  'Instance / Size', 'Quantity', 'vCPU', 'Memory GiB', 'Operating System',
+  'Monthly Hours', 'Usage Amount', 'Usage Unit', 'Storage GiB', 'Storage Type',
+  'Availability', 'Engine', 'Data Transfer GB/Month', 'Configuration', 'Notes',
+];
 
 export const TEMPLATE_ROWS: string[][] = [
-  ['Production', 'EC2', 't3.large', '2', 'ap-south-1', '24', 'web tier'],
-  ['Production', 'RDS PostgreSQL', 'db.t3.medium', '1', 'ap-south-1', '24', 'Multi-AZ'],
-  ['Production', 'S3', '200 GB Standard', '', 'ap-south-1', '', 'usage-based, hours do not apply'],
-  ['Staging', 'EC2', 't3.medium', '1', 'ap-south-1', '12', ''],
-  ['Dev', 'EC2', 't3.small', '2', 'ap-south-1', '8', 'off at weekends'],
+  ['web-tier', 'Baseline', 'Production', 'EC2', 'ap-south-1', 't3.large', '2', '', '', 'Linux', '730', '', '', '100', 'gp3', '', '', '', '', ''],
+  ['orders-db', 'Baseline', 'Production', 'RDS', 'ap-south-1', 'db.t3.medium', '1', '', '', '', '730', '', '', '100', 'gp3', 'Multi-AZ', 'PostgreSQL', '', '', ''],
+  ['asset-store', 'Baseline', 'Production', 'S3', 'ap-south-1', '', '1', '', '', '', '', '200', 'GB/month', '', 'Standard', '', '', '', '', ''],
 ];
 
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
@@ -484,7 +533,12 @@ export const calculatorApi = {
 
   async analyzeCalculation(
     data: CreateCalculationInput,
-  ): Promise<{ calculation_id: string; status: CalculationStatus; plan: EstimatePlanV2 }> {
+  ): Promise<{
+    calculation_id: string;
+    status: CalculationStatus;
+    plan: EstimatePlanV2;
+    pricing_intake?: PricingIntakeSummary;
+  }> {
     const res = await authFetch(`${API_URL}/calculator/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -493,7 +547,11 @@ export const calculatorApi = {
     return handleResponse(res);
   },
 
-  async getCalculationPlan(id: string): Promise<{ calculation_id: string; plan: EstimatePlanV2 }> {
+  async getCalculationPlan(id: string): Promise<{
+    calculation_id: string;
+    plan: EstimatePlanV2;
+    pricing_intake?: PricingIntakeSummary;
+  }> {
     const res = await authFetch(`${API_URL}/calculator/plans/${id}`);
     return handleResponse(res);
   },
@@ -554,6 +612,23 @@ export const calculatorApi = {
 
   async getCalculationResult(id: string): Promise<CalculationResultResponse> {
     const res = await authFetch(`${API_URL}/calculator/${id}/result`);
+    return handleResponse(res);
+  },
+
+  async generateMapEligibility(id: string, inputs: MapEligibilityReport['modifierInputs'] = {}): Promise<{ calculation_id: string; job_id: string; status: string }> {
+    const res = await authFetch(`${API_URL}/calculator/${encodeURIComponent(id)}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'MAP_ELIGIBILITY', ...inputs }),
+    });
+    return handleResponse(res);
+  },
+
+  async getMapEligibilityStatus(id: string): Promise<{ status: string; map_eligibility?: MapEligibilityReport | null; error_message?: string }> {
+    const res = await authFetch(`${API_URL}/calculator/${encodeURIComponent(id)}/answer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'MAP_ELIGIBILITY_STATUS' }),
+    });
     return handleResponse(res);
   },
 
@@ -636,6 +711,15 @@ export const calculatorApi = {
    */
   async getCalculationWorkbookUrl(id: string): Promise<{ download_url: string }> {
     const res = await authFetch(`${API_URL}/calculator/${id}/workbook`);
+    return handleResponse(res);
+  },
+
+  /** Prepared, source-linked input workbook used before the AgentCore pricing run. */
+  async getPreparedPricingWorkbookUrl(id: string): Promise<{
+    download_url: string;
+    pricing_intake?: PricingIntakeSummary;
+  }> {
+    const res = await authFetch(`${API_URL}/calculator/${id}/workbook?type=prepared`);
     return handleResponse(res);
   },
 

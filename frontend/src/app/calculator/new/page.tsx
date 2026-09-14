@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import * as XLSX from 'xlsx';
 import {
   AlertCircle,
   ArrowLeft,
@@ -25,6 +26,7 @@ import {
   type EstimatePlanV2,
   type EnvironmentHours,
   type PlanProposal,
+  type PricingIntakeSummary,
   type RequirementPatch,
 } from '@/lib/calculatorApi';
 import {
@@ -76,18 +78,23 @@ const EXAMPLE = `A production WordPress environment:
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
-/** CSV rather than xlsx: Excel opens it natively, the server accepts it back, and it needs no library either side. */
+/** Download the same general .xlsx contract produced by the server-side normalizer. */
 function downloadTemplate() {
-  const escape = (cell: string) => (/[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell);
-  const csv = [TEMPLATE_COLUMNS, ...TEMPLATE_ROWS].map((row) => row.map(escape).join(',')).join('\r\n');
-  // The BOM makes Excel open a UTF-8 CSV without mangling non-ASCII text.
-  const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'aws-cost-estimate-template.csv';
-  link.click();
-  URL.revokeObjectURL(url);
+  const workbook = XLSX.utils.book_new();
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ['MIMO AWS Pricing Intake Template', 'Version 2.0'],
+    ['How to use', 'Use one row per independently billable resource. Copy the Pricing Intake sheet for each year or scenario when its values differ.'],
+    ['Required for compute', 'Resource name, scenario/year, environment, service, region, size or vCPU/memory, quantity, operating system and monthly hours.'],
+    ['Required for databases', 'Also include availability, engine, storage and any material IOPS/throughput details in Configuration.'],
+    ['Runtime decisions', 'Claude asks only for pricing strategy and which scenario links to create.'],
+    ['Missing values', 'Leave unknown material values blank. MIMO will return a prepared workbook with only those cells highlighted.'],
+  ]);
+  instructions['!cols'] = [{ wch: 24 }, { wch: 110 }];
+  const intake = XLSX.utils.aoa_to_sheet([TEMPLATE_COLUMNS, ...TEMPLATE_ROWS]);
+  intake['!cols'] = TEMPLATE_COLUMNS.map((column) => ({ wch: Math.max(14, Math.min(28, column.length + 3)) }));
+  XLSX.utils.book_append_sheet(workbook, instructions, 'Instructions');
+  XLSX.utils.book_append_sheet(workbook, intake, 'Pricing Intake');
+  XLSX.writeFile(workbook, 'mimo-aws-pricing-intake-template.xlsx');
 }
 
 /**
@@ -111,7 +118,7 @@ function NewCalculationForm() {
   // is only sent when the user picks one (or the workbook/prompt states one).
   const [region, setRegion] = useState('');
   // No environment-hour defaults either. Runtime hours are workload facts; if the user does
-  // not state them here the agent reads them from the workbook or asks via request_user_input.
+  // not state them here the prepared workbook highlights them for bulk completion.
   const [environments, setEnvironments] = useState<EnvironmentHours[]>([]);
   const [newEnvName, setNewEnvName] = useState('');
   const [newEnvHours, setNewEnvHours] = useState(24);
@@ -129,6 +136,8 @@ function NewCalculationForm() {
   const [proposal, setProposal] = useState<PlanProposal | null>(null);
   const [customizing, setCustomizing] = useState(false);
   const [running, setRunning] = useState(false);
+  const [pricingIntake, setPricingIntake] = useState<PricingIntakeSummary | null>(null);
+  const [downloadingPrepared, setDownloadingPrepared] = useState(false);
 
   // Real projects only. The server's synthetic "Ungrouped estimates" row is a view over
   // the estimates that belong to no project, not a folder anything can be written into.
@@ -152,6 +161,7 @@ function NewCalculationForm() {
         if (!cancelled) {
           setCalculationId(response.calculation_id);
           setPlan(response.plan);
+          setPricingIntake(response.pricing_intake || null);
         }
       })
       .catch((err: unknown) => { if (!cancelled) setError(errorMessage(err, 'The review plan could not be loaded.')); })
@@ -160,13 +170,13 @@ function NewCalculationForm() {
   }, [calculationId, reviewParam]);
 
   useEffect(() => {
-    if (!plan) return;
+    if (!plan || pricingIntake) return;
     let cancelled = false;
     calculatorApi.getCalculatorReviewCatalog()
       .then((catalog) => { if (!cancelled) setReviewCatalog(catalog); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [plan?.planId]);
+  }, [plan?.planId, pricingIntake]);
 
   const setHours = (index: number, raw: string) => {
     const parsed = Number(raw);
@@ -229,6 +239,7 @@ function NewCalculationForm() {
       });
       setCalculationId(created.calculation_id);
       setPlan(created.plan);
+      setPricingIntake(created.pricing_intake || null);
       const query = new URLSearchParams({ review: created.calculation_id });
       if (projectId) query.set('project', projectId);
       router.replace(`/calculator/new?${query.toString()}`);
@@ -239,7 +250,10 @@ function NewCalculationForm() {
   };
 
   const currentRevision = plan?.revisions.find((entry) => entry.revisionId === plan.currentRevisionId);
-  const openQuestions = plan?.unresolved.filter((entry) => !entry.resolved) || [];
+  // Workbook technical gaps are resolved in the prepared .xlsx, where a shared value can
+  // be filled down across thousands of resources. The old per-resource form remains only
+  // for prompt-only and pre-v2 records that have no pricing-intake artifact.
+  const openQuestions = pricingIntake ? [] : plan?.unresolved.filter((entry) => !entry.resolved) || [];
   const blockingQuestions = openQuestions.filter((entry) => entry.impact === 'high');
   const advisoryQuestionCount = openQuestions.length - blockingQuestions.length;
   const answerForQuestion = (question: EstimatePlanV2['unresolved'][number]) => (
@@ -507,9 +521,13 @@ function NewCalculationForm() {
 
   const confirmAndRun = async () => {
     if (!calculationId || !plan) return;
-    const unresolvedHigh = plan.unresolved.some((entry) => !entry.resolved && entry.impact === 'high');
+    const unresolvedHigh = blockingQuestions.length > 0;
     if (unresolvedHigh) {
       setError('Resolve every high-impact requirement before building the estimate.');
+      return;
+    }
+    if (pricingIntake?.status === 'NEEDS_INPUT') {
+      setError('Complete the yellow required cells in the prepared pricing workbook and upload it again before building the estimate.');
       return;
     }
     setError(null);
@@ -522,6 +540,33 @@ function NewCalculationForm() {
       setError(errorMessage(err, 'The confirmed estimate could not be started.'));
       setRunning(false);
     }
+  };
+
+  const downloadPreparedWorkbook = async () => {
+    if (!calculationId) return;
+    setError(null);
+    setDownloadingPrepared(true);
+    try {
+      const response = await calculatorApi.getPreparedPricingWorkbookUrl(calculationId);
+      window.location.href = response.download_url;
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'The prepared pricing workbook could not be downloaded.'));
+    } finally {
+      setDownloadingPrepared(false);
+    }
+  };
+
+  const selectCompletedWorkbook = (file: File | null) => {
+    if (!file) return;
+    setSheet(file);
+    setName((current) => current || file.name.replace(/\.(xlsx|csv)$/i, ''));
+    setPlan(null);
+    setPricingIntake(null);
+    setCalculationId(null);
+    setProposal(null);
+    setQuestionAnswers({});
+    setError(null);
+    router.replace(projectParam ? `/calculator/new?project=${encodeURIComponent(projectParam)}` : '/calculator/new');
   };
 
   return (
@@ -561,8 +606,8 @@ function NewCalculationForm() {
                 <p className="page-kicker">Review / Customize requirements</p>
                 <h2 className="mt-1 text-xl font-semibold text-text-primary">Confirm what AWS will price</h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                  The workbook has been preserved and converted into a canonical plan. Review the detected scope,
-                  add any customer-specific changes if needed, then build the AWS Pricing Calculator estimate.
+                  The source workbook has been preserved and converted into a source-linked pricing intake.
+                  Complete any highlighted material inputs, then let Claude build the AWS Pricing Calculator estimate.
                 </p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-xs font-semibold text-text-secondary">
@@ -577,7 +622,7 @@ function NewCalculationForm() {
               ['Resources', `${plan.detectedDimensions.resourceCount}`],
               ['Mapped', `${plan.detectedDimensions.mappedResourceCount}`],
               ['Coverage', `${plan.detectedDimensions.coveragePct}%`],
-              ['Scenarios', `${currentRevision.scenarios.length}`],
+              ['Scenarios', `${pricingIntake?.scenarioSheets.length ?? currentRevision.scenarios.length}`],
             ].map(([label, value], index) => (
               <div key={label} className={`px-6 py-4 ${index ? 'border-t border-border sm:border-l sm:border-t-0' : ''}`}>
                 <p className="text-xs font-semibold text-text-muted">{label}</p>
@@ -587,6 +632,83 @@ function NewCalculationForm() {
           </div>
 
           <div className="space-y-7 px-6 py-6 sm:px-8">
+            {pricingIntake && (
+              <section className={`rounded-xl border p-5 ${
+                pricingIntake.status === 'NEEDS_INPUT'
+                  ? 'border-warning/35 bg-warning/5'
+                  : 'border-success/30 bg-success/5'
+              }`}>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-3">
+                      {pricingIntake.status === 'NEEDS_INPUT'
+                        ? <AlertCircle size={18} className="mt-0.5 shrink-0 text-warning" />
+                        : <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-success" />}
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-primary">
+                          {pricingIntake.status === 'NEEDS_INPUT'
+                            ? 'Complete the prepared pricing workbook'
+                            : 'Pricing workbook ready'}
+                        </h3>
+                        <p className="mt-1 text-sm leading-6 text-text-secondary">
+                          {pricingIntake.status === 'NEEDS_INPUT'
+                            ? `The source file was normalized into ${pricingIntake.scenarioSheets.length} pricing sheet${pricingIntake.scenarioSheets.length === 1 ? '' : 's'}. Fill only the yellow material-input cells, save the file, and upload it again. Shared values can be filled down instead of answering the same question for every resource.`
+                            : `All ${pricingIntake.normalizedResourceCount.toLocaleString()} resources have the material technical inputs required for pricing. During the live run Claude will ask only about pricing strategy and scenario links.`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {pricingIntake.status === 'NEEDS_INPUT' && (
+                      <div className="mt-4 divide-y divide-border border-y border-border/70">
+                        {pricingIntake.missing.slice(0, 12).map((gap) => (
+                          <div key={`${gap.field}-${gap.scope}`} className="grid gap-1 py-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                            <div>
+                              <p className="font-semibold text-text-primary">{gap.column} · {gap.scope}</p>
+                              <p className="mt-0.5 text-xs leading-5 text-text-muted">{gap.reason}</p>
+                            </div>
+                            <span className="text-xs font-semibold text-warning">
+                              {gap.affectedCount > 0
+                                ? `${gap.affectedCount.toLocaleString()} resource${gap.affectedCount === 1 ? '' : 's'}`
+                                : 'Add workload rows'}
+                            </span>
+                          </div>
+                        ))}
+                        {pricingIntake.missing.length > 12 && (
+                          <p className="py-3 text-xs text-text-muted">
+                            The workbook contains {pricingIntake.missing.length - 12} more grouped requirements. None are expanded into per-resource web questions.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void downloadPreparedWorkbook()}
+                    disabled={downloadingPrepared}
+                    className="btn-secondary inline-flex shrink-0 items-center gap-2 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {downloadingPrepared ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                    {downloadingPrepared ? 'Preparing download...' : 'Download prepared workbook'}
+                  </button>
+                  {pricingIntake.status === 'NEEDS_INPUT' && (
+                    <label className="btn-primary inline-flex shrink-0 cursor-pointer items-center gap-2 px-4 py-2.5 text-sm font-semibold">
+                      <FileSpreadsheet size={15} />
+                      Upload completed workbook
+                      <input
+                        type="file"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        className="sr-only"
+                        onChange={(event) => {
+                          selectCompletedWorkbook(event.target.files?.[0] || null);
+                          event.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+              </section>
+            )}
+
             <section>
               <h3 className="text-sm font-semibold text-text-primary">Detected dimensions</h3>
               <div className="mt-3 grid gap-4 md:grid-cols-3">
@@ -611,7 +733,7 @@ function NewCalculationForm() {
               </div>
             </section>
 
-            <section className="border-t border-border pt-6">
+            {!pricingIntake && <section className="border-t border-border pt-6">
               <h3 className="text-sm font-semibold text-text-primary">Estimate scenarios</h3>
               <div className="mt-3 divide-y divide-border border-y border-border">
                 {currentRevision.scenarios.map((scenario) => (
@@ -629,7 +751,7 @@ function NewCalculationForm() {
                   </div>
                 ))}
               </div>
-            </section>
+            </section>}
 
             {blockingQuestions.length > 0 && (
               <section className="border-t border-border pt-6">
@@ -665,14 +787,14 @@ function NewCalculationForm() {
               </section>
             )}
 
-            {blockingQuestions.length === 0 && advisoryQuestionCount > 0 && (
+            {!pricingIntake && blockingQuestions.length === 0 && advisoryQuestionCount > 0 && (
               <section className="rounded-lg border border-border bg-surface-elevated/40 px-4 py-3 text-sm leading-6 text-text-secondary">
                 The agent found {advisoryQuestionCount} pricing assumption{advisoryQuestionCount === 1 ? '' : 's'}
                 it can resolve while building the estimate. Add a note below only if you want to override something.
               </section>
             )}
 
-            <section className="border-t border-border pt-6">
+            {!pricingIntake && <section className="border-t border-border pt-6">
               <div className="flex items-start gap-3">
                 <PencilLine size={18} className="mt-0.5 shrink-0 text-accent" />
                 <div className="min-w-0 flex-1">
@@ -700,9 +822,9 @@ function NewCalculationForm() {
                   </button>
                 </div>
               </div>
-            </section>
+            </section>}
 
-            {proposal && (
+            {!pricingIntake && proposal && (
               <section className="border-t border-border pt-6" aria-live="polite">
                 <h3 className="text-sm font-semibold text-text-primary">Proposed revision</h3>
                 <p className="mt-1 text-sm leading-6 text-text-secondary">{proposal.summary}</p>
@@ -744,7 +866,7 @@ function NewCalculationForm() {
               <button
                 type="button"
                 onClick={() => void confirmAndRun()}
-                disabled={running || blockingQuestions.length > 0 || !!proposal}
+                disabled={running || blockingQuestions.length > 0 || pricingIntake?.status === 'NEEDS_INPUT' || !!proposal}
                 className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold disabled:opacity-50"
               >
                 {running ? <Loader2 size={17} className="animate-spin" /> : <Calculator size={17} />}
@@ -852,7 +974,7 @@ function NewCalculationForm() {
             <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
               <p id="calc-prompt-help" className="text-xs leading-5 text-text-muted">
                 Include instance sizes, storage and traffic where you know them. Anything you leave
-                out gets a sensible default, listed in the estimate&apos;s assumptions.
+                out is either highlighted in the prepared workbook when material, or disclosed as a safe MCP default.
               </p>
               <button
                 type="button"
@@ -871,8 +993,8 @@ function NewCalculationForm() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-text-primary">Resource list (optional)</p>
                 <p className="mt-1 text-xs leading-5 text-text-muted">
-                  Upload an .xlsx or .csv list of resources. The template columns are recognised
-                  automatically; other sheets are read as-is and interpreted.
+                  Upload any .xlsx or .csv resource workbook. MIMO creates a standard, source-linked
+                  pricing workbook and separates year or scenario bands into their own sheets.
                 </p>
               </div>
               <button
@@ -922,8 +1044,8 @@ function NewCalculationForm() {
           </div>
 
           {/* Runtime hours. Optional: environment run-hours are workload facts, and a blank
-              value must stay blank so the agent reads them from the workbook or asks the
-              customer — a prefilled "Production 24h / Staging 12h" would silently answer a
+              value must stay blank so the prepared workbook highlights it for completion;
+              a prefilled "Production 24h / Staging 12h" would silently answer a
               pricing question before Claude has seen the sheet. */}
           <div className="rounded-xl border border-border bg-surface-elevated p-4">
             <p className="text-sm font-semibold text-text-primary">Runtime hours per environment (optional)</p>
@@ -931,7 +1053,7 @@ function NewCalculationForm() {
               How many hours a day each environment actually runs. Time-billed resources are priced at
               these hours, so shutting non-production down overnight is reflected in the cost. A
               Hours/Day value in your sheet overrides the environment hours for that row. Leave this
-              blank and the agent reads the hours from the workbook or asks.
+              blank and MIMO highlights the missing hours in the prepared workbook.
             </p>
             {environments.length ? (
               <div className="mt-3 grid gap-3 sm:grid-cols-3">

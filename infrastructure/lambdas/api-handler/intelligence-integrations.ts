@@ -69,6 +69,12 @@ export interface InterviewIntelligenceRecord {
     syncStatus: 'not_connected' | 'synced' | 'failed';
     lastSyncAt?: number;
     error?: string;
+    assessmentVendorId?: string;
+    assessmentRequestId?: string;
+    feedbackStatus?: 'not_sent' | 'sent' | 'failed';
+    feedbackMode?: 'assessment' | 'candidate_note';
+    feedbackSentAt?: number;
+    feedbackError?: string;
   };
   teams: {
     mode: IntegrationMode;
@@ -323,6 +329,17 @@ export interface KekaIntegration {
     /** Keka's own meeting title, used to label the round in its workspace. */
     kekaMeetingTitle?: string;
   }>;
+  submitAssessmentFeedback(input: {
+    jobId: string;
+    candidateId: string;
+    candidateEmail?: string;
+    reportLink: string;
+    score?: number;
+    maximumScore?: number;
+    startTime: string;
+    endTime: string;
+    comments?: string;
+  }): Promise<{ vendorId?: string; assessmentRequestId?: string; noteAdded: boolean; mode: 'assessment' | 'candidate_note' }>;
   /**
    * Why interviewer emails could not be resolved during this integration's
    * lifetime, if they could not — the sweep reports it as the reason some rounds
@@ -1361,6 +1378,33 @@ export class KekaHireIntegration implements KekaIntegration {
     throw new KekaIntegrationError('Keka Hire could not retrieve the requested data. Please try again shortly.', 'unusable');
   }
 
+  private async post(path: string, body: unknown, unavailableMessage: string, forbiddenMessage: string): Promise<unknown> {
+    const [credentials, token] = await Promise.all([getKekaCredentials(), this.getAccessToken()]);
+    let response: Response;
+    try {
+      response = await fetch(`${credentials.baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new KekaIntegrationError('Keka Hire could not be reached. Please try again shortly.', 'unreachable');
+    }
+    if (response.ok) {
+      const text = await response.text();
+      if (!text) return undefined;
+      try { return JSON.parse(text); } catch { return text; }
+    }
+    if (response.status === 401) throw new KekaIntegrationError('Keka rejected the configured credentials. Please verify the API application configuration.', 'denied');
+    if (response.status === 403) throw new KekaIntegrationError(forbiddenMessage, 'denied');
+    if (response.status === 404) throw new KekaIntegrationError(unavailableMessage, 'absent');
+    throw new KekaIntegrationError('Keka Hire rejected the feedback update. Please verify the Assessment App and request are configured.', 'unusable');
+  }
+
   private async listPage(path: string, unavailableMessage: string, forbiddenMessage?: string): Promise<KekaRecord[]> {
     return listFromKekaPage(await this.get(path, unavailableMessage, forbiddenMessage));
   }
@@ -1561,6 +1605,75 @@ export class KekaHireIntegration implements KekaIntegration {
       kekaMeetingTitle: interview.title,
     };
   }
+
+  async submitAssessmentFeedback(input: {
+    jobId: string;
+    candidateId: string;
+    candidateEmail?: string;
+    reportLink: string;
+    score?: number;
+    maximumScore?: number;
+    startTime: string;
+    endTime: string;
+    comments?: string;
+  }): Promise<{ vendorId?: string; assessmentRequestId?: string; noteAdded: boolean; mode: 'assessment' | 'candidate_note' }> {
+    const vendorId = getRequiredString(process.env.KEKA_ASSESSMENT_VENDOR_ID);
+    if (!vendorId) {
+      const comments = [
+        input.comments?.trim(),
+        `HireRite review PDF: ${input.reportLink}`,
+      ].filter(Boolean).join('\n\n');
+      await this.post(
+        `/api/v1/hire/jobs/${encodeURIComponent(getRequiredString(input.jobId))}/candidate/${encodeURIComponent(getRequiredString(input.candidateId))}/notes`,
+        { comments, tags: ['HireRite', 'Interview review'] },
+        'Keka could not find the candidate for the review note.',
+        'Keka denied permission to add the review note. Confirm Candidate Note Write access.',
+      );
+      return { noteAdded: true, mode: 'candidate_note' };
+    }
+    const requests = await this.listPage(
+      `/api/v1/hire/${encodeURIComponent(vendorId)}/assessmentrequests?pageNumber=1&pageSize=200`,
+      'Keka has no assessment request for this candidate. Initiate the assessment from the candidate profile in Keka first.',
+      'Keka denied access to assessment requests. Confirm the Assessment App has its assessment request read/write permissions.',
+    );
+    const candidateId = getRequiredString(input.candidateId);
+    const jobId = getRequiredString(input.jobId);
+    const email = String(input.candidateEmail || '').trim().toLowerCase();
+    const request = requests.find((row) => {
+      const rowCandidate = firstString(row, ['candidateId', 'candidate_id']);
+      const rowJob = firstString(row, ['jobId', 'job_id']);
+      const rowEmail = String(firstString(row, ['candidateEmail', 'candidate_email', 'email']) || '').trim().toLowerCase();
+      return (rowCandidate === candidateId || (!!email && rowEmail === email)) && (!rowJob || rowJob === jobId);
+    });
+    const requestId = firstString(request, ['id', 'assessmentRequestId', 'assessment_request_id']);
+    if (!requestId) {
+      throw new KekaIntegrationError('Keka has no matching assessment request for this candidate and job. Initiate the Assessment App request from the candidate profile in Keka first.', 'absent');
+    }
+    await this.post(
+      `/api/v1/hire/${encodeURIComponent(vendorId)}/assessmentrequests/${encodeURIComponent(requestId)}`,
+      {
+        maximumScore: input.maximumScore ?? 10,
+        score: input.score ?? null,
+        reportLink: input.reportLink,
+        startTime: input.startTime,
+        endTime: input.endTime,
+      },
+      'Keka could not find the assessment request. Refresh the interview and try again.',
+      'Keka denied permission to write the assessment result. Confirm Assessment App result write access.',
+    );
+
+    let noteAdded = false;
+    if (input.comments?.trim()) {
+      await this.post(
+        `/api/v1/hire/jobs/${encodeURIComponent(jobId)}/candidate/${encodeURIComponent(candidateId)}/notes`,
+        { comments: input.comments.trim(), tags: ['HireRite'] },
+        'Keka could not find the candidate for the review note.',
+        'Keka denied permission to add candidate feedback comments. Confirm Candidate Note Write access.',
+      );
+      noteAdded = true;
+    }
+    return { vendorId, assessmentRequestId: requestId, noteAdded, mode: 'assessment' };
+  }
 }
 
 export class ManualIntegration implements KekaIntegration, TeamsIntegration {
@@ -1582,6 +1695,10 @@ export class ManualIntegration implements KekaIntegration, TeamsIntegration {
 
   async getTranscript(): Promise<{ rawText: string }> {
     return { rawText: '' };
+  }
+
+  async submitAssessmentFeedback(): Promise<{ vendorId?: string; assessmentRequestId?: string; noteAdded: boolean; mode: 'assessment' | 'candidate_note' }> {
+    throw new KekaIntegrationError('Keka Feedback is unavailable in manual integration mode.');
   }
 
   async findMeetingLink(): Promise<{ meetingUrl?: string }> {

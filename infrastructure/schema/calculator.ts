@@ -386,6 +386,30 @@ export const WorkbookInsightsSchema = z.object({
 });
 export type WorkbookInsights = z.infer<typeof WorkbookInsightsSchema>;
 
+/**
+ * Summary of the normalized workbook produced before the expensive AgentCore pricing run.
+ * The .xlsx and its full row-level lineage live in S3; DynamoDB keeps only this bounded
+ * status so the UI can tell the customer whether yellow material-input cells remain.
+ */
+export const PricingIntakeGapSchema = z.object({
+  field: z.string().max(160),
+  column: z.string().max(120),
+  scope: z.string().max(240),
+  affectedCount: z.number().int().nonnegative(),
+  reason: z.string().max(1000),
+  sourceRefs: z.array(z.string().max(240)).max(20).default([]),
+});
+
+export const PricingIntakeSummarySchema = z.object({
+  version: z.string().max(20),
+  status: z.enum(['READY', 'NEEDS_INPUT']),
+  normalizedResourceCount: z.number().int().nonnegative(),
+  scenarioSheets: z.array(z.string().max(31)).max(30).default([]),
+  missing: z.array(PricingIntakeGapSchema).max(100).default([]),
+  safeAssumptions: z.array(z.string().max(1000)).max(30).default([]),
+});
+export type PricingIntakeSummary = z.infer<typeof PricingIntakeSummarySchema>;
+
 /** What the user submits. Prose, a spreadsheet, or both. */
 export const CreateCalculationSchema = z.object({
   name: z.string().min(1).max(200),
@@ -665,6 +689,47 @@ export const CalculationResultSchema = z.object({
 });
 export type CalculationResult = z.infer<typeof CalculationResultSchema>;
 
+export const MapEligibilityFindingSchema = z.object({
+  service: z.string(),
+  productCode: z.string().optional(),
+  category: z.enum(['General', 'DB&A', 'SAP & Oracle']).optional(),
+  monthlyCost: z.number().nullable().optional(),
+  annualCost: z.number().nullable().optional(),
+  eligibility: z.enum(['Eligible', 'Partially eligible', 'Not eligible', 'Needs manual review']),
+  notes: z.string().optional(),
+});
+
+export const MapEligibilityReportSchema = z.object({
+  status: z.enum(['COMPLETED', 'NEEDS_INPUT', 'FAILED']),
+  arr: z.number().nullable().optional(),
+  tier: z.string().optional(),
+  eligibleAnnualSpend: z.number().nullable().optional(),
+  estimatedPartnerCash: z.number().nullable().optional(),
+  estimatedCredits: z.number().nullable().optional(),
+  assessCash: z.number().nullable().optional(),
+  mobilizeCash: z.number().nullable().optional(),
+  migrateModernizeCredits: z.number().nullable().optional(),
+  modifierInputs: z.object({
+    greenfield: z.boolean().optional(),
+    vmwarePercent: z.number().optional(),
+    modernizationPercent: z.number().optional(),
+    migratedVms: z.number().optional(),
+  }).default({}),
+  findings: z.array(MapEligibilityFindingSchema).default([]),
+  openQuestions: z.array(z.string()).default([]),
+  assumptions: z.array(z.string()).default([]),
+  disclaimer: z.string().default('Estimate only — not a binding MAP/MAP Lite funding determination. Confirm against current AWS Partner Central terms.'),
+  generatedAt: z.number().optional(),
+}).passthrough();
+export type MapEligibilityReport = z.infer<typeof MapEligibilityReportSchema>;
+
+export const MapEligibilityInputSchema = z.object({
+  greenfield: z.boolean().optional(),
+  vmwarePercent: z.number().min(0).max(100).optional(),
+  modernizationPercent: z.number().min(0).max(100).optional(),
+  migratedVms: z.number().int().min(0).optional(),
+});
+
 /** The stored DynamoDB item. */
 export const CalculationRecordSchema = z.object({
   calculation_id: z.string(),
@@ -697,6 +762,10 @@ export const CalculationRecordSchema = z.object({
   /** Lossless source artifacts live in S3; the record carries stable references and hashes. */
   workbook_ir_s3_key: z.string().optional(),
   workbook_hash: z.string().optional(),
+  /** Standardized workbook and lossless IR consumed by the production pricing agent. */
+  pricing_intake_workbook_s3_key: z.string().optional(),
+  pricing_intake_workbook_ir_s3_key: z.string().optional(),
+  pricing_intake: PricingIntakeSummarySchema.optional(),
   canonical_model_s3_key: z.string().optional(),
   workbook_semantic_model_s3_key: z.string().optional(),
   scenario_manifest_s3_key: z.string().optional(),
@@ -729,6 +798,7 @@ export const CalculationRecordSchema = z.object({
   updated_at: z.number(),
 
   result: CalculationResultSchema.optional(),
+  map_eligibility: MapEligibilityReportSchema.optional(),
   /** Lossless result; `result` is a bounded render copy to stay below DynamoDB's 400 KB limit. */
   result_s3_key: z.string().optional(),
   error_message: z.string().optional(),

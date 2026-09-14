@@ -386,9 +386,10 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
   };
 
   it('A — commercial pricing missing becomes a customer question, not a completed estimate', async () => {
-    expect(readPrompt()).toContain('commercial pricing, term, payment, frequency, runtime and sizing decisions, ask before pricing');
+    expect(readPrompt()).toContain('commercial_pricing_strategy');
     const { outcome, fields } = await givenPause({
       questionId: 'q-commitment',
+      semanticField: 'commercial_pricing_strategy',
       title: 'EC2 commitment',
       question: 'The workbook prices EC2 but names no commitment term. Which should apply?',
       reason: 'A commitment materially changes the monthly cost, so it cannot be guessed.',
@@ -441,23 +442,10 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
     ]);
   });
 
-  it('C — an ambiguous frequency/runtime becomes a question, not a silent 24x7 assumption', async () => {
-    expect(readPrompt()).toContain('frequency');
-    const { outcome, fields } = await givenPause({
-      questionId: 'q-hours',
-      title: 'Operating hours',
-      question: 'No server states its hours. What hours should the EC2 fleet run?',
-      reason: 'Hours materially change the monthly cost and the workbook is silent on them.',
-      selectionMode: 'multiple',
-      options: [
-        { value: '24x7', label: '24x7' },
-        { value: 'business', label: 'Business hours' },
-      ],
-      customInput: { enabled: true, inputType: 'number', unit: 'hours/day', placeholder: 'e.g. 12' },
-    });
-
-    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
-    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].question).toContain('hours');
+  it('C — an ambiguous frequency/runtime is returned to the prepared workbook, not silently assumed', () => {
+    expect(readPrompt()).toContain('do not start Calculator calls');
+    expect(readPrompt()).toContain('Do not use request_user_input for region, environment, schedules');
+    expect(readPrompt()).toContain('PRICING_INTAKE_INCOMPLETE');
   });
 
   it('D — a known frequency produces no question and a completed estimate', async () => {
@@ -474,43 +462,19 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
     expect(fields.agent_questions).toBeUndefined();
   });
 
-  it('E — a sizing contradiction becomes a question, not a nearest-fit instance guess', async () => {
-    expect(readPrompt()).toContain('Material mismatches are questions, not nearest-fit assumptions');
-    const { outcome, fields } = await givenPause({
-      questionId: 'q-db-size',
-      title: 'Database size conflict',
-      question: 'The workbook names db.r6g.large and db.r6g.xlarge for the same database. Which is right?',
-      reason: 'A sizing contradiction is a material customer decision and cannot be coerced silently.',
-      options: [
-        { value: 'db.r6g.large', label: 'db.r6g.large' },
-        { value: 'db.r6g.xlarge', label: 'db.r6g.xlarge' },
-      ],
-    });
-
-    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
-    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].question).toContain('db.r6g');
+  it('E — a sizing contradiction is resolved in bulk before AgentCore pricing', () => {
+    expect(readPrompt()).toContain('Do not use request_user_input for region, environment, schedules, sizing');
+    expect(readPrompt()).toContain('fill the yellow cells');
   });
 
-  it('F — an OS family/version conflict becomes a question, not a coerced platform', async () => {
-    expect(readPrompt()).toContain('OS family/version conflict');
-    const { outcome, fields } = await givenPause({
-      questionId: 'q-os',
-      title: 'OS conflict',
-      question: 'The OS column says Windows but the row looks like a Linux-only workload. Which OS?',
-      reason: 'The OS family/version conflict changes the license cost and cannot be assumed.',
-      options: [
-        { value: 'linux', label: 'Linux' },
-        { value: 'windows', label: 'Windows' },
-      ],
-    });
-
-    expect(outcome).toMatchObject({ done: true, status: 'WAITING_FOR_INPUT' });
-    expect((fields.agent_questions as Array<Record<string, unknown>>)[0].reason).toContain('OS');
+  it('F — an OS conflict cannot become a runtime assumption or a third question category', () => {
+    expect(readPrompt()).toContain('Ask no other runtime question');
+    expect(readPrompt()).toContain('only two customer-decision categories');
   });
 
   it('G — three independent resources stay three individually accounted source rows', async () => {
-    expect(readPrompt()).toContain('represented individually in AWS Pricing Calculator');
-    expect(readPrompt()).toContain('Do not merge several independent source resources into one Calculator line item');
+    expect(readPrompt()).toContain('Never aggregate rows whose billable configuration differs');
+    expect(readPrompt()).toContain('Preserve every source reference');
     const priced = ROWS.slice(0, 3); // Inventory!5, !6, !7 — three distinct workloads
     givenCompletedStep({
       record: baseRecord(),
@@ -530,7 +494,7 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
   });
 
   it('H — an explicit counted fleet may stay a single entry and still pass coverage', async () => {
-    expect(readPrompt()).toContain('A source row that explicitly defines one counted fleet may stay a single entry with that count');
+    expect(readPrompt()).toContain('one Calculator line using quantity');
     // Inventory!5 explicitly defines a fleet of N servers; one row, one entry, count = N.
     const fleetRow = ROWS[0];
     givenCompletedStep({

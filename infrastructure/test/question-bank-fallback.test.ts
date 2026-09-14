@@ -3,7 +3,7 @@ import 'aws-sdk-client-mock-jest';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { ddbDocClient } from '../lambdas/shared/aws';
 import { invalidateRoleBankCache, loadRoleBankPool, roleKeyForJob } from '../lambdas/api-handler/question-bank-store';
-import { selectQuestionsFromBank } from '../lambdas/api-handler/manual-question-bank';
+import { hasMeaningfulRoleCoverage, selectQuestionsFromBank } from '../lambdas/api-handler/manual-question-bank';
 import { ROLE_QUESTION_BANK } from '../lambdas/api-handler/minfy-role-question-bank';
 
 /**
@@ -109,6 +109,14 @@ describe('Generation is unchanged before seeding', () => {
     const args = { interviewId: 'fixed-seed-2', roleTitle: 'Migration Architect', jdText: JD, count: 8 };
 
     expect(selectQuestionsFromBank(args)).toEqual(selectQuestionsFromBank(args));
+  });
+
+  test('recognises when a bank has no meaningful role-specific coverage', () => {
+    const generic = selectQuestionsFromBank({ interviewId: 'coverage-1', roleTitle: 'Unlisted Role', jdText: JD, count: 8 });
+    expect(hasMeaningfulRoleCoverage(generic.questions)).toBe(false);
+
+    const matched = selectQuestionsFromBank({ interviewId: 'coverage-2', roleTitle: 'Migration Architect', jdText: JD, count: 8 });
+    expect(hasMeaningfulRoleCoverage(matched.questions)).toBe(true);
   });
 });
 

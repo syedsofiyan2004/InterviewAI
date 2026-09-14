@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Calculator, Loader2, Sparkles } from 'lucide-react';
+import { ArrowRight, Calculator, FileCheck, Loader2, Sparkles } from 'lucide-react';
 import { api } from '@/lib/api';
 import { calculatorApi } from '@/lib/calculatorApi';
 
@@ -49,6 +49,7 @@ export default function HubPage() {
   const apps = useMemo(() => [
     {
       title: 'HireRite',
+      group: 'AI Workspaces',
       description: 'Open scheduled interviews, prepare panel guides, sync Teams transcripts, and complete evidence-backed hiring reviews.',
       proof: 'Output: Panel guide / Transcript / Review / PDF',
       href: '/my-interviews',
@@ -60,6 +61,7 @@ export default function HubPage() {
     },
     {
       title: 'MOM Analyzer',
+      group: 'AI Workspaces',
       description: 'Upload your meeting recording transcript. Get decisions, risks, and action items with owners - ready to share.',
       proof: 'Output: Decisions / Actions / Risks / PDF',
       href: '/mom',
@@ -71,6 +73,7 @@ export default function HubPage() {
     },
     {
       title: 'AWS Cost Calculator',
+      group: 'Pre-Sales Tools',
       description: 'Describe a workload in plain English. Get a real AWS Pricing Calculator estimate with a cost breakdown you can share.',
       proof: 'Output: Estimate / Breakdown / calculator.aws link',
       href: '/calculator',
@@ -79,6 +82,18 @@ export default function HubPage() {
       icon: Calculator as typeof Calculator | undefined,
       statLabel: 'Estimates',
       stat: stats.calculations,
+    },
+    {
+      title: 'SOW Peer Review',
+      group: 'Pre-Sales Tools',
+      description: 'Upload a completed SOW or proposal and get structured findings for blockers, major risks, minor issues, and open questions.',
+      proof: 'Input: PDF / DOCX  ·  Output: Review findings',
+      href: '/sow-peer-review',
+      logoSrc: '/sow-peer-review-logo.png',
+      logoAlt: 'SOW Peer Review',
+      icon: FileCheck as typeof Calculator,
+      statLabel: 'Tool',
+      stat: 'Review',
     },
   ], [stats.interviews, stats.moms, stats.calculations]);
 
@@ -129,11 +144,11 @@ export default function HubPage() {
         <section className="space-y-4" aria-label="Applications">
           {apps.map((app, index) => {
             return (
-              <Link
-                key={app.title}
-                href={app.href}
-                className="hub-workspace-card group"
-              >
+              <div key={app.title}>
+              {(index === 0 || apps[index - 1].group !== app.group) && (
+                <p className="mb-3 mt-8 text-xs font-semibold uppercase tracking-[0.16em] text-text-muted first:mt-0">{app.group}</p>
+              )}
+              <Link href={app.href} className="hub-workspace-card group">
                 <div className="grid h-full gap-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                   <div className="flex min-w-0 items-start gap-4">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
@@ -141,7 +156,7 @@ export default function HubPage() {
                     </span>
                     <span className="app-wordmark-tile">
                       {app.logoSrc ? (
-                        <img src={app.logoSrc} alt={app.logoAlt} className="h-full w-full object-contain" />
+                        <img src={app.logoSrc} alt={app.logoAlt} className={`h-full w-full ${app.title === 'SOW Peer Review' ? 'object-cover' : 'object-contain'}`} />
                       ) : app.icon ? (
                         // No wordmark asset for this app yet. An icon reads as
                         // deliberate; a missing <img> renders as a broken tile.
@@ -168,6 +183,7 @@ export default function HubPage() {
                   </div>
                 </div>
               </Link>
+              </div>
             );
           })}
         </section>

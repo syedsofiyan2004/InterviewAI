@@ -447,12 +447,13 @@ describe('Agent system prompt', () => {
     expect(prompt).not.toContain('build_estimate is unsupported');
   });
 
-  it('clarifies material workload facts through the request_user_input inline function, never NEEDS_INPUT JSON', () => {
+  it('limits runtime clarification to commercial strategy and scenario links', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('request_user_input');
-    expect(prompt).toContain('request_user_input is an accuracy mechanism. Do not use it merely to show questions.');
+    expect(prompt).toContain('commercial_pricing_strategy');
+    expect(prompt).toContain('scenario_link_selection');
+    expect(prompt).toContain('Ask no other runtime question');
     expect(prompt).not.toContain('NEEDS_INPUT');
-    expect(prompt).not.toContain('CHOICE|NUMBER|BOOLEAN|TEXT');
   });
 
   it('tells the agent to use get_workbook_evidence when evidence may be incomplete', () => {
@@ -460,10 +461,10 @@ describe('Agent system prompt', () => {
     expect(prompt).toContain('get_workbook_evidence');
   });
 
-  it('requires individual Calculator line items per distinct source resource', () => {
+  it('allows only lossless aggregation of identical configurations', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('Every source workload/resource that must be priced must be represented individually in AWS Pricing Calculator');
-    expect(prompt).toContain('Do not merge several independent source resources into one Calculator line item');
+    expect(prompt).toContain('exactly identical service, region, scenario, environment and MCP configuration');
+    expect(prompt).toContain('Never aggregate rows whose billable configuration differs');
   });
 
   it('tells the agent to read every cost-relevant evidence row before pricing', () => {
@@ -488,38 +489,37 @@ describe('Agent system prompt', () => {
     expect(prompt).toContain('evidenceConsumed');
     expect(prompt).toContain('evidenceExcluded');
     expect(prompt).toContain('evidenceUnsupported');
-    expect(prompt).toContain('call request_user_input instead of returning COMPLETED');
+    expect(prompt).toContain('Do not silently drop rows');
   });
 
-  it('treats statuses as UI states and material mismatches as questions, not ask-rules or nearest-fit', () => {
+  it('uses the prepared workbook as the technical-input gate', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('not rules about when you may ask');
-    expect(prompt).toContain('Material mismatches are questions, not nearest-fit assumptions');
-    expect(prompt).toContain('A guess that materially changes cost is a request_user_input, not a warning');
+    expect(prompt).toContain('PRICING_INTAKE_INCOMPLETE');
+    expect(prompt).toContain('fill the yellow cells');
+    expect(prompt).toContain('Do not reopen technical questions');
   });
 
-  it('offers 2-4 options plus an Other/customInput path and honours allowApplyToSimilarResources', () => {
+  it('offers contextual options plus an Other/customInput path', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('Offer 2-4 useful contextual options');
     expect(prompt).toContain('customInput');
     expect(prompt).toContain('allowApplyToSimilarResources');
-    expect(prompt).toContain('Call request_user_input for one material question at a time');
+    expect(prompt).toContain('one question per pause');
   });
 
   it('applies a commercial pricing strategy only to eligible resources and never silently picks On-Demand', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('do not silently pick On-Demand');
-    expect(prompt).toContain('only to the resources actually eligible for it');
+    expect(prompt).toContain('Do not silently pick On-Demand');
+    expect(prompt).toContain('only to resources actually eligible for it');
   });
 
   it('requires one final validate -> export -> import readback before COMPLETED', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('validate_estimate, then export_estimate, then import_estimate once');
-    expect(prompt).toContain('nothing was aggregated or duplicated');
+    expect(prompt).toContain('incorrectly aggregated or duplicated');
     // Part 37: the readback closes the export/import loop — the estimate handed to the
     // customer is the one AWS actually holds, so it must confirm the priced cost-relevant
     // rows are present in the imported estimate, not merely reported in evidence arrays.
-    expect(prompt).toContain('the estimate handed to the customer is the one AWS actually holds');
+    expect(prompt).toContain('The estimate handed to the customer is the one AWS actually holds');
     expect(prompt).toContain('every cost-relevant row you priced is present and priced in the imported estimate');
   });
 });

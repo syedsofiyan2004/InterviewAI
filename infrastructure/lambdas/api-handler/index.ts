@@ -42,7 +42,7 @@ import {
   IntelligenceQuestion,
   ProgressEvent
 } from './intelligence-integrations.js';
-import { selectQuestionsFromBank, detectInterviewLevel, SelectedBankQuestion } from './manual-question-bank.js';
+import { selectQuestionsFromBank, detectInterviewLevel, hasMeaningfulRoleCoverage, SelectedBankQuestion } from './manual-question-bank.js';
 import {
   queryScheduledForPanelist,
   findScheduledByInterviewId,
@@ -80,6 +80,15 @@ import {
   updateQuestionBankItem,
   deleteQuestionBankItem,
 } from './question-bank-routes.js';
+import {
+  getSowPeerReviewConfig,
+  getAdminSowPeerReview,
+  updateAdminSowPeerReview,
+  getSowPeerReviewUploadUrl,
+  confirmAdminSowPeerReviewContext,
+  reviewSow,
+} from './sow-peer-review-routes.js';
+import { generateMapEligibility, queueMapEligibility, getMapEligibilityStatus } from './map-eligibility-routes.js';
 import { runKekaScheduleSyncWorker } from './keka-schedule-sync.js';
 import {
   createWorkspace,
@@ -165,6 +174,8 @@ const QUEUE_URL = process.env.QUEUE_URL!;
 const MOM_TABLE_NAME = process.env.MOM_TABLE_NAME!;
 const MOM_QUEUE_URL = process.env.MOM_QUEUE_URL!;
 const INTELLIGENCE_TABLE_NAME = process.env.INTELLIGENCE_TABLE_NAME!;
+const ADMIN_TABLE_NAME = process.env.ADMIN_TABLE_NAME!;
+const CALCULATOR_TABLE_NAME = process.env.CALCULATOR_TABLE_NAME!;
 const SONNET_5_MODEL_ID = 'global.anthropic.claude-sonnet-5';
 const BEDROCK_INTERACTIVE_TIMEOUT_MS = 23_000;
 /**
@@ -226,6 +237,24 @@ function parseTaggedJson<T>(
 }
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  if ((event as any).__internalTask === 'sow-peer-review') {
+    try { return await reviewSow(event); }
+    catch (error: any) {
+      console.error('SOW Peer Review worker failed:', error);
+      const { UpdateCommand } = await import('@aws-sdk/lib-dynamodb');
+      await ddbDocClient.send(new UpdateCommand({ TableName: ADMIN_TABLE_NAME, Key: { PK: `SOW_REVIEW#JOB#${String((event as any).reviewId)}`, SK: 'META' }, UpdateExpression: 'SET #status = :status, error_message = :error, updated_at = :now', ExpressionAttributeNames: { '#status': 'status' }, ExpressionAttributeValues: { ':status': 'FAILED', ':error': error?.message || 'SOW review failed.', ':now': Date.now() } }));
+      return errorResponse(500, 'SOW_REVIEW_FAILED', 'SOW review failed.');
+    }
+  }
+  if ((event as any).__internalTask === 'map-eligibility') {
+    try { return await generateMapEligibility(String((event as any).calculationId || ''), { ...(event as any), body: (event as any).body || '{}' } as APIGatewayProxyEvent); }
+    catch (error: any) {
+      console.error('MAP eligibility worker failed:', error);
+      const { UpdateCommand } = await import('@aws-sdk/lib-dynamodb');
+      await ddbDocClient.send(new UpdateCommand({ TableName: CALCULATOR_TABLE_NAME, Key: { calculation_id: String((event as any).calculationId) }, UpdateExpression: 'SET map_eligibility_job = :job, updated_at = :now', ExpressionAttributeValues: { ':job': { job_id: (event as any).jobId, status: 'FAILED', error_message: error?.message || 'MAP eligibility failed.', updated_at: Date.now() }, ':now': Date.now() } }));
+      return errorResponse(500, 'MAP_ANALYSIS_FAILED', 'MAP eligibility failed.');
+    }
+  }
   if ((event as any).__internalTask === 'intelligence-analysis') {
     return await runIntelligenceAnalysisWorker(String((event as any).intelligenceId || ''));
   }
@@ -332,6 +361,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await reviseCalculation(pathParameters?.id, event);
     }
     if (httpMethod === 'POST' && resource === '/calculator/{id}/answer') {
+      let body: any = {};
+      try { body = JSON.parse(event.body || '{}'); } catch { /* normal answer validation handles malformed JSON */ }
+      if (body?.action === 'MAP_ELIGIBILITY') return await queueMapEligibility(pathParameters?.id, event);
+      if (body?.action === 'MAP_ELIGIBILITY_STATUS') return await getMapEligibilityStatus(pathParameters?.id, event);
       return await answerCalculationQuestion(pathParameters?.id, event);
     }
     if (httpMethod === 'DELETE' && resource === '/calculator/{id}') {
@@ -415,6 +448,29 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
     if (httpMethod === 'DELETE' && resource === '/admin/question-bank/{roleKey}/questions/{questionId}') {
       return await deleteQuestionBankItem(pathParameters?.roleKey, pathParameters?.questionId, event);
+    }
+
+    // --- Pre-Sales / SOW Peer Review ---
+    if (httpMethod === 'GET' && resource === '/sow-peer-review/config') {
+      return await getSowPeerReviewConfig(event);
+    }
+    if (httpMethod === 'POST' && resource === '/sow-peer-review/upload-url') {
+      return await getSowPeerReviewUploadUrl(event);
+    }
+    if (httpMethod === 'POST' && resource === '/sow-peer-review/review') {
+      return await reviewSow(event);
+    }
+    if (httpMethod === 'GET' && resource === '/admin/sow-peer-review') {
+      return await getAdminSowPeerReview(event);
+    }
+    if (httpMethod === 'PATCH' && resource === '/admin/sow-peer-review') {
+      return await updateAdminSowPeerReview(event);
+    }
+    if (httpMethod === 'POST' && resource === '/admin/sow-peer-review/context-upload-url') {
+      return await getSowPeerReviewUploadUrl(event, true);
+    }
+    if (httpMethod === 'POST' && resource === '/admin/sow-peer-review/context-confirm') {
+      return await confirmAdminSowPeerReviewContext(event);
     }
 
     // --- Candidate workspace / collaboration routes ---
@@ -545,6 +601,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return await confirmIntelligenceResume(pathParameters?.id, event);
     }
 
+    if (httpMethod === 'GET' && resource === '/intelligence-interviews/{id}/resume') {
+      return await getIntelligenceResume(pathParameters?.id, event);
+    }
+
     if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/generate-questions') {
       return await generateIntelligenceQuestions(pathParameters?.id, event);
     }
@@ -575,6 +635,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
     if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/approve') {
       return await approveIntelligenceInterview(pathParameters?.id, event);
+    }
+
+    if (httpMethod === 'POST' && resource === '/intelligence-interviews/{id}/keka-feedback') {
+      return await sendIntelligenceFeedback(pathParameters?.id, event);
     }
 
     if (httpMethod === 'GET' && resource === '/intelligence-interviews/{id}/report') {
@@ -1430,6 +1494,62 @@ ${JSON.stringify(input.questions)}
     console.warn('[Question Guide] Bedrock refinement failed; using curated bank wording.', error);
     return { status: 'bank_only', questions: fallback };
   }
+}
+
+/**
+ * Generates technical scenarios when the approved bank has insufficient
+ * role-specific coverage. This remains generic: the JD and competencies are
+ * the only source of role context.
+ */
+async function generateAiFallbackQuestionPool(input: {
+  roleTitle: string;
+  jdText: string;
+  resumeText: string;
+  competencies: string[];
+  count: number;
+}): Promise<SelectedBankQuestion[]> {
+  const deterministic = input.competencies.slice(0, input.count).map((competency, index) => ({
+    id: `ai-fallback-${index + 1}`,
+    bankQuestionId: `ai-fallback-${index + 1}`,
+    category: 'Technical scenario',
+    focusArea: competency,
+    question: `A production system is under pressure because of ${competency}. How would you investigate the failure, compare the viable technical options, and validate the fix before rollout?`,
+    followUps: ['Which signals or tests would guide your first decision?', 'What would your rollback or containment plan be?'],
+    whatToListenFor: ['Specific diagnostic sequence and evidence', 'Explicit reliability, performance, security, or cost trade-off', 'Validation and rollback criteria'],
+  }));
+
+  try {
+    const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+    const { extractJson } = await import('../shared/utils.js');
+    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+    const modelId = process.env.BEDROCK_SONNET_5_PROFILE_ARN || SONNET_5_MODEL_ID;
+    const prompt = `You are a senior technical interviewer. An approved question bank did not contain enough role-specific material. Create exactly ${input.count} technical, scenario-based interview questions for the role below. Do not write generic behavioral questions. Anchor every question in a system, architecture, production incident, migration, integration, data, security, performance, reliability, or delivery constraint supported by the supplied JD. Require engineering decisions, alternatives, failure modes, validation, operational readiness, or measurable outcomes. Do not invent skills or products absent from the context. Return only valid JSON inside <question_guide> tags with this shape: {"questions":[{"id":"AI-01","focus_area":"string","category":"Technical scenario","question":"string","follow_ups":["string"],"what_to_listen_for":["string"],"red_flags":["string"]}]}\n\nRole: ${input.roleTitle}\nCompetencies: ${JSON.stringify(input.competencies)}\nJob description:\n${input.jdText.slice(0, 12000)}\nResume context (do not expose private details):\n${input.resumeText.slice(0, 7000) || 'No resume supplied'}`;
+    const response = await client.send(new InvokeModelCommand({
+      modelId,
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify(anthropicRequestBody(modelId, prompt, BEDROCK_QUESTION_GUIDE_TOKENS, 0)),
+    }));
+    const payload = JSON.parse(new TextDecoder().decode(response.body));
+    const parsed = parseTaggedJson<{ questions?: any[] }>(getBedrockText(payload), 'question_guide', extractJson, payload.stop_reason);
+    const normalized = (Array.isArray(parsed.questions) ? parsed.questions : [])
+      .filter((question) => typeof question?.question === 'string' && question.question.trim().length > 30)
+      .slice(0, input.count)
+      .map((question, index) => ({
+        id: `ai-fallback-${index + 1}`,
+        bankQuestionId: `ai-fallback-${index + 1}`,
+        category: String(question.category || 'Technical scenario'),
+        focusArea: String(question.focus_area || input.competencies[index] || 'Technical depth'),
+        question: String(question.question).trim(),
+        followUps: Array.isArray(question.follow_ups) ? question.follow_ups.map(String).filter(Boolean).slice(0, 4) : deterministic[index]?.followUps || [],
+        whatToListenFor: Array.isArray(question.what_to_listen_for) ? question.what_to_listen_for.map(String).filter(Boolean).slice(0, 4) : deterministic[index]?.whatToListenFor || [],
+        redFlags: Array.isArray(question.red_flags) ? question.red_flags.map(String).filter(Boolean).slice(0, 3) : undefined,
+      }));
+    if (normalized.length >= Math.min(3, input.count)) return normalized;
+  } catch (error) {
+    console.warn('[Question Guide] AI fallback authoring failed; using deterministic technical prompts.', error);
+  }
+  return deterministic;
 }
 
 async function generateInterviewQuestionGuide(id: string | undefined, event: APIGatewayProxyEvent) {
@@ -3294,13 +3414,29 @@ async function buildQuestionPlan(
   // competencies would select zero questions. The bank picks by JD + role; the
   // competencies steer only what the guide and report surface.
   const rolePool = await loadRoleBankPool();
-  const selection = selectQuestionsFromBank({
+  let selection = selectQuestionsFromBank({
     interviewId: record.intelligence_id,
     roleTitle: record.job.title || 'Target role',
     jdText: record.job.description,
     count: requestedCount || 8,
     rolePool,
   });
+  if (!hasMeaningfulRoleCoverage(selection.questions)) {
+    const aiQuestions = await generateAiFallbackQuestionPool({
+      roleTitle: record.job.title || 'Target role',
+      jdText: record.job.description,
+      resumeText: record.candidate.resumeText || '',
+      competencies: topics,
+      count: Math.min(requestedCount || 8, 8),
+    });
+    if (aiQuestions.length) {
+      selection = {
+        ...selection,
+        questions: [...aiQuestions, ...selection.questions].slice(0, requestedCount || 8),
+        focusAreas: topics,
+      };
+    }
+  }
   const optimized = await optimizeQuestionBankSelection({
     roleTitle: record.job.title || 'Target role',
     level: selection.level,
@@ -4205,6 +4341,27 @@ async function confirmIntelligenceResume(id: string | undefined, event: APIGatew
   };
   await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
   return successResponse(updated);
+}
+
+async function getIntelligenceResume(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event);
+  if (response) return response;
+  const resumeKey = item.candidate?.resumeS3Key;
+  if (!resumeKey) return errorResponse(404, 'NOT_FOUND', 'No resume is attached to this interview.');
+
+  try {
+    await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: resumeKey }));
+  } catch {
+    return errorResponse(404, 'NOT_FOUND', 'The attached resume is no longer available.');
+  }
+
+  const fileName = item.candidate.resumeFileName || 'candidate-resume';
+  const url = await getSignedUrl(s3Client, new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: resumeKey,
+    ResponseContentDisposition: `inline; filename="${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
+  }), { expiresIn: 900 });
+  return successResponse({ download_url: url, file_name: fileName });
 }
 
 /**
@@ -5638,6 +5795,73 @@ async function getIntelligenceReport(id: string | undefined, event: APIGatewayPr
     approved: item.approved,
     download_url: downloadUrl,
   });
+}
+
+async function sendIntelligenceFeedback(id: string | undefined, event: APIGatewayProxyEvent) {
+  const { item, response } = await getOwnedIntelligenceRecord(id, event, {
+    minTier: 'VIEWER',
+    auditAction: 'DOWNLOAD_REPORT',
+    targetType: 'intelligence',
+  });
+  if (response) return response;
+  if (!item.aiEvaluation || item.status !== 'approved' || !item.approved) {
+    return errorResponse(400, 'VALIDATION_ERROR', 'Approve the completed interview review before sending it to Keka.');
+  }
+  if (item.keka.feedbackStatus === 'sent') {
+    return successResponse({ ...item, keka: { ...item.keka, feedbackStatus: 'sent' } });
+  }
+  if (getIntegrationMode(process.env.KEKA_INTEGRATION_MODE) !== 'live' || !item.keka.jobId || !item.keka.candidateId) {
+    return errorResponse(503, 'KEKA_FEEDBACK_NOT_READY', 'Keka Hire is not configured for this interview.');
+  }
+
+  const reportKey = `users/${intelligenceStorageFolder(item)}/intelligence/${item.intelligence_id}/processed/report.pdf`;
+  try {
+    const report = await generateIntelligencePdfReport(item);
+    await saveFileContent(BUCKET_NAME, reportKey, report, 'application/pdf');
+    const reportLink = await getSignedUrl(s3Client, new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: reportKey,
+      ResponseContentDisposition: `inline; filename="${reportFileName(item.candidate.name, item.job.title, 'interview-report')}"`,
+    }), { expiresIn: 60 * 60 * 24 * 7 });
+    const candidateScore = Number(item.aiEvaluation.candidateEvaluation.candidateScore);
+    const updated: InterviewIntelligenceRecord = {
+      ...item,
+      keka: { ...item.keka, feedbackStatus: 'sent', feedbackSentAt: Date.now(), feedbackError: undefined },
+      updated_at: Date.now(),
+    };
+    const result = await createKekaIntegration('live').submitAssessmentFeedback({
+      jobId: item.keka.jobId,
+      candidateId: item.keka.candidateId,
+      candidateEmail: item.candidate.email,
+      reportLink,
+      score: Number.isFinite(candidateScore) ? candidateScore : undefined,
+      maximumScore: 10,
+      startTime: item.teams.scheduledAt || new Date(item.created_at).toISOString(),
+      endTime: item.transcript?.uploadedAt ? new Date(item.transcript.uploadedAt).toISOString() : new Date().toISOString(),
+      comments: item.approved.notes,
+    });
+    updated.keka = {
+      ...updated.keka,
+      assessmentVendorId: result.vendorId,
+      assessmentRequestId: result.assessmentRequestId,
+      feedbackMode: result.mode,
+    };
+    await ddbDocClient.send(new PutCommand({ TableName: INTELLIGENCE_TABLE_NAME, Item: updated }));
+    return successResponse(updated);
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : 'Keka feedback submission failed.';
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: INTELLIGENCE_TABLE_NAME,
+      Key: { intelligence_id: item.intelligence_id },
+      UpdateExpression: 'SET #k = :k, updated_at = :updatedAt',
+      ExpressionAttributeNames: { '#k': 'keka' },
+      ExpressionAttributeValues: {
+        ':k': { ...item.keka, feedbackStatus: 'failed', feedbackError: message },
+        ':updatedAt': Date.now(),
+      },
+    }));
+    return errorResponse(error instanceof KekaIntegrationError ? 502 : 500, 'KEKA_FEEDBACK_FAILED', message);
+  }
 }
 
 // --- NEW User Preference Handlers ---

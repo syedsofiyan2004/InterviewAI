@@ -11,6 +11,44 @@ export type AdminTier = 'VIEWER' | 'REVIEWER' | 'APPROVER' | 'OWNER';
 export type WorkspaceStatus = 'OPEN' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
 export type LinkedRecordType = 'interview' | 'mom' | 'intelligence';
 
+export interface SowPeerReviewFinding {
+  location: string;
+  finding?: string;
+  question?: string;
+  whyItMatters: string;
+}
+
+export interface SowPeerReviewReport {
+  overview: string;
+  openQuestions: SowPeerReviewFinding[];
+  blockers: SowPeerReviewFinding[];
+  majors: SowPeerReviewFinding[];
+  minors: SowPeerReviewFinding[];
+}
+
+export interface SowPeerReviewContextDocument {
+  document_id: string;
+  file_name: string;
+  character_count: number;
+  created_at?: number;
+}
+
+export interface SowPeerReviewJobSummary {
+  review_id: string;
+  file_name: string;
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  created_at: number;
+  updated_at?: number;
+  completed_at?: number;
+  project_id?: string | null;
+  calculation_id?: string | null;
+  overview?: string;
+  counts: { blockers: number; majors: number; openQuestions: number; minors: number };
+  error_message?: string;
+  has_report?: boolean;
+  download_url?: string;
+}
+
 export interface LinkedRecord {
   record_type: LinkedRecordType;
   record_id: string;
@@ -365,6 +403,12 @@ export interface InterviewIntelligenceRecord extends AnalysisProgress {
     syncStatus: 'not_connected' | 'mocked' | 'synced' | 'failed';
     lastSyncAt?: number;
     error?: string;
+    assessmentVendorId?: string;
+    assessmentRequestId?: string;
+    feedbackStatus?: 'not_sent' | 'sent' | 'failed';
+    feedbackMode?: 'assessment' | 'candidate_note';
+    feedbackSentAt?: number;
+    feedbackError?: string;
   };
   teams: {
     mode: 'mock' | 'disabled' | 'live';
@@ -1176,6 +1220,11 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getIntelligenceResumeUrl(id: string): Promise<{ download_url: string; file_name?: string }> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${encodeURIComponent(id)}/resume`);
+    return handleResponse(res);
+  },
+
   async getQuestionTopics(intelligenceId: string): Promise<{
     topics: Array<{ topic: string; priority: 'high' | 'medium' | 'low' }>;
     level: string;
@@ -1367,6 +1416,84 @@ export const api = {
   async adminDeleteQuestionBankItem(roleKey: string, questionId: string): Promise<{ success: boolean; question_id: string }> {
     const res = await authFetch(`${API_URL}/admin/question-bank/${encodeURIComponent(roleKey)}/questions/${encodeURIComponent(questionId)}`, {
       method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+
+  async sendIntelligenceFeedbackToKeka(id: string): Promise<InterviewIntelligenceRecord> {
+    const res = await authFetch(`${API_URL}/intelligence-interviews/${id}/keka-feedback`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async getSowPeerReviewConfig(): Promise<{ instructions: string }> {
+    const res = await authFetch(`${API_URL}/sow-peer-review/config`);
+    return handleResponse(res);
+  },
+
+  async getAdminSowPeerReview(): Promise<{ instructions: string; map_instructions: string; documents: SowPeerReviewContextDocument[] }> {
+    const res = await authFetch(`${API_URL}/admin/sow-peer-review`);
+    return handleResponse(res);
+  },
+
+  async updateAdminSowPeerReview(instructions: string, map_instructions?: string): Promise<{ instructions: string; map_instructions?: string }> {
+    const res = await authFetch(`${API_URL}/admin/sow-peer-review`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions, map_instructions }),
+    });
+    return handleResponse(res);
+  },
+
+  async uploadSowPeerReviewFile(file: File, adminContext = false): Promise<{ s3_key: string; file_name: string }> {
+    const base = adminContext ? `${API_URL}/admin/sow-peer-review/context-upload-url` : `${API_URL}/sow-peer-review/upload-url`;
+    const res = await authFetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_name: file.name, content_type: file.type || 'application/octet-stream' }),
+    });
+    const upload = await handleResponse<{ upload_url: string; s3_key: string; file_name: string }>(res);
+    const put = await fetch(upload.upload_url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+    if (!put.ok) throw new Error('The document could not be uploaded.');
+    if (adminContext) {
+      const confirm = await authFetch(`${API_URL}/admin/sow-peer-review/context-confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ s3_key: upload.s3_key, file_name: upload.file_name }),
+      });
+      await handleResponse(confirm);
+    }
+    return { s3_key: upload.s3_key, file_name: upload.file_name };
+  },
+
+  async reviewSowPeerReview(s3_key: string, file_name: string, calculation_id?: string, project_id?: string, include_reference_context = false): Promise<{ job_id?: string; status?: string; report?: SowPeerReviewReport; file_name: string; reviewed_at?: number }> {
+    const res = await authFetch(`${API_URL}/sow-peer-review/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ s3_key, file_name, calculation_id, project_id, include_reference_context }),
+    });
+    return handleResponse(res);
+  },
+
+  async getSowPeerReviewStatus(job_id: string): Promise<{ status: string; report?: SowPeerReviewReport; error_message?: string; file_name?: string; reviewed_at?: number; download_url?: string; has_calculator_context?: boolean; has_reference_context?: boolean }> {
+    const res = await authFetch(`${API_URL}/sow-peer-review/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'STATUS', review_id: job_id }),
+    });
+    return handleResponse(res);
+  },
+
+  async listSowPeerReviews(): Promise<{ items: SowPeerReviewJobSummary[]; count: number }> {
+    const res = await authFetch(`${API_URL}/sow-peer-review/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'LIST' }),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteSowPeerReview(review_id: string): Promise<{ deleted: boolean; review_id: string; deleted_artifacts: number }> {
+    const res = await authFetch(`${API_URL}/sow-peer-review/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'DELETE', review_id }),
     });
     return handleResponse(res);
   },

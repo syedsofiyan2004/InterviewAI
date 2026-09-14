@@ -14,6 +14,7 @@ import {
   schedulingSaving,
   type CalculationResultResponse,
   type CalculationScenario,
+  type MapEligibilityReport,
 } from '@/lib/calculatorApi';
 
 /** A single question the calculator agent asked the customer (mirrors server agent_questions). */
@@ -117,6 +118,9 @@ function CalculationDetailContent() {
   const [applyToSimilar, setApplyToSimilar] = useState<Record<string, boolean>>({});
   const [answeringAgent, setAnsweringAgent] = useState(false);
   const [pollNonce, setPollNonce] = useState(0);
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [mapInputs, setMapInputs] = useState<MapEligibilityReport['modifierInputs']>({});
 
   // Present one decision at a time so each answer resumes the same agent session
   // unambiguously, even if a model emitted a compact batch.
@@ -212,6 +216,29 @@ function CalculationDetailContent() {
       setError(errorMessage(err, "Couldn't continue the estimate with that answer."));
     } finally {
       setAnsweringAgent(false);
+    }
+  };
+
+  const generateMapEligibility = async () => {
+    if (!id) return;
+    setMapBusy(true);
+    setMapError(null);
+    try {
+      const queued = await calculatorApi.generateMapEligibility(id, mapInputs);
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const status = await calculatorApi.getMapEligibilityStatus(id);
+        if (status.status === 'COMPLETED' && status.map_eligibility) {
+          setData((current) => current ? { ...current, map_eligibility: status.map_eligibility } : current);
+          return;
+        }
+        if (status.status === 'FAILED') throw new Error(status.error_message || 'MAP eligibility analysis failed.');
+      }
+      throw new Error(`MAP analysis is still processing (job ${queued.job_id}). Refresh this estimate shortly.`);
+    } catch (err: unknown) {
+      setMapError(errorMessage(err, 'MAP eligibility could not be generated.'));
+    } finally {
+      setMapBusy(false);
     }
   };
 
@@ -822,6 +849,44 @@ function CalculationDetailContent() {
             )}
           </div>
 
+          <section className="mt-5 rounded-xl border border-accent/25 bg-accent/5 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-accent">Optional post-estimate analysis</p>
+                <h2 className="mt-1 text-lg font-semibold text-text-primary">MAP Eligibility</h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-text-secondary">Run this separately after the AWS estimate link is ready. The analysis uses the estimate line items and the MAP rules, but never changes the estimate itself.</p>
+              </div>
+              <button type="button" onClick={() => void generateMapEligibility()} disabled={mapBusy} className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-sm disabled:opacity-50">
+                {mapBusy ? <Loader2 size={15} className="animate-spin" /> : <PiggyBank size={15} />}
+                {mapBusy ? 'Generating MAP report...' : data?.map_eligibility ? 'Regenerate MAP Eligibility' : 'Generate MAP Eligibility'}
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={!!mapInputs.greenfield} onChange={(event) => setMapInputs((current) => ({ ...current, greenfield: event.target.checked }))} className="h-4 w-4 rounded border-border" /> AWS Greenfield</label>
+              <label className="text-xs text-text-muted">VMware workload %<input type="number" min="0" max="100" value={mapInputs.vmwarePercent ?? ''} onChange={(event) => setMapInputs((current) => ({ ...current, vmwarePercent: event.target.value === '' ? undefined : Number(event.target.value) }))} className="premium-input mt-1 w-full px-3 py-2 text-sm" placeholder="Unknown" /></label>
+              <label className="text-xs text-text-muted">Modernization scope %<input type="number" min="0" max="100" value={mapInputs.modernizationPercent ?? ''} onChange={(event) => setMapInputs((current) => ({ ...current, modernizationPercent: event.target.value === '' ? undefined : Number(event.target.value) }))} className="premium-input mt-1 w-full px-3 py-2 text-sm" placeholder="Unknown" /></label>
+              <label className="text-xs text-text-muted">Migrated VMs<input type="number" min="0" value={mapInputs.migratedVms ?? ''} onChange={(event) => setMapInputs((current) => ({ ...current, migratedVms: event.target.value === '' ? undefined : Number(event.target.value) }))} className="premium-input mt-1 w-full px-3 py-2 text-sm" placeholder="Unknown" /></label>
+            </div>
+            {mapError && <p className="mt-3 rounded-lg border border-danger/25 bg-danger/10 p-3 text-sm text-danger">{mapError}</p>}
+            {data?.map_eligibility && <div className="mt-5 border-t border-border pt-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <MapMetric label="MAP tier" value={data.map_eligibility.tier || 'Needs review'} />
+                <MapMetric label="ARR" value={formatCurrency(data.map_eligibility.arr, result.currency)} />
+                <MapMetric label="Partner cash" value={formatCurrency(data.map_eligibility.estimatedPartnerCash, result.currency)} />
+                <MapMetric label="Estimated credits" value={formatCurrency(data.map_eligibility.estimatedCredits, result.currency)} />
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <MapMetric label="Eligible annual spend" value={formatCurrency(data.map_eligibility.eligibleAnnualSpend, result.currency)} />
+                <MapMetric label="Assess cash" value={formatCurrency(data.map_eligibility.assessCash, result.currency)} />
+                <MapMetric label="Migrate & Modernize credits" value={formatCurrency(data.map_eligibility.migrateModernizeCredits, result.currency)} />
+              </div>
+              <p className="mt-4 text-xs leading-5 text-text-muted">{data.map_eligibility.disclaimer}</p>
+              {!!data.map_eligibility.findings.length && <div className="mt-4 overflow-x-auto rounded-lg border border-border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="bg-surface-elevated text-text-muted"><tr><th className="px-3 py-2 font-semibold">Service / product</th><th className="px-3 py-2 font-semibold">Category</th><th className="px-3 py-2 font-semibold">Annual spend</th><th className="px-3 py-2 font-semibold">MAP treatment</th><th className="px-3 py-2 font-semibold">Notes</th></tr></thead><tbody>{data.map_eligibility.findings.map((finding, index) => <tr key={`${finding.service}-${index}`} className="border-t border-border align-top"><td className="px-3 py-2 font-medium text-text-primary">{finding.service}</td><td className="px-3 py-2 text-text-secondary">{finding.category || 'General'}</td><td className="px-3 py-2 text-text-secondary">{formatCurrency(finding.annualCost, result.currency)}</td><td className="px-3 py-2 text-text-secondary">{finding.eligibility}</td><td className="px-3 py-2 text-text-muted">{finding.notes || '—'}</td></tr>)}</tbody></table></div>}
+              {!!data.map_eligibility.openQuestions.length && <div className="mt-4 rounded-lg border border-warning/25 bg-warning/10 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-warning">Open questions</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-text-secondary">{data.map_eligibility.openQuestions.map((question, index) => <li key={index}>{question}</li>)}</ul></div>}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-muted">The saved MAP report can be supplied as context to SOW Peer Review.</p><Link href={data.project_id ? `/sow-peer-review?projectId=${encodeURIComponent(data.project_id)}` : `/sow-peer-review?calculationId=${encodeURIComponent(id || '')}`} className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold">Review SOW with {data.project_id ? 'project' : 'MAP'} context <ExternalLink size={13} /></Link></div>
+            </div>}
+          </section>
+
           {/* One card per band of scenarios, each row carrying its own shareable estimate.
               Grouped by kind rather than listed flat because the three kinds are not
               interchangeable: only one sizing will ever be spent, consecutive years are
@@ -1149,6 +1214,10 @@ function CalculationDetailContent() {
       )}
     </div>
   );
+}
+
+function MapMetric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-border bg-surface-elevated p-3"><p className="text-[11px] uppercase tracking-wide text-text-muted">{label}</p><p className="mt-1 text-lg font-semibold text-text-primary">{value}</p></div>;
 }
 
 export default function CalculationDetailPage() {

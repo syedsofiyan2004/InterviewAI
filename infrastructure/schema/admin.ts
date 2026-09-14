@@ -77,6 +77,7 @@ export const AuditAction = z.enum([
   // edit is attributable.
   'QBANK_UPDATE',
   'QBANK_DELETE',
+  'SOW_REVIEW_UPDATE',
   // Keka schedule sync and the composite (multi-round) synthesis.
   'KEKA_SYNC',
   'COMPOSITE_ANALYSIS',
@@ -547,6 +548,32 @@ export const CreateQuestionBankItemSchema = z.object({
 export const UpdateQuestionBankItemSchema = CreateQuestionBankItemSchema
   .partial()
   .extend({ active: z.boolean().optional() });
+
+// SOW Peer Review configuration and context curation. These rows are kept in
+// the admin table so the review rubric can be edited by OWNERs without a code
+// deploy, while uploaded reference documents remain auditable and reusable.
+export const UpdateSowPeerReviewConfigSchema = z.object({
+  instructions: z.string().min(1).max(60000),
+  map_instructions: z.string().min(1).max(60000).optional(),
+});
+
+export const SowPeerReviewUploadSchema = z.object({
+  file_name: z.string().min(1).max(240),
+  content_type: z.string().min(1).max(120),
+});
+
+export const SowPeerReviewReviewSchema = z.object({
+  s3_key: z.string().min(1),
+  file_name: z.string().min(1).max(240),
+  calculation_id: z.string().optional(),
+  project_id: z.string().optional(),
+  include_reference_context: z.boolean().optional().default(false),
+});
+
+export const SowPeerReviewContextConfirmSchema = z.object({
+  s3_key: z.string().min(1),
+  file_name: z.string().min(1).max(240),
+});
 
 // The identity payload returned by GET /me. Derived entirely server-side.
 export const MeResponseSchema = z.object({

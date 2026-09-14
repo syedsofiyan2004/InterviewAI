@@ -182,6 +182,7 @@ const MONEY_WORDS = ['cost', 'rate', 'price', 'monthly', 'annual', 'yearly', 'us
 const INVENTORY_FIELDS: FieldSpec[] = [
   { field: 'name', aliases: ['vm name', 'server name', 'host name', 'hostname', 'instance name', 'resource name', 'machine name', 'workload name', 'application', 'server', 'host', 'vm', 'name'], exclude: MONEY_WORDS },
   { field: 'environment', aliases: ['environment', 'env', 'stage', 'tier', 'environment type', 'landscape'] },
+  { field: 'scenario', aliases: ['scenario year', 'scenario', 'fiscal year', 'year', 'pricing scenario'] },
   { field: 'region', aliases: ['region', 'aws region', 'target region', 'location', 'aws location', 'data center', 'datacenter', 'site'] },
   // The simple case: a sheet built from the downloadable template leads with a
   // Service column and never mentions an instance type at all. It has to work just
@@ -215,6 +216,8 @@ const INVENTORY_FIELDS: FieldSpec[] = [
   { field: 'monthly_hours', aliases: ['monthly hours', 'hours per month', 'hours month', 'monthly runtime hours', 'run hours per month', 'hours mo'] },
   { field: 'hours_per_day', aliases: ['hours per day', 'hours day', 'hrs per day', 'hrs day', 'daily hours', 'uptime hours', 'uptime', 'runtime hours', 'hours'], exclude: ['month'] },
   { field: 'quantity', aliases: ['qty', 'quantity', 'count', 'nos', 'number of instances', 'no of instances', 'instances', 'units', 'node count', 'nodes', 'node', 'brokers', 'number of brokers'] },
+  { field: 'usage_amount', aliases: ['usage amount', 'monthly usage', 'billable usage', 'usage quantity'] },
+  { field: 'usage_unit', aliases: ['usage unit', 'billing unit', 'meter unit', 'unit of measure'] },
 
   // Reported figures: captured for the variance comparison, never used as prices.
   { field: 'hourly_rate', aliases: ['hourly rate', 'rate per hour', 'rate hr', 'price per hour', 'price hr', 'hourly price', 'effective hourly rate', 'unit price', 'unit rate'], exclude: ['month', 'annual', 'yearly'] },
@@ -237,7 +240,9 @@ const INVENTORY_FIELDS: FieldSpec[] = [
  * Ceilings, every one of them reported rather than applied silently: a truncated
  * inventory that looks complete is the worst possible outcome for a cost document.
  */
-const MAX_RESOURCES = 2_000;
+// Full inventories are spilled to S3 by the route, so the reader can retain substantially
+// more than a DynamoDB item could. The guard remains finite for malformed workbooks.
+const MAX_RESOURCES = 10_000;
 const MAX_FACTS = 80;
 const MAX_RATES = 150;
 const MAX_REPORTED = 60;
@@ -1150,6 +1155,7 @@ function readInventory(
       section,
       name: name || undefined,
       environment: cell(row, 'environment') || undefined,
+      scenario: cell(row, 'scenario') || undefined,
       // Default to EC2 only when the row clearly describes a machine. A sheet that
       // names its own services is always believed over that default.
       service: service || (size || vcpu !== undefined || ramGb !== undefined ? 'Amazon EC2' : undefined),
@@ -1165,6 +1171,8 @@ function readInventory(
       purchase_model: cell(row, 'purchase_model') || undefined,
       hoursPerDay,
       hoursPerMonth,
+      usage_amount: num(row, 'usage_amount'),
+      usage_unit: cell(row, 'usage_unit') || undefined,
       notes,
       raw: raw.slice(0, 600),
     };
@@ -2147,9 +2155,36 @@ export async function analyseWorkbook(buffer: Buffer, fileName: string): Promise
 
   const tables: Array<{ sheet: SheetGrid; block: SheetBlock; rows: number; kind: TableKind }> = [];
   let order = 0;
+  // RVTools exports repeat the same VM across vInfo, vCPU, vMemory, vDisk and many
+  // relationship sheets. The vInfo table is the inventory authority; pricing every
+  // auxiliary tab fabricates thousands of duplicate resources. Detect the workbook by
+  // its sheet family rather than by filename so renamed exports behave the same way.
+  const sheetNames = new Set(sheets.map((sheet) => normaliseHeader(sheet.name)));
+  const rvToolsWorkbook = sheetNames.has('vinfo') && sheetNames.has('vcpu') && sheetNames.has('vmemory');
 
   for (const sheet of sheets) {
     const blocks = findBlocks(sheet.rows);
+    if (rvToolsWorkbook && normaliseHeader(sheet.name) !== 'vinfo') {
+      context.insights.sheets.push({
+        name: sheet.name,
+        rows: sheet.rows.length,
+        detail: 'RVTools auxiliary sheet retained in the workbook evidence; vInfo is the resource inventory authority',
+      });
+      continue;
+    }
+    // These are evidence/helper sheets emitted by the prepared-workbook flow. They
+    // remain available as excerpts and in the lossless workbook IR, but must never be
+    // re-read as billable resources when the customer uploads the completed file.
+    if (new Set(['instructions', 'inputs needed', 'safe assumptions', 'source context', 'source lineage'])
+      .has(normaliseHeader(sheet.name))) {
+      blocks.forEach((block) => offerExcerpt(sheet, block, context, 0, order++));
+      context.insights.sheets.push({
+        name: sheet.name,
+        rows: sheet.rows.length,
+        detail: 'prepared-workbook context retained as evidence',
+      });
+      continue;
+    }
     const detail: string[] = [];
     /** The export rows this sheet yielded, to cross-check against its stated total. */
     let exportRowCount = 0;

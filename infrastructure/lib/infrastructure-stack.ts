@@ -19,6 +19,8 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { execSync } from 'child_process';
 import * as path from 'path';
+import { IntelligenceRoutesNestedStack } from './intelligence-routes-nested-stack';
+import { FeatureRoutesNestedStack } from './feature-routes-nested-stack';
 
 /**
  * The commit this deployment was synthesised from, stamped into the calculator's diagnostics
@@ -296,6 +298,8 @@ export class IepStack extends cdk.Stack {
         KEKA_API_KEY: '',
         KEKA_SCOPE: '',
         KEKA_SECRET_ARN: kekaSecretArn,
+        // Keka Assessment App appId, used as vendorId for Feedback write-back.
+        KEKA_ASSESSMENT_VENDOR_ID: process.env.KEKA_ASSESSMENT_VENDOR_ID || '',
         // Microsoft Graph credentials are read only at runtime from Secrets Manager.
         MS_TEAMS_SECRET_ARN: teamsSecretArn,
         KEKA_INTERVIEW_ACTIVE_STATUSES: process.env.KEKA_INTERVIEW_ACTIVE_STATUSES || '',
@@ -813,20 +817,8 @@ export class IepStack extends cdk.Stack {
     singleInterview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
     singleInterview.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
     
-    const uploadUrl = singleInterview.addResource('upload-url');
-    uploadUrl.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const confirmUpload = singleInterview.addResource('confirm-upload');
-    confirmUpload.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
     const analyze = singleInterview.addResource('analyze');
     analyze.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const questionGuide = singleInterview.addResource('question-guide');
-    questionGuide.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const minfyJd = singleInterview.addResource('minfy-jd');
-    minfyJd.addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const result = singleInterview.addResource('result');
     result.addMethod('GET', apiHandlerIntegration, authMethodOptions);
@@ -834,47 +826,32 @@ export class IepStack extends cdk.Stack {
     const report = singleInterview.addResource('report');
     report.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
-    const intelligenceInterviews = api.root.addResource('intelligence-interviews');
-    intelligenceInterviews.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    intelligenceInterviews.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const keka = api.root.addResource('keka');
-    const kekaJobs = keka.addResource('jobs');
-    kekaJobs.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    const kekaJob = kekaJobs.addResource('{jobId}');
-    const kekaCandidates = kekaJob.addResource('candidates');
-    kekaCandidates.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    const kekaCandidate = kekaCandidates.addResource('{candidateId}');
-    kekaCandidate.addResource('interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-
-    const myInterviews = api.root.addResource('my-interviews');
-    myInterviews.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    myInterviews.addResource('refresh').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    const myScheduledInterview = myInterviews.addResource('{schedId}');
-    myScheduledInterview.addResource('open').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const singleIntelligenceInterview = intelligenceInterviews.addResource('{id}', {
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
-      }
+    new IntelligenceRoutesNestedStack(this, 'LegacyInterviewRoutes', {
+      apiId: api.restApiId,
+      apiRootResourceId: api.restApiRootResourceId,
+      parentResourceId: singleInterview.resourceId,
+      parentPath: '/interviews/{id}',
+      handler: apiHandler,
+      authorizer: cognitoAuthorizer,
+      region,
     });
-    singleIntelligenceInterview.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addMethod('PATCH', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('resume-upload-url').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('confirm-resume').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('resume').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('generate-questions').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('question-topics').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('case-interview').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('transcript').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('sync-teams-transcript').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('scores').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('analyze').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('approve').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    singleIntelligenceInterview.addResource('report').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+
+    // Feature route trees live in their own nested stacks so the parent
+    // template does not grow with every MOM or HireRite endpoint.
+    new FeatureRoutesNestedStack(this, 'MomRoutes', {
+      apiId: api.restApiId,
+      apiRootResourceId: api.restApiRootResourceId,
+      handler: apiHandler,
+      authorizer: cognitoAuthorizer,
+      region,
+    }, 'mom');
+    new FeatureRoutesNestedStack(this, 'HireRiteRoutes', {
+      apiId: api.restApiId,
+      apiRootResourceId: api.restApiRootResourceId,
+      handler: apiHandler,
+      authorizer: cognitoAuthorizer,
+      region,
+    }, 'hire-rite');
 
     const integrations = api.root.addResource('integrations');
     integrations.addResource('status').addMethod('GET', apiHandlerIntegration, authMethodOptions);
@@ -883,10 +860,6 @@ export class IepStack extends cdk.Stack {
     const minfyCareerJobs = minfyCareers.addResource('jobs');
     minfyCareerJobs.addMethod('GET', apiHandlerIntegration, authMethodOptions);
     minfyCareerJobs.addResource('{jobId}').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-
-    const moms = api.root.addResource('moms');
-    moms.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    moms.addMethod('GET', apiHandlerIntegration, authMethodOptions);
 
     // AWS Cost Calculator. Same shape as the other apps: the collection takes
     // GET+POST, the item resource carries the CORS preflight block, and every
@@ -954,50 +927,6 @@ export class IepStack extends cdk.Stack {
     singleCalculatorProject.addMethod('GET', apiHandlerIntegration, authMethodOptions);
     singleCalculatorProject.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
 
-    const momProjects = api.root.addResource('mom-projects');
-    momProjects.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-    momProjects.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-
-    const singleMomProject = momProjects.addResource('{id}', {
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
-      }
-    });
-    singleMomProject.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    singleMomProject.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
-
-    const singleMom = moms.addResource('{id}', {
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
-      }
-    });
-
-    singleMom.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    singleMom.addMethod('DELETE', apiHandlerIntegration, authMethodOptions);
-
-    const momUploadUrl = singleMom.addResource('upload-url');
-    momUploadUrl.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const momConfirmUpload = singleMom.addResource('confirm-upload');
-    momConfirmUpload.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const momAnalyze = singleMom.addResource('analyze');
-    momAnalyze.addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const momResult = singleMom.addResource('result');
-    momResult.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    // Apply a chat-proposed edit to the stored minutes, then regenerate both documents.
-    // POST, not PUT: this API is append-only by convention and an infrastructure test
-    // asserts no PUT verb exists anywhere on it.
-    singleMom.addResource('revise').addMethod('POST', apiHandlerIntegration, authMethodOptions);
-
-    const momReport = singleMom.addResource('report');
-    momReport.addMethod('GET', apiHandlerIntegration, authMethodOptions);
-
     // Hands the browser the chat Function URL at runtime. Serving it from here rather
     // than baking a NEXT_PUBLIC_* var in at build time avoids a deploy-then-rebuild
     // two-pass, since the URL does not exist until the stack that needs it is deployed.
@@ -1024,10 +953,8 @@ export class IepStack extends cdk.Stack {
     admin.addResource('overview').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('search').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    admin.addResource('moms').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     // Org-wide cost estimates, VIEWER and above.
     admin.addResource('calculator').addMethod('GET', apiHandlerIntegration, authMethodOptions);
-    admin.addResource('intelligence-interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('candidates').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('audit-log').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     // Context-chat oversight, REVIEWER and above. `thread` is a static segment and there
@@ -1038,6 +965,8 @@ export class IepStack extends cdk.Stack {
     conversations.addResource('thread').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('approvals').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('cognito-users').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    admin.addResource('moms').addMethod('GET', apiHandlerIntegration, authMethodOptions);
+    admin.addResource('intelligence-interviews').addMethod('GET', apiHandlerIntegration, authMethodOptions);
     admin.addResource('keka-sync').addMethod('POST', apiHandlerIntegration, authMethodOptions);
 
     const adminQuestionBank = admin.addResource('question-bank');
