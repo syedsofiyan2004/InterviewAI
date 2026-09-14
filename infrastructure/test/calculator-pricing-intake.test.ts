@@ -109,6 +109,21 @@ describe('prepared calculator pricing intake', () => {
     expect(parsed.getWorksheet('Source Lineage')!.getCell('E2').value).toContain('Standard_D8s_v5');
   });
 
+  it('requires an explicit AWS instance class even when source sizing is present', async () => {
+    const artifact = await generatePricingIntakeWorkbook({
+      resources: [{
+        sheet: 'VMs', row: 2, name: 'sized-vm', service: 'Amazon EC2',
+        vcpu: 8, ram_gb: 32, region: 'ap-south-1', os: 'Linux',
+        hoursPerMonth: 730, raw: 'sized-vm | 8 vCPU | 32 GB',
+      }],
+      workbook: workbookInsights(),
+    });
+    expect(artifact.summary.status).toBe('NEEDS_INPUT');
+    expect(artifact.summary.missing).toEqual(expect.arrayContaining([
+      expect.objectContaining({ column: 'Instance / Size', affectedCount: 1 }),
+    ]));
+  });
+
   it('retains workbook instructions and parser conversions as agent evidence', async () => {
     const artifact = await generatePricingIntakeWorkbook({
       resources: [{

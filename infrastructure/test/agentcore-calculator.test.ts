@@ -456,6 +456,17 @@ describe('Agent system prompt', () => {
     expect(prompt).not.toContain('NEEDS_INPUT');
   });
 
+  it('tells AgentCore not to reopen technical questions after a ready intake', async () => {
+    const message = await buildInitialMessage({
+      calculation_id: 'calc-ready', owner_user_id: 'user-1', name: 'Ready workbook',
+      prompt: '', status: 'ANALYZING', environment_hours: [], resources: [], input_warnings: [],
+      pricing_intake: { version: '2.0', status: 'READY', missing: [], scenarioSheets: ['Pricing Intake'], normalizedResourceCount: 1, safeAssumptions: [] },
+      created_at: Date.now(), updated_at: Date.now(),
+    } as any, 'calc-ready');
+    expect(message).toContain('Prepared pricing intake status: READY');
+    expect(message).toContain('Do not ask the customer for instance types');
+  });
+
   it('tells the agent to use get_workbook_evidence when evidence may be incomplete', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('get_workbook_evidence');

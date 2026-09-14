@@ -482,13 +482,14 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   }
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
-  lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
-  lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. Ask exactly one question per pause; after the customer answers, continue the same runtime session and ask the next independent decision if needed.');
-  lines.push('For compute-heavy workbooks, the pricing plan is material unless explicitly stated. Ask whether to use Compute Savings Plans, EC2 Instance Savings Plans, On-Demand, Spot where appropriate, or another customer-specified plan, and include an Other / give your own input path.');
-  lines.push('For ECS/Fargate/Lambda and other usage-based services, ask for missing material usage facts such as per-day vs per-month period, frequency, duration, utilization, prod/non-prod scope, vCPU/memory, task/request count, storage, traffic, and region when the workbook does not define them.');
-  lines.push('For EBS, RDS/Aurora, and other storage, ask before pricing when size, storage type, IOPS/throughput, retention, snapshot policy, or availability is missing. Do not use minimum-size, gp3, full-month, or other storage defaults unless the customer explicitly authorizes that assumption.');
-  lines.push('Do not continue to pricing with guesses or silent defaults for any customer workload value. The final assumptions may contain only workbook/customer facts or assumptions explicitly authorized in an answer.');
-  lines.push('If the workbook contains multiple scenarios, environments, pricing models, or comparison cases, ask whether the customer wants separate calculator.aws links for the named scenarios. Offer the workbook-derived scenarios as multi-select choices, plus one consolidated-link choice and Other / give your own input path, then honour the selection exactly.');
+  if (record.pricing_intake?.status === 'READY') {
+    lines.push('Prepared pricing intake status: READY. The converter has completed the technical-input review. Do not ask the customer for instance types, regions, environments, schedules, storage, availability, usage quantities, or any other technical workload value. Use the prepared workbook values and the MCP structural guidance, then ask only the commercial pricing strategy and scenario-link decisions described by the system prompt.');
+  } else if (record.pricing_intake?.status === 'NEEDS_INPUT') {
+    lines.push('Prepared pricing intake status: NEEDS_INPUT. Do not start Calculator calls or ask technical questions in this agent session. The customer must complete the highlighted cells in the prepared workbook and upload it again.');
+  } else {
+    lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
+    lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. Ask exactly one question per pause; after the customer answers, continue the same runtime session and ask the next independent decision if needed.');
+  }
   lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
   lines.push('');
