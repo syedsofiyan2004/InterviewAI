@@ -239,6 +239,10 @@ function NewCalculationForm() {
         input_s3_key: inputKey,
         prepare_workbook: prepareWorkbook,
       });
+      if (!created.plan) {
+        router.replace(`/calculator/view?id=${encodeURIComponent(created.calculation_id)}`);
+        return;
+      }
       setCalculationId(created.calculation_id);
       setPlan(created.plan);
       setPricingIntake(created.pricing_intake || null);
@@ -561,6 +565,9 @@ function NewCalculationForm() {
   const selectCompletedWorkbook = (file: File | null) => {
     if (!file) return;
     setSheet(file);
+    // This is the edited output of the formatter. Keep the preparation contract
+    // on the re-upload so it is reviewed before any pricing run starts.
+    setPrepareWorkbook(true);
     setName((current) => current || file.name.replace(/\.(xlsx|csv)$/i, ''));
     setPlan(null);
     setPricingIntake(null);
