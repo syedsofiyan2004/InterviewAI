@@ -135,6 +135,15 @@ function normalizeEnvironment(value: string): string {
   return value;
 }
 
+function inferEnvironment(resource: CalculationResource): string {
+  // Environment is a workload fact, but migration workbooks frequently encode it
+  // in a section/banner or sheet title instead of a dedicated column. Carry it
+  // forward only when the source text contains an explicit environment token.
+  const context = [resource.environment, resource.section, resource.sheet, resource.raw].filter(Boolean).join(' ');
+  const match = context.match(/\b(non[\s-]?prod(?:uction)?|prod(?:uction)?|pre[\s-]?prod|staging|stage|uat|qa|test|dev(?:elopment)?|sandbox|dr)\b/i);
+  return normalizeEnvironment(match?.[0] || '');
+}
+
 function scenarioName(resource: CalculationResource, workbook?: WorkbookInsights): string {
   if (clean(resource.scenario)) return clean(resource.scenario);
   const bands = workbook?.bands || [];
@@ -159,7 +168,7 @@ function rowFromResource(
     sourceRow: resource.row || '',
     resourceName: clean(resource.name || resource.resourceId || resource.metric) || sourceRef(resource, index),
     scenario: scenarioName(resource, workbook),
-    environment: normalizeEnvironment(clean(resource.environment)),
+    environment: inferEnvironment(resource),
     service,
     region: clean(resource.region || defaultRegion || workbook?.primary_region),
     // A source SKU may be Azure, VMware or an on-prem hardware label. Carrying it as
@@ -231,6 +240,9 @@ function technicalGaps(rows: IntakeRow[]): RowGap[] {
   rows.forEach((row, index) => {
     const scope = row.environment || row.scenario || row.service || 'All resources';
     if (!row.service) gap(gaps, row, index, 'resource.service_family', 'AWS Service', 'Identify the AWS service that this source row should use.', scope);
+    if (!row.environment && !GLOBAL_SERVICE.test(row.service)) {
+      gap(gaps, row, index, 'resource.environment', 'Environment', 'Identify whether this workload is Production, Non-Production, Staging, Development, Test, UAT or DR.', scope);
+    }
     if (!row.region && !GLOBAL_SERVICE.test(row.service)) {
       gap(gaps, row, index, 'resource.region', 'Region', 'Region materially changes AWS price and service availability.', 'All regional resources');
     }

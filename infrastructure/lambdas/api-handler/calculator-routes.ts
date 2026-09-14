@@ -622,7 +622,11 @@ async function createCalculationInternal(
       const evidence = await persistWorkbookEvidence({
         owner: userId,
         calculationId: record.calculation_id,
-        workbookIrS3Key: pricingIntakeWorkbookIrS3Key || workbookIrS3Key,
+        // Keep the original uploaded workbook as the agent's authoritative
+        // evidence. The prepared intake is a review aid and must never replace
+        // source sheets or prevent Claude from interpreting their headings,
+        // banners and notes losslessly.
+        workbookIrS3Key,
         userInstructions: [
           ...(prompt ? [prompt] : []),
           ...(input.region ? [`Primary region: ${input.region}`] : []),
