@@ -42,6 +42,7 @@ import {
   applyRequirementPatches,
   applyPlanProposal,
   buildInitialPlan,
+  compactPlanRequirements,
   confirmPlan,
   createPlanProposal,
 } from '../shared/estimate-planning';
@@ -551,6 +552,12 @@ async function createCalculationInternal(
       console.error('[createCalculation] could not generate pricing intake workbook:', error);
       return errorResponse(500, 'INTERNAL_ERROR', 'The workbook was read but its standardized pricing intake could not be generated. Please try again.');
     }
+  }
+  // Large inventories can produce one technical constraint per source row. The workbook
+  // evidence already carries those facts losslessly; repeating them in the review plan can
+  // exceed its schema limit and make Confirm/Build unable to reload the plan.
+  if (planV2.revisions.some((revision) => revision.requirements.length > 450)) {
+    planV2 = compactPlanRequirements(planV2);
   }
   const unresolvedCriticalCount = countUnresolvedCritical(planV2);
   // Production AgentCore mode starts immediately. MIMO may keep its legacy review plan

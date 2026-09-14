@@ -617,6 +617,16 @@ export function buildInitialPlan(input: InitialPlanInput): EstimatePlanV2 {
   };
 }
 
+/** Keep large row-level review plans bounded and reloadable. */
+export function compactPlanRequirements(plan: EstimatePlanV2): EstimatePlanV2 {
+  const revisions = plan.revisions.map((revision) => {
+    const { hash: _oldHash, requirementLedger: _oldLedger, ...rest } = revision;
+    const compactBase = { ...rest, requirements: [] };
+    return { ...compactBase, hash: stableHash(compactBase) };
+  });
+  return { ...plan, revisions };
+}
+
 function pricingModelsIn(text: string): PricingModelRequest[] {
   const models: PricingModelRequest[] = [];
   if (/\bon[ -]?demand\b/i.test(text)) models.push('on-demand');

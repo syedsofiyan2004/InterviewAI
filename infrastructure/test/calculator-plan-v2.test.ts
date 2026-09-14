@@ -2,12 +2,14 @@ import {
   applyRequirementPatches,
   applyPlanProposal,
   buildInitialPlan,
+  compactPlanRequirements,
   confirmPlan,
   createPlanProposal,
 } from '../lambdas/shared/estimate-planning';
 import { materializePlanResources, planFromGroup, planSegments } from '../lambdas/calculator-orchestrator/pipeline';
 import { groupResources } from '../lambdas/calculator-orchestrator/prompt';
 import type { CalculationResource } from '../schema/calculator';
+import { EstimatePlanV2Schema } from '../schema/estimate-plan';
 
 const rows: CalculationResource[] = [
   {
@@ -17,6 +19,22 @@ const rows: CalculationResource[] = [
 ];
 
 describe('Estimate Plan v2 review lifecycle', () => {
+  test('compacts large row-level requirement lists into a reloadable plan', () => {
+    const plan = buildInitialPlan({
+      workbookId: 'large-book',
+      defaultRegion: 'ap-south-1',
+      resources: Array.from({ length: 391 }, (_, index): CalculationResource => ({
+        raw: `EC2 row ${index + 1}`,
+        service: 'EC2',
+        size: 'm6i.large',
+        region: 'ap-south-1',
+      })),
+    });
+    expect(plan.revisions[0].requirements.length).toBeGreaterThan(500);
+    const compacted = compactPlanRequirements(plan);
+    expect(compacted.revisions[0].requirements).toEqual([]);
+    expect(EstimatePlanV2Schema.safeParse(compacted).success).toBe(true);
+  });
   test('asks for a missing region once, not once per workbook row', () => {
     const resources = Array.from({ length: 150 }, (_, index): CalculationResource => ({
       raw: `S3 request volume ${index}`,
