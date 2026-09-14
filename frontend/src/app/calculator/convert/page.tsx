@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { calculatorApi } from '@/lib/calculatorApi';
@@ -16,8 +16,16 @@ export default function CalculatorWorkbookConverterPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [region, setRegion] = useState('');
+  const [projects, setProjects] = useState<Array<{ project_id: string; project_title: string }>>([]);
+  const [projectId, setProjectId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void calculatorApi.getCalculationProjects().then((data) => {
+      setProjects(data.items.flatMap((item) => item.project_id ? [{ project_id: item.project_id, project_title: item.project_title }] : []));
+    }).catch(() => undefined);
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -30,6 +38,7 @@ export default function CalculatorWorkbookConverterPage() {
         input_s3_key: uploaded.s3_key,
         prepare_workbook: true,
         region: region || undefined,
+        project_id: projectId || undefined,
       });
       router.push(`/calculator/new?review=${encodeURIComponent(created.calculation_id)}`);
     } catch (err) {
@@ -78,6 +87,13 @@ export default function CalculatorWorkbookConverterPage() {
             <select className="premium-input mt-2 w-full" value={region} onChange={(e) => setRegion(e.target.value)}>
               <option value="">Let the workbook decide</option>
               {REGIONS.map(([value, label]) => <option key={value} value={value}>{label} ({value})</option>)}
+            </select>
+          </label>
+          <label className="block text-sm font-semibold text-text-primary">
+            Project <span className="font-normal text-text-muted">(optional)</span>
+            <select className="premium-input mt-2 w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">Keep in ungrouped estimates</option>
+              {projects.map((project) => <option key={project.project_id} value={project.project_id}>{project.project_title}</option>)}
             </select>
           </label>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-text-secondary">

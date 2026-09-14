@@ -552,7 +552,10 @@ async function createCalculationInternal(
   // for rollback/analyze flows, but it must not turn MIMO-generated questions into the
   // active pricing decision path. Claude decides whether a material customer fact is
   // missing and returns NEEDS_INPUT from the same AgentCore session.
-  const shouldStartWorker = startWorker && pricingIntake?.status !== 'NEEDS_INPUT';
+  // The formatter is an explicit preparation step. Even when every detected
+  // value is present, stop at review so the user can download/edit the prepared
+  // workbook and deliberately hand it to the pricing run.
+  const shouldStartWorker = startWorker && !input.prepare_workbook && pricingIntake?.status !== 'NEEDS_INPUT';
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
