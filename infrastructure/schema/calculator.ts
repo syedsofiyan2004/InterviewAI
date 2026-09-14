@@ -428,6 +428,8 @@ export const CreateCalculationSchema = z.object({
   environment_hours: z.array(EnvironmentHoursSchema).max(10).optional(),
   /** S3 key of an uploaded .xlsx/.csv resource list, from POST /calculator/upload-url. */
   input_s3_key: z.string().max(500).optional(),
+  /** Optional slow formatting pass; uploads otherwise go straight to AgentCore. */
+  prepare_workbook: z.boolean().optional(),
   /**
    * An explicit scenario matrix, when the requester has one.
    *

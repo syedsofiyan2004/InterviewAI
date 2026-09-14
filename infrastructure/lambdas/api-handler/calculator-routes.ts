@@ -507,7 +507,7 @@ async function createCalculationInternal(
       console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
     }
   }
-  if (input.input_s3_key) {
+  if (input.input_s3_key && input.prepare_workbook) {
     try {
       const intakeArtifact = await generatePricingIntakeWorkbook({
         resources: planResources.length ? planResources : resources,

@@ -123,6 +123,7 @@ function NewCalculationForm() {
   const [newEnvName, setNewEnvName] = useState('');
   const [newEnvHours, setNewEnvHours] = useState(24);
   const [sheet, setSheet] = useState<File | null>(null);
+  const [prepareWorkbook, setPrepareWorkbook] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,6 +237,7 @@ function NewCalculationForm() {
         region: region || undefined,
         environment_hours: environments,
         input_s3_key: inputKey,
+        prepare_workbook: prepareWorkbook,
       });
       setCalculationId(created.calculation_id);
       setPlan(created.plan);
@@ -253,7 +255,7 @@ function NewCalculationForm() {
   // Workbook technical gaps are resolved in the prepared .xlsx, where a shared value can
   // be filled down across thousands of resources. The old per-resource form remains only
   // for prompt-only and pre-v2 records that have no pricing-intake artifact.
-  const openQuestions = pricingIntake ? [] : plan?.unresolved.filter((entry) => !entry.resolved) || [];
+  const openQuestions = pricingIntake || sheet ? [] : plan?.unresolved.filter((entry) => !entry.resolved) || [];
   const blockingQuestions = openQuestions.filter((entry) => entry.impact === 'high');
   const advisoryQuestionCount = openQuestions.length - blockingQuestions.length;
   const answerForQuestion = (question: EstimatePlanV2['unresolved'][number]) => (
@@ -993,8 +995,9 @@ function NewCalculationForm() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-text-primary">Resource list (optional)</p>
                 <p className="mt-1 text-xs leading-5 text-text-muted">
-                  Upload any .xlsx or .csv resource workbook. MIMO creates a standard, source-linked
-                  pricing workbook and separates year or scenario bands into their own sheets.
+                  Upload any .xlsx or .csv resource workbook. It goes directly to Claude and the official
+                  AWS Calculator MCP. Use the optional formatter when you want a reviewable workbook with
+                  missing columns added and material cells highlighted.
                 </p>
               </div>
               <button
@@ -1041,6 +1044,19 @@ function NewCalculationForm() {
                 </label>
               )}
             </div>
+
+            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-surface px-3 py-2.5 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                checked={prepareWorkbook}
+                onChange={(event) => setPrepareWorkbook(event.target.checked)}
+                className="mt-0.5 accent-accent"
+              />
+              <span>
+                <span className="font-semibold text-text-primary">Analyze & format workbook first (optional)</span>
+                <span className="mt-0.5 block leading-5">Adds standard columns such as Environment and highlights only material missing values. This adds a preparation step before pricing.</span>
+              </span>
+            </label>
           </div>
 
           {/* Runtime hours. Optional: environment run-hours are workload facts, and a blank

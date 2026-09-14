@@ -428,6 +428,7 @@ export interface CreateCalculationInput {
   region?: string;
   environment_hours?: EnvironmentHours[];
   input_s3_key?: string;
+  prepare_workbook?: boolean;
 }
 
 /** General pricing-intake template. Unknown layouts are converted to this same contract server-side. */
