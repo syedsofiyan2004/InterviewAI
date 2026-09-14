@@ -5,9 +5,17 @@ import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud } from 
 import { useRouter } from 'next/navigation';
 import { calculatorApi } from '@/lib/calculatorApi';
 
+const REGIONS = [
+  ['ap-south-1', 'Asia Pacific (Mumbai)'], ['ap-southeast-1', 'Asia Pacific (Singapore)'],
+  ['ap-southeast-2', 'Asia Pacific (Sydney)'], ['eu-central-1', 'Europe (Frankfurt)'],
+  ['eu-west-1', 'Europe (Ireland)'], ['us-east-1', 'US East (N. Virginia)'],
+  ['us-west-2', 'US West (Oregon)'], ['ca-central-1', 'Canada (Central)'],
+] as const;
+
 export default function CalculatorWorkbookConverterPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [region, setRegion] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,6 +29,7 @@ export default function CalculatorWorkbookConverterPage() {
         name: file.name.replace(/\.[^.]+$/, '') || 'Formatted AWS workload workbook',
         input_s3_key: uploaded.s3_key,
         prepare_workbook: true,
+        region: region || undefined,
       });
       router.push(`/calculator/new?review=${encodeURIComponent(created.calculation_id)}`);
     } catch (err) {
@@ -63,6 +72,13 @@ export default function CalculatorWorkbookConverterPage() {
             <span className="mt-3 text-sm font-semibold text-text-primary">{file ? file.name : 'Drop your workbook here or browse'}</span>
             <span className="mt-1 text-xs text-text-muted">Excel .xlsx or CSV · Original file is never overwritten</span>
             <input className="sr-only" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          </label>
+          <label className="block text-sm font-semibold text-text-primary">
+            Default AWS Region <span className="font-normal text-text-muted">(used only where the workbook does not specify one)</span>
+            <select className="premium-input mt-2 w-full" value={region} onChange={(e) => setRegion(e.target.value)}>
+              <option value="">Let the workbook decide</option>
+              {REGIONS.map(([value, label]) => <option key={value} value={value}>{label} ({value})</option>)}
+            </select>
           </label>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-text-secondary">
             <span><strong className="text-text-primary">What you edit:</strong> the prepared workbook after it downloads, wherever cells are highlighted.</span>
