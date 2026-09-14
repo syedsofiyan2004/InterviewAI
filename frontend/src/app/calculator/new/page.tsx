@@ -160,6 +160,7 @@ function NewCalculationForm() {
     calculatorApi.getCalculationPlan(reviewParam)
       .then((response) => {
         if (!cancelled) {
+          setError(null);
           setCalculationId(response.calculation_id);
           setPlan(response.plan);
           setPricingIntake(response.pricing_intake || null);
@@ -629,8 +630,8 @@ function NewCalculationForm() {
           <div className="grid border-b border-border sm:grid-cols-2 lg:grid-cols-4">
             {[
               ['Resources', `${plan.detectedDimensions.resourceCount}`],
-              ['Mapped', `${plan.detectedDimensions.mappedResourceCount}`],
-              ['Coverage', `${plan.detectedDimensions.coveragePct}%`],
+              [pricingIntake ? 'Prepared' : 'Mapped', `${pricingIntake ? pricingIntake.normalizedResourceCount : plan.detectedDimensions.mappedResourceCount}`],
+              [pricingIntake ? 'Input coverage' : 'Coverage', `${pricingIntake ? (pricingIntake.status === 'READY' ? 100 : Math.max(0, Math.round((1 - pricingIntake.missing.length / Math.max(1, pricingIntake.normalizedResourceCount)) * 100))) : plan.detectedDimensions.coveragePct}%`],
               ['Scenarios', `${pricingIntake?.scenarioSheets.length ?? currentRevision.scenarios.length}`],
             ].map(([label, value], index) => (
               <div key={label} className={`px-6 py-4 ${index ? 'border-t border-border sm:border-l sm:border-t-0' : ''}`}>
