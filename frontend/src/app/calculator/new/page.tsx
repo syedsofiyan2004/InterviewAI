@@ -662,7 +662,7 @@ function NewCalculationForm() {
 
                     {pricingIntake.status === 'NEEDS_INPUT' && (
                       <div className="mt-4 divide-y divide-border border-y border-border/70">
-                        {pricingIntake.missing.slice(0, 12).map((gap) => (
+                        {pricingIntake.missing.map((gap) => (
                           <div key={`${gap.field}-${gap.scope}`} className="grid gap-1 py-3 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                             <div>
                               <p className="font-semibold text-text-primary">{gap.column} · {gap.scope}</p>
@@ -675,11 +675,9 @@ function NewCalculationForm() {
                             </span>
                           </div>
                         ))}
-                        {pricingIntake.missing.length > 12 && (
-                          <p className="py-3 text-xs text-text-muted">
-                            The workbook contains {pricingIntake.missing.length - 12} more grouped requirements. None are expanded into per-resource web questions.
-                          </p>
-                        )}
+                        <p className="py-3 text-xs text-text-muted">
+                          Each item above corresponds to highlighted cells in the prepared workbook. Edit those highlighted cells, save the prepared workbook, and upload that edited file.
+                        </p>
                       </div>
                     )}
                   </div>
