@@ -389,6 +389,7 @@ async function createCalculationInternal(
   let pricingIntakeWorkbookS3Key: string | undefined;
   let pricingIntakeWorkbookIrS3Key: string | undefined;
   let pricingIntake: PricingIntakeSummary | undefined;
+  let preparedWorkbookUpload = false;
 
   if (input.input_s3_key) {
     // The key is built server-side in getCalculationUploadUrl and namespaced per
@@ -402,6 +403,9 @@ async function createCalculationInternal(
       // The file NAME decides the reader (.xlsx vs .csv), so pass the original rather
       // than the key: the key's uuid prefix is noise, but its extension is not.
       const analysis = await analyseWorkbook(buffer, inputFileName || input.input_s3_key);
+      preparedWorkbookUpload = analysis.workbookIR.sheets.some((sheet) =>
+        /^(pricing intake|inputs needed|safe assumptions|source context)$/i.test(sheet.name),
+      );
       resources = analysis.legacyResources;
       inputWarnings = analysis.warnings.slice(0, MAX_INPUT_WARNINGS);
       workbook = analysis.insights;
@@ -507,7 +511,8 @@ async function createCalculationInternal(
       console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
     }
   }
-  if (input.input_s3_key && input.prepare_workbook) {
+  const prepareRequested = Boolean(input.prepare_workbook || preparedWorkbookUpload);
+  if (input.input_s3_key && prepareRequested) {
     try {
       const intakeArtifact = await generatePricingIntakeWorkbook({
         resources: planResources.length ? planResources : resources,
@@ -555,7 +560,7 @@ async function createCalculationInternal(
   // The formatter is an explicit preparation step. Even when every detected
   // value is present, stop at review so the user can download/edit the prepared
   // workbook and deliberately hand it to the pricing run.
-  const shouldStartWorker = startWorker && !input.prepare_workbook && pricingIntake?.status !== 'NEEDS_INPUT';
+  const shouldStartWorker = startWorker && !prepareRequested && pricingIntake?.status !== 'NEEDS_INPUT';
   const record: CalculationRecord = {
     calculation_id: calculationId,
     owner_user_id: userId,
