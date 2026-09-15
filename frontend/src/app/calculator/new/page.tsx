@@ -78,6 +78,16 @@ const EXAMPLE = `A production WordPress environment:
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
+const DEFAULT_ENVIRONMENT_POLICY: EnvironmentHours[] = [
+  { name: 'Production', hoursPerDay: 24 },
+  { name: 'UAT', hoursPerDay: 12 },
+  { name: 'Staging', hoursPerDay: 12 },
+  { name: 'Test', hoursPerDay: 8 },
+  { name: 'Development', hoursPerDay: 8 },
+  { name: 'Non-Production', hoursPerDay: 8 },
+  { name: 'Sandbox', hoursPerDay: 8 },
+];
+
 /** Download the same general .xlsx contract produced by the server-side normalizer. */
 function downloadTemplate() {
   const workbook = XLSX.utils.book_new();
@@ -117,13 +127,15 @@ function NewCalculationForm() {
   // the workbook — a UI default must never become authoritative workload data. The region
   // is only sent when the user picks one (or the workbook/prompt states one).
   const [region, setRegion] = useState('');
-  // No environment-hour defaults either. Runtime hours are workload facts; if the user does
-  // not state them here the prepared workbook highlights them for bulk completion.
-  const [environments, setEnvironments] = useState<EnvironmentHours[]>([]);
+  // The customer can edit this policy before preparation. Explicit workbook values
+  // still override it resource-by-resource.
+  const [environments, setEnvironments] = useState<EnvironmentHours[]>(DEFAULT_ENVIRONMENT_POLICY);
   const [newEnvName, setNewEnvName] = useState('');
   const [newEnvHours, setNewEnvHours] = useState(24);
   const [sheet, setSheet] = useState<File | null>(null);
-  const [prepareWorkbook, setPrepareWorkbook] = useState(false);
+  // Every workbook goes through the prepared intake. This is the single place where
+  // technical gaps and the environment policy are settled before AgentCore starts.
+  const prepareWorkbook = true;
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -566,9 +578,8 @@ function NewCalculationForm() {
   const selectCompletedWorkbook = (file: File | null) => {
     if (!file) return;
     setSheet(file);
-    // This is the edited output of the formatter. Keep the preparation contract
-    // on the re-upload so it is reviewed before any pricing run starts.
-    setPrepareWorkbook(true);
+    // This is the edited output of the formatter. Workbook preparation is mandatory,
+    // so the re-upload remains inside the same technical-input contract.
     setName((current) => current || file.name.replace(/\.(xlsx|csv)$/i, ''));
     setPlan(null);
     setPricingIntake(null);
@@ -1051,31 +1062,20 @@ function NewCalculationForm() {
               )}
             </div>
 
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-surface px-3 py-2.5 text-xs text-text-secondary">
-              <input
-                type="checkbox"
-                checked={prepareWorkbook}
-                onChange={(event) => setPrepareWorkbook(event.target.checked)}
-                className="mt-0.5 accent-accent"
-              />
-              <span>
-                <span className="font-semibold text-text-primary">Analyze & format workbook first (optional)</span>
-                <span className="mt-0.5 block leading-5">Adds standard columns such as Environment and highlights only material missing values. This adds a preparation step before pricing.</span>
-              </span>
-            </label>
+            {sheet && (
+              <div className="mt-3 flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2.5 text-xs text-text-secondary">
+                <CheckCircle2 className="mt-0.5 shrink-0 text-accent" size={15} />
+                <span><span className="font-semibold text-text-primary">Workbook preparation included</span><span className="mt-0.5 block leading-5">MIMO adds the standard columns, applies the environment policy below where the workbook is silent, and highlights only material missing values before AgentCore starts.</span></span>
+              </div>
+            )}
           </div>
 
-          {/* Runtime hours. Optional: environment run-hours are workload facts, and a blank
-              value must stay blank so the prepared workbook highlights it for completion;
-              a prefilled "Production 24h / Staging 12h" would silently answer a
-              pricing question before Claude has seen the sheet. */}
           <div className="rounded-xl border border-border bg-surface-elevated p-4">
-            <p className="text-sm font-semibold text-text-primary">Runtime hours per environment (optional)</p>
+            <p className="text-sm font-semibold text-text-primary">Environment runtime policy</p>
             <p className="mt-1 text-xs leading-5 text-text-muted">
-              How many hours a day each environment actually runs. Time-billed resources are priced at
-              these hours, so shutting non-production down overnight is reflected in the cost. A
-              Hours/Day value in your sheet overrides the environment hours for that row. Leave this
-              blank and MIMO highlights the missing hours in the prepared workbook.
+              Production is 24 hours/day. These schedules fill only blank time-billed rows in the prepared
+              workbook; a row&apos;s explicit Monthly Hours always wins. RDS and Aurora default to Multi-AZ in
+              Production and Single-AZ in these lower environments unless the workbook explicitly says otherwise.
             </p>
             {environments.length ? (
               <div className="mt-3 grid gap-3 sm:grid-cols-3">

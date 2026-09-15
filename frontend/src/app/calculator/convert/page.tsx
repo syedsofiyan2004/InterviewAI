@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { calculatorApi } from '@/lib/calculatorApi';
+import { calculatorApi, type EnvironmentHours } from '@/lib/calculatorApi';
 
 const REGIONS = [
   ['ap-south-1', 'Asia Pacific (Mumbai)'], ['ap-southeast-1', 'Asia Pacific (Singapore)'],
@@ -12,10 +12,21 @@ const REGIONS = [
   ['us-west-2', 'US West (Oregon)'], ['ca-central-1', 'Canada (Central)'],
 ] as const;
 
+const DEFAULT_ENVIRONMENT_POLICY: EnvironmentHours[] = [
+  { name: 'Production', hoursPerDay: 24 },
+  { name: 'UAT', hoursPerDay: 12 },
+  { name: 'Staging', hoursPerDay: 12 },
+  { name: 'Test', hoursPerDay: 8 },
+  { name: 'Development', hoursPerDay: 8 },
+  { name: 'Non-Production', hoursPerDay: 8 },
+  { name: 'Sandbox', hoursPerDay: 8 },
+];
+
 export default function CalculatorWorkbookConverterPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [region, setRegion] = useState('');
+  const [environmentHours, setEnvironmentHours] = useState<EnvironmentHours[]>(DEFAULT_ENVIRONMENT_POLICY);
   const [projects, setProjects] = useState<Array<{ project_id: string; project_title: string }>>([]);
   const [projectId, setProjectId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,6 +50,7 @@ export default function CalculatorWorkbookConverterPage() {
         prepare_workbook: true,
         region: region || undefined,
         project_id: projectId || undefined,
+        environment_hours: environmentHours,
       });
       router.push(`/calculator/new?review=${encodeURIComponent(created.calculation_id)}`);
     } catch (err) {
@@ -89,6 +101,33 @@ export default function CalculatorWorkbookConverterPage() {
               {REGIONS.map(([value, label]) => <option key={value} value={value}>{label} ({value})</option>)}
             </select>
           </label>
+          <section className="rounded-xl border border-border bg-surface p-4">
+            <h3 className="text-sm font-semibold text-text-primary">Environment runtime policy</h3>
+            <p className="mt-1 text-xs leading-5 text-text-muted">
+              These values fill blank compute schedules in the prepared workbook. Explicit workbook hours always win.
+              Production databases default to Multi-AZ; these lower environments default to Single-AZ unless the workbook says otherwise.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {environmentHours.map((entry, index) => (
+                <label key={entry.name} className="text-xs font-semibold text-text-muted">
+                  {entry.name}
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={entry.hoursPerDay}
+                      onChange={(event) => setEnvironmentHours((current) => current.map((item, at) => at === index
+                        ? { ...item, hoursPerDay: Math.min(24, Math.max(1, Number(event.target.value) || item.hoursPerDay)) }
+                        : item))}
+                      className="premium-input w-full px-3 py-2 text-sm"
+                    />
+                    <span className="shrink-0 font-normal text-text-muted">h/day</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </section>
           <label className="block text-sm font-semibold text-text-primary">
             Project <span className="font-normal text-text-muted">(optional)</span>
             <select className="premium-input mt-2 w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)}>

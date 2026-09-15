@@ -55,6 +55,7 @@ import {
   type CalculationResult,
   type CalculationScenario,
   type CalculationSummary,
+  DEFAULT_ENVIRONMENT_HOURS,
   type EnvironmentHours,
   type WorkbookInsights,
 } from '../../schema/calculator';
@@ -327,7 +328,10 @@ function resolveEnvironmentHours(input: EnvironmentHours[] | undefined): Environ
       hoursPerDay: Math.min(24, Math.max(1, Math.round(Number(entry?.hoursPerDay)))),
     }))
     .filter((entry) => entry.name && Number.isFinite(entry.hoursPerDay));
-  return cleaned;
+  // This is a customer-visible starting policy, not an inference about an unknown
+  // row. It is applied only after the workbook establishes the environment, and can
+  // be edited from the calculator form before the intake is generated.
+  return cleaned.length ? cleaned : DEFAULT_ENVIRONMENT_HOURS;
 }
 
 async function createCalculationInternal(
@@ -521,6 +525,7 @@ async function createCalculationInternal(
         plan: planV2,
         sourceFileName: inputFileName,
         defaultRegion: input.region,
+        environmentHours: resolveEnvironmentHours(input.environment_hours),
       });
       pricingIntake = intakeArtifact.summary;
       // The prepared workbook is the only technical-input gate for uploaded files.

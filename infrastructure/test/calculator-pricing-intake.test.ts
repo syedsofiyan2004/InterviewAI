@@ -158,7 +158,9 @@ describe('prepared calculator pricing intake', () => {
     const first = await generatePricingIntakeWorkbook({
       resources: [{
         sheet: 'DBs', row: 2, name: 'orders-db', service: 'Amazon RDS', size: 'db.r6g.large',
-        region: 'ap-south-1', environment: 'Production', hoursPerMonth: 730,
+        // DR deliberately has no automatic availability posture: cold, warm and hot
+        // recovery designs have materially different database configurations.
+        region: 'ap-south-1', environment: 'DR', hoursPerMonth: 730,
         disk_gb: 500, raw: 'orders-db',
       }],
       workbook: workbookInsights(),
@@ -178,6 +180,35 @@ describe('prepared calculator pricing intake', () => {
     expect(second.summary.missing).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ column: 'Availability' }),
     ]));
+  });
+
+  it('applies the approved environment policy before the agent runs while preserving explicit values', async () => {
+    const artifact = await generatePricingIntakeWorkbook({
+      resources: [
+        {
+          sheet: 'Production', row: 2, name: 'orders-db', service: 'Amazon RDS', size: 'db.r6g.large',
+          region: 'ap-south-1', raw: 'orders-db',
+        },
+        {
+          sheet: 'Development', row: 2, name: 'dev-db', service: 'Amazon RDS', size: 'db.t4g.medium',
+          region: 'ap-south-1', hoursPerMonth: 260, raw: 'dev-db',
+        },
+      ],
+      workbook: workbookInsights(),
+      environmentHours: [
+        { name: 'Production', hoursPerDay: 24 },
+        { name: 'Development', hoursPerDay: 8 },
+      ],
+    });
+
+    expect(artifact.summary.status).toBe('READY');
+    const parsed = new ExcelJS.Workbook();
+    await parsed.xlsx.load(artifact.workbook as any);
+    const intake = parsed.getWorksheet('Pricing Intake')!;
+    expect(intake.getCell('L2').value).toBeCloseTo(730);
+    expect(intake.getCell('Q2').value).toBe('Multi-AZ');
+    expect(intake.getCell('L3').value).toBe(260);
+    expect(intake.getCell('Q3').value).toBe('Single-AZ');
   });
 
   it('uses vInfo as the inventory authority for an RVTools workbook', async () => {

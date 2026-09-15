@@ -1,7 +1,7 @@
-import type { CalculationResource, WorkbookInsights } from '../../schema/calculator';
+import type { CalculationResource, EnvironmentHours, WorkbookInsights } from '../../schema/calculator';
 import type { EstimatePlanV2, PlanQuestion } from '../../schema/estimate-plan';
 
-export const PRICING_INTAKE_VERSION = '2.0';
+export const PRICING_INTAKE_VERSION = '2.1';
 
 export type PricingIntakeStatus = 'READY' | 'NEEDS_INPUT';
 
@@ -43,11 +43,13 @@ interface IntakeRow {
   memoryGiB: number | '';
   operatingSystem: string;
   monthlyHours: number | '';
+  monthlyHoursPolicyApplied: boolean;
   usageAmount: number | '';
   usageUnit: string;
   storageGiB: number | '';
   storageType: string;
   availability: string;
+  availabilityPolicyApplied: boolean;
   engine: string;
   dataTransferGbMonth: number | '';
   configuration: string;
@@ -144,6 +146,19 @@ function inferEnvironment(resource: CalculationResource): string {
   return normalizeEnvironment(match?.[0] || '');
 }
 
+function isProductionEnvironment(environment: string): boolean {
+  return environment === 'Production';
+}
+
+function isKnownNonProductionEnvironment(environment: string): boolean {
+  return ['UAT', 'Staging', 'Test', 'Development', 'Non-Production', 'Sandbox'].includes(environment);
+}
+
+function policyHoursFor(environment: string, environmentHours: Map<string, number>): number | '' {
+  const configured = environmentHours.get(environment.toLowerCase());
+  return configured === undefined ? '' : configured * 730 / 24;
+}
+
 function scenarioName(resource: CalculationResource, workbook?: WorkbookInsights): string {
   if (clean(resource.scenario)) return clean(resource.scenario);
   const bands = workbook?.bands || [];
@@ -156,19 +171,30 @@ function rowFromResource(
   index: number,
   workbook: WorkbookInsights | undefined,
   defaultRegion: string | undefined,
+  environmentHours: Map<string, number>,
 ): IntakeRow {
   const service = serviceText(resource);
   const quantityDimension = resource.quantities?.find((entry) => entry.unit === 'hours/month');
   const storageDimension = resource.quantities?.find((entry) => entry.unit === 'GB/month');
   const transferDimension = resource.quantities?.find((entry) => entry.unit === 'GB-transfer/month');
   const usageDimension = resource.quantities?.find((entry) => !['hours/month', 'GB/month', 'GB-transfer/month'].includes(entry.unit));
+  const environment = inferEnvironment(resource);
+  const explicitMonthlyHours = numberValue(resource.hoursPerMonth ?? quantityDimension?.amount);
+  const policyMonthlyHours = policyHoursFor(environment, environmentHours);
+  const explicitAvailability = valueFrom(resource, /availability|multi.?az|deployment/i)
+    || (/multi.?az/i.test(clean(resource.notes || resource.raw)) ? 'Multi-AZ' : '');
+  const policyAvailability = DATABASE.test(service) && isProductionEnvironment(environment)
+    ? 'Multi-AZ'
+    : DATABASE.test(service) && isKnownNonProductionEnvironment(environment)
+      ? 'Single-AZ'
+      : '';
   const row: IntakeRow = {
     sourceRef: sourceRef(resource, index),
     sourceSheet: clean(resource.sheet) || 'Input',
     sourceRow: resource.row || '',
     resourceName: clean(resource.name || resource.resourceId || resource.metric) || sourceRef(resource, index),
     scenario: scenarioName(resource, workbook),
-    environment: inferEnvironment(resource),
+    environment,
     service,
     region: clean(resource.region || defaultRegion || workbook?.primary_region),
     // A source SKU may be Azure, VMware or an on-prem hardware label. Carrying it as
@@ -179,13 +205,16 @@ function rowFromResource(
     vcpu: numberValue(resource.vcpu),
     memoryGiB: numberValue(resource.ram_gb),
     operatingSystem: clean(resource.os),
-    monthlyHours: numberValue(resource.hoursPerMonth ?? quantityDimension?.amount),
+    // An explicit row schedule always wins. The customer-configured policy fills a
+    // known environment before pricing, so Claude does not need a runtime question.
+    monthlyHours: explicitMonthlyHours || policyMonthlyHours,
+    monthlyHoursPolicyApplied: explicitMonthlyHours === '' && policyMonthlyHours !== '',
     usageAmount: numberValue(resource.usage_amount ?? usageDimension?.amount),
     usageUnit: clean(resource.usage_unit || usageDimension?.unit),
     storageGiB: numberValue(resource.disk_gb ?? storageDimension?.amount),
     storageType: valueFrom(resource, /storage\s*(type|class)|volume\s*type|ebs\s*type/i),
-    availability: valueFrom(resource, /availability|multi.?az|deployment/i)
-      || (/multi.?az/i.test(clean(resource.notes || resource.raw)) ? 'Multi-AZ' : ''),
+    availability: explicitAvailability || policyAvailability,
+    availabilityPolicyApplied: !explicitAvailability && !!policyAvailability,
     engine: valueFrom(resource, /engine|database\s*type|compatibility/i),
     dataTransferGbMonth: numberValue(transferDimension?.amount || valueFrom(resource, /data\s*transfer/i)),
     configuration: resource.configuration
@@ -306,7 +335,7 @@ function summarizeGaps(gaps: RowGap[], rows: IntakeRow[]): PricingIntakeGap[] {
   });
 }
 
-function safeAssumptions(rows: IntakeRow[]): string[] {
+function safeAssumptions(rows: IntakeRow[], environmentHours: Map<string, number>): string[] {
   const assumptions = [
     'A source row that identifies one independent resource and has no quantity is represented with Quantity = 1.',
     'Calculator field IDs, selector values and minimalConfig scaffolding are resolved from the official MCP.',
@@ -314,6 +343,12 @@ function safeAssumptions(rows: IntakeRow[]): string[] {
   ];
   if (rows.some((row) => !row.environment)) {
     assumptions.push('A blank Environment remains Unspecified; it is not automatically treated as Production or Non-Production.');
+  }
+  if (rows.some((row) => row.monthlyHoursPolicyApplied)) {
+    assumptions.push('Environment runtime policy was applied only where a row did not state Monthly Hours: Production is 24 hours/day (730 hours/month); configured lower environments use their saved schedule.');
+  }
+  if (rows.some((row) => row.availabilityPolicyApplied)) {
+    assumptions.push('For RDS and Aurora rows without an explicit deployment setting, the environment policy uses Multi-AZ for Production and Single-AZ for configured non-production environments. DR deployment remains a required workbook input.');
   }
   return assumptions;
 }
@@ -390,6 +425,7 @@ export async function generatePricingIntakeWorkbook(input: {
   plan?: EstimatePlanV2;
   sourceFileName?: string;
   defaultRegion?: string;
+  environmentHours?: EnvironmentHours[];
 }): Promise<PricingIntakeArtifact> {
   const ExcelJS = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
@@ -397,11 +433,13 @@ export async function generatePricingIntakeWorkbook(input: {
   workbook.created = new Date();
   workbook.subject = `Pricing Intake ${PRICING_INTAKE_VERSION}`;
 
+  const environmentHours = new Map((input.environmentHours || []).map((entry) => [clean(entry.name).toLowerCase(), entry.hoursPerDay]));
   const rows = input.resources.map((resource, index) => rowFromResource(
     resource,
     index,
     input.workbook,
     input.defaultRegion,
+    environmentHours,
   ));
   const gaps = dedupeGaps([...planGaps(input.plan, rows), ...technicalGaps(rows)]);
   const missing = rows.length
@@ -414,7 +452,7 @@ export async function generatePricingIntakeWorkbook(input: {
       reason: 'No billable resource rows could be identified. Add the material workloads to the Pricing Intake sheet.',
       sourceRefs: [],
     }];
-  const assumptions = safeAssumptions(rows);
+  const assumptions = safeAssumptions(rows, environmentHours);
 
   const instructions = workbook.addWorksheet('Instructions', { views: [{ state: 'frozen', ySplit: 1 }] });
   instructions.columns = [{ width: 28 }, { width: 110 }];
@@ -426,6 +464,7 @@ export async function generatePricingIntakeWorkbook(input: {
         ? 'Fill only the yellow cells on the scenario sheets, save this workbook as .xlsx, and upload it again. Use Excel fill-down for values shared by many resources.'
         : 'Add the billable workload rows to the Pricing Intake sheet, save this workbook as .xlsx, and upload it again.')
       : 'No material technical cells are missing. Upload this workbook directly or continue with the current estimate.'],
+    ['Environment policy', 'Explicit workbook schedules and database availability always win. Otherwise the configured Production/non-production policy supplies Monthly Hours and RDS/Aurora availability before the pricing run.'],
     ['Runtime questions', 'The pricing run asks only for commercial pricing strategy and whether separate Calculator links are required for selected scenarios.'],
     ['Accuracy rule', 'Do not replace a blank yellow cell with a guess. Low-impact MCP structural defaults are listed on Safe Assumptions and disclosed in the final estimate.'],
     ['Source workbook', clean(input.sourceFileName || input.workbook?.file_name) || 'Uploaded workbook'],

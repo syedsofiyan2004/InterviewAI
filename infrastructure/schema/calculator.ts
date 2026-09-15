@@ -61,8 +61,12 @@ export type EnvironmentHours = z.infer<typeof EnvironmentHoursSchema>;
 /** The defaults the form starts from, and the fallback when none are supplied. */
 export const DEFAULT_ENVIRONMENT_HOURS: EnvironmentHours[] = [
   { name: 'Production', hoursPerDay: 24 },
+  { name: 'UAT', hoursPerDay: 12 },
   { name: 'Staging', hoursPerDay: 12 },
-  { name: 'Dev', hoursPerDay: 8 },
+  { name: 'Test', hoursPerDay: 8 },
+  { name: 'Development', hoursPerDay: 8 },
+  { name: 'Non-Production', hoursPerDay: 8 },
+  { name: 'Sandbox', hoursPerDay: 8 },
 ];
 
 /**
