@@ -96,6 +96,7 @@ const INSTANCE_BACKED = /\b(ec2|rds|aurora|sagemaker|opensearch|elasticache|memo
 const DATABASE = /\b(rds|aurora)\b/i;
 const EXPLICIT_STORAGE = /\b(ebs|elastic block store)\b/i;
 const GLOBAL_SERVICE = /\b(cloudfront|route\s*53|iam)\b/i;
+const RESOLVED_AWS_SERVICE = /\b(amazon|aws)\s*(ec2|rds|aurora|ecs|fargate|lambda|ebs|s3|opensearch|elasticache|memorydb|redshift|sagemaker|dynamodb|sns|sqs|cloudfront|route\s*53|iam|vpc|nat gateway|quicksight|bedrock)\b/i;
 
 const clean = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
 
@@ -280,14 +281,19 @@ function technicalGaps(rows: IntakeRow[]): RowGap[] {
   const gaps: RowGap[] = [];
   rows.forEach((row, index) => {
     const scope = row.environment || row.scenario || row.service || 'All resources';
-    if (!row.service) gap(gaps, row, index, 'resource.service_family', 'AWS Service', 'Identify the AWS service that this source row should use.', scope);
+    const serviceResolved = RESOLVED_AWS_SERVICE.test(row.service);
+    if (!row.service || !serviceResolved) gap(gaps, row, index, 'resource.service_family', 'AWS Service', 'Resolve the source inventory label to an AWS service before pricing.', scope);
     if (!row.environment && !GLOBAL_SERVICE.test(row.service)) {
       gap(gaps, row, index, 'resource.environment', 'Environment', 'Identify whether this workload is Production, Non-Production, Staging, Development, Test, UAT or DR.', scope);
     }
     if (!row.region && !GLOBAL_SERVICE.test(row.service)) {
       gap(gaps, row, index, 'resource.region', 'Region', 'Region materially changes AWS price and service availability.', 'All regional resources');
     }
-    if (INSTANCE_BACKED.test(row.service) && !row.size && row.vcpu === '' && row.memoryGiB === '') {
+    // An unresolved inventory path cannot be priced as a service. When the row has
+    // sizing evidence, keep the instance gap visible as well so a failed/partial AI
+    // pass never makes the workbook look complete.
+    if ((INSTANCE_BACKED.test(row.service) && !row.size && row.vcpu === '' && row.memoryGiB === '')
+      || (!serviceResolved && !row.size)) {
       gap(gaps, row, index, 'resource.instance_type', 'Instance / Size', 'Provide an instance class, or both vCPU and memory, so the workload can be sized.', scope);
     }
     if (TIME_BILLED.test(row.service) && row.monthlyHours === '' && !/requests|invocations|gb.?seconds/i.test(row.usageUnit)) {
