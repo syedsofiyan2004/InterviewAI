@@ -191,7 +191,7 @@ describe('prepared calculator pricing intake', () => {
         },
         {
           sheet: 'Development', row: 2, name: 'dev-db', service: 'Amazon RDS', size: 'db.t4g.medium',
-          region: 'ap-south-1', hoursPerMonth: 260, raw: 'dev-db',
+          region: 'ap-south-1', hoursPerMonth: 730, raw: 'dev-db',
         },
       ],
       workbook: workbookInsights(),
@@ -207,7 +207,7 @@ describe('prepared calculator pricing intake', () => {
     const intake = parsed.getWorksheet('Pricing Intake')!;
     expect(intake.getCell('L2').value).toBeCloseTo(730);
     expect(intake.getCell('Q2').value).toBe('Multi-AZ');
-    expect(intake.getCell('L3').value).toBe(260);
+    expect(intake.getCell('L3').value).toBeCloseTo(8 * 730 / 24);
     expect(intake.getCell('Q3').value).toBe('Single-AZ');
   });
 

@@ -159,6 +159,17 @@ function policyHoursFor(environment: string, environmentHours: Map<string, numbe
   return configured === undefined ? '' : configured * 730 / 24;
 }
 
+/**
+ * Migration inventories often copy a single 730-hour value into every row as a
+ * placeholder. Treat that value as non-authoritative for known lower environments so
+ * the environment schedule is applied consistently. A value other than a full-month
+ * placeholder remains an explicit workload fact and is preserved.
+ */
+function isGenericFullMonthHours(hours: number | '', environment: string): boolean {
+  if (hours === '' || !isKnownNonProductionEnvironment(environment)) return false;
+  return Math.abs(hours - 730) < 0.5 || Math.abs(hours - (24 * 30.4167)) < 0.5;
+}
+
 function scenarioName(resource: CalculationResource, workbook?: WorkbookInsights): string {
   if (clean(resource.scenario)) return clean(resource.scenario);
   const bands = workbook?.bands || [];
@@ -179,7 +190,8 @@ function rowFromResource(
   const transferDimension = resource.quantities?.find((entry) => entry.unit === 'GB-transfer/month');
   const usageDimension = resource.quantities?.find((entry) => !['hours/month', 'GB/month', 'GB-transfer/month'].includes(entry.unit));
   const environment = inferEnvironment(resource);
-  const explicitMonthlyHours = numberValue(resource.hoursPerMonth ?? quantityDimension?.amount);
+  const sourceMonthlyHours = numberValue(resource.hoursPerMonth ?? quantityDimension?.amount);
+  const explicitMonthlyHours = isGenericFullMonthHours(sourceMonthlyHours, environment) ? '' : sourceMonthlyHours;
   const policyMonthlyHours = policyHoursFor(environment, environmentHours);
   const explicitAvailability = valueFrom(resource, /availability|multi.?az|deployment/i)
     || (/multi.?az/i.test(clean(resource.notes || resource.raw)) ? 'Multi-AZ' : '');
