@@ -25,6 +25,7 @@ import {
   type PricingIntakeSummary,
 } from '../shared/calculator-pricing-intake';
 import { analyseWorkbook } from './calculator-workbook';
+import { applyAiWorkbookFormatting } from '../shared/calculator-ai-formatter';
 import {
   EXECUTION_MODE,
   isAgentCoreMode,
@@ -519,8 +520,22 @@ async function createCalculationInternal(
   const prepareRequested = Boolean(input.prepare_workbook || preparedWorkbookUpload);
   if (input.input_s3_key && prepareRequested) {
     try {
+      let formatterResources = planResources.length ? planResources : resources;
+      try {
+        const formatted = await applyAiWorkbookFormatting(formatterResources);
+        formatterResources = formatted.resources;
+        planResources = formatted.resources;
+        inputWarnings = [...formatted.warnings, ...inputWarnings].slice(0, MAX_INPUT_WARNINGS);
+        console.log(JSON.stringify({ event: 'calculator_ai_formatter_complete', calculationId, appliedRows: formatted.applied }));
+      } catch (formatterError) {
+        // A failed model call must retain the deterministic gaps. It must never turn an
+        // incomplete workbook into READY merely because enrichment was unavailable.
+        inputWarnings = [`AI workbook interpretation was unavailable; unresolved material cells remain highlighted. ${(formatterError as Error).message}`, ...inputWarnings]
+          .slice(0, MAX_INPUT_WARNINGS);
+        console.error('[createCalculation] AI formatter failed:', formatterError);
+      }
       const intakeArtifact = await generatePricingIntakeWorkbook({
-        resources: planResources.length ? planResources : resources,
+        resources: formatterResources,
         workbook,
         plan: planV2,
         sourceFileName: inputFileName,

@@ -319,6 +319,7 @@ export class IepStack extends cdk.Stack {
         KEKA_SYNC_LOOKAHEAD_DAYS: process.env.KEKA_SYNC_LOOKAHEAD_DAYS || '',
         // Standardized Model Sync (Sonnet 5 + legacy fallbacks + Nova)
         BEDROCK_SONNET_5_PROFILE_ARN: process.env.BEDROCK_SONNET_5_PROFILE_ARN || 'global.anthropic.claude-sonnet-5',
+        CALCULATOR_FORMATTER_MODEL_ID: process.env.CALCULATOR_FORMATTER_MODEL_ID || 'global.anthropic.claude-sonnet-5',
         CALCULATOR_FAST_MODEL_ID: process.env.CALCULATOR_FAST_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
         CALCULATOR_REASONING_MODEL_ID: process.env.CALCULATOR_REASONING_MODEL_ID || 'global.anthropic.claude-sonnet-4-6',
         CALCULATOR_MODEL_ROUTING_MODE: process.env.CALCULATOR_MODEL_ROUTING_MODE || 'hybrid',
