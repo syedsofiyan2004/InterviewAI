@@ -580,8 +580,11 @@ export class IepStack extends cdk.Stack {
       filesBucket,
       calculatorTable,
       browserValidator: calculatorBrowserValidator,
-      agentModelId: process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      maxIterations: 12,
+      // Sonnet is used for the bounded workbook-to-MCP reasoning path. The harness
+      // remains cost-safe through its explicit iteration cap; callers can override the
+      // model during a controlled canary with CALCULATOR_AGENT_MODEL_ID.
+      agentModelId: process.env.CALCULATOR_AGENT_MODEL_ID || 'global.anthropic.claude-sonnet-5',
+      maxIterations: 6,
     });
 
     // ─── Production path: the API handler starts a Step Functions execution ────
