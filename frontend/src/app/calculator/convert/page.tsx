@@ -30,6 +30,7 @@ export default function CalculatorWorkbookConverterPage() {
   const [projects, setProjects] = useState<Array<{ project_id: string; project_title: string }>>([]);
   const [projectId, setProjectId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,8 +43,10 @@ export default function CalculatorWorkbookConverterPage() {
     event.preventDefault();
     if (!file) { setError('Choose an Excel workbook first.'); return; }
     setBusy(true); setError(null);
+    setProgress('Uploading the original workbook...');
     try {
       const uploaded = await calculatorApi.uploadResourceSheet(file);
+      setProgress('Reading sheets and preserving source references...');
       const created = await calculatorApi.analyzeCalculation({
         name: file.name.replace(/\.[^.]+$/, '') || 'Formatted AWS workload workbook',
         input_s3_key: uploaded.s3_key,
@@ -52,9 +55,23 @@ export default function CalculatorWorkbookConverterPage() {
         project_id: projectId || undefined,
         environment_hours: environmentHours,
       });
+      if (created.status === 'ANALYZING') {
+        setProgress('AI is interpreting services, sizing and material gaps...');
+        const deadline = Date.now() + 10 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          const current = await calculatorApi.getCalculation(created.calculation_id);
+          setProgress(current.progress_message || 'Preparing your workbook...');
+          if (current.status === 'REVIEW_REQUIRED') break;
+          if (current.status === 'FAILED') throw new Error(current.error_message || 'Workbook preparation failed.');
+        }
+        if (Date.now() >= deadline) throw new Error('Workbook preparation is still running. Open the estimate from its project to check the result.');
+      }
+      setProgress('Prepared workbook ready. Opening review...');
       router.push(`/calculator/new?review=${encodeURIComponent(created.calculation_id)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The workbook could not be analyzed.');
+      setProgress(null);
       setBusy(false);
     }
   };
@@ -140,6 +157,13 @@ export default function CalculatorWorkbookConverterPage() {
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent"><CheckCircle2 size={14} /> Source references retained</span>
           </div>
           {error && <p className="text-sm font-semibold text-danger">{error}</p>}
+          {busy && progress && (
+            <div className="rounded-xl border border-accent/30 bg-accent/5 p-4" role="status" aria-live="polite">
+              <div className="flex items-center gap-3"><Loader2 size={18} className="animate-spin text-accent" /><div><p className="text-sm font-semibold text-text-primary">Preparing your workbook</p><p className="mt-1 text-xs text-text-secondary">{progress}</p></div></div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface"><div className="h-full w-2/3 animate-pulse rounded-full bg-accent" /></div>
+              <p className="mt-2 text-xs text-text-muted">You can leave this page. The conversion continues and remains available under the selected project.</p>
+            </div>
+          )}
           <button className="btn-primary inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !file}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
             {busy ? 'Preparing workbook...' : 'Prepare workbook'}

@@ -136,6 +136,7 @@ import {
   confirmCalculationPlan,
   runCalculationPlan,
   answerCalculationQuestion,
+  runCalculatorAiFormatterWorker,
 } from './calculator-routes.js';
 import {
   adminListConversations,
@@ -237,6 +238,9 @@ function parseTaggedJson<T>(
 }
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  if ((event as any).__internalTask === 'calculator-ai-format') {
+    return runCalculatorAiFormatterWorker(String((event as any).calculationId || ''));
+  }
   if ((event as any).__internalTask === 'sow-peer-review') {
     try { return await reviewSow(event); }
     catch (error: any) {

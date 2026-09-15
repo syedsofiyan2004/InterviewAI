@@ -520,22 +520,8 @@ async function createCalculationInternal(
   const prepareRequested = Boolean(input.prepare_workbook || preparedWorkbookUpload);
   if (input.input_s3_key && prepareRequested) {
     try {
-      let formatterResources = planResources.length ? planResources : resources;
-      try {
-        const formatted = await applyAiWorkbookFormatting(formatterResources);
-        formatterResources = formatted.resources;
-        planResources = formatted.resources;
-        inputWarnings = [...formatted.warnings, ...inputWarnings].slice(0, MAX_INPUT_WARNINGS);
-        console.log(JSON.stringify({ event: 'calculator_ai_formatter_complete', calculationId, appliedRows: formatted.applied }));
-      } catch (formatterError) {
-        // A failed model call must retain the deterministic gaps. It must never turn an
-        // incomplete workbook into READY merely because enrichment was unavailable.
-        inputWarnings = [`AI workbook interpretation was unavailable; unresolved material cells remain highlighted. ${(formatterError as Error).message}`, ...inputWarnings]
-          .slice(0, MAX_INPUT_WARNINGS);
-        console.error('[createCalculation] AI formatter failed:', formatterError);
-      }
       const intakeArtifact = await generatePricingIntakeWorkbook({
-        resources: formatterResources,
+        resources: planResources.length ? planResources : resources,
         workbook,
         plan: planV2,
         sourceFileName: inputFileName,
@@ -595,7 +581,7 @@ async function createCalculationInternal(
     name: input.name,
     prompt,
     region: input.region,
-    status: shouldStartWorker ? 'PROCESSING' : 'REVIEW_REQUIRED',
+    status: prepareRequested ? 'ANALYZING' : shouldStartWorker ? 'PROCESSING' : 'REVIEW_REQUIRED',
     environment_hours: resolveEnvironmentHours(input.environment_hours),
     resources,
     ...(resourcesS3Key ? { resources_s3_key: resourcesS3Key } : {}),
@@ -625,8 +611,8 @@ async function createCalculationInternal(
     ...(projectTitle ? { project_title: projectTitle } : {}),
     created_at: now,
     updated_at: now,
-    progress_stage: shouldStartWorker ? 'queued' : 'review',
-    progress_message: shouldStartWorker ? 'Starting estimate' : 'Analysis ready for review and customization',
+    progress_stage: prepareRequested ? 'formatting' : shouldStartWorker ? 'queued' : 'review',
+    progress_message: prepareRequested ? 'AI is interpreting workbook fields' : shouldStartWorker ? 'Starting estimate' : 'Analysis ready for review and customization',
     unresolved_critical_count: unresolvedCriticalCount,
   };
 
@@ -635,6 +621,15 @@ async function createCalculationInternal(
   const persistable = await externalizePlanIfOversized(record);
   const sized = enforceItemSizeBudget(persistable as unknown as Record<string, unknown>);
   await ddbDocClient.send(new PutCommand({ TableName: CALCULATOR_TABLE_NAME, Item: sized.record }));
+
+  if (prepareRequested) {
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      InvocationType: 'Event',
+      Payload: new TextEncoder().encode(JSON.stringify({ __internalTask: 'calculator-ai-format', calculationId })),
+    }));
+    return createdResponse({ calculation_id: calculationId, status: 'ANALYZING', plan: planV2, pricing_intake: pricingIntake });
+  }
 
   if (!shouldStartWorker) {
     return createdResponse({
@@ -750,6 +745,59 @@ export async function createCalculation(event: APIGatewayProxyEvent): Promise<AP
 /** Analysis-only endpoint used by the Review / Customize flow. */
 export async function analyzeCalculation(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   return createCalculationInternal(event, false);
+}
+
+/** Background half of workbook preparation; kept off API Gateway's 29-second path. */
+export async function runCalculatorAiFormatterWorker(calculationId: string): Promise<APIGatewayProxyResult> {
+  const found = await ddbDocClient.send(new GetCommand({ TableName: CALCULATOR_TABLE_NAME, Key: { calculation_id: calculationId } }));
+  const item = found.Item as CalculationRecord | undefined;
+  if (!item) return errorResponse(404, 'NOT_FOUND', 'Calculation not found.');
+  try {
+    const sourceResources: CalculationResource[] = item.resources_s3_key
+      ? JSON.parse(await getFileContent(BUCKET_NAME, item.resources_s3_key))
+      : item.resources;
+    const formatted = await applyAiWorkbookFormatting(sourceResources);
+    const artifact = await generatePricingIntakeWorkbook({
+      resources: formatted.resources,
+      workbook: item.workbook,
+      plan: item.plan_v2,
+      sourceFileName: item.input_file_name,
+      defaultRegion: item.region,
+      environmentHours: item.environment_hours,
+    });
+    const workbookKey = item.pricing_intake_workbook_s3_key || `users/${item.owner_user_id}/calculator/${calculationId}/pricing-intake-v2.xlsx`;
+    const irKey = item.pricing_intake_workbook_ir_s3_key || `users/${item.owner_user_id}/calculator/${calculationId}/pricing-intake-v2-ir.json`;
+    const resourceKey = `users/${item.owner_user_id}/calculator/${calculationId}/ai-formatted-resources.json`;
+    const document = await readWorkbookDocument(artifact.workbook, 'pricing-intake-v2.xlsx');
+    await Promise.all([
+      saveFileContent(BUCKET_NAME, workbookKey, artifact.workbook, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+      saveFileContent(BUCKET_NAME, irKey, JSON.stringify(document.ir), 'application/json'),
+      saveFileContent(BUCKET_NAME, resourceKey, JSON.stringify(formatted.resources), 'application/json'),
+    ]);
+    const split = splitResourcesForItem(formatted.resources);
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: CALCULATOR_TABLE_NAME,
+      Key: { calculation_id: calculationId },
+      UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, pricing_intake = :intake, pricing_intake_workbook_s3_key = :workbook, pricing_intake_workbook_ir_s3_key = :ir, resources_s3_key = :resourcesKey, resources = :resources, resource_count = :count, input_warnings = :warnings, updated_at = :now',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':status': 'REVIEW_REQUIRED', ':stage': 'review', ':message': 'AI-formatted workbook ready for review',
+        ':intake': artifact.summary, ':workbook': workbookKey, ':ir': irKey, ':resourcesKey': resourceKey,
+        ':resources': split.sample, ':count': formatted.resources.length,
+        ':warnings': [...formatted.warnings, ...(item.input_warnings || [])].slice(0, MAX_INPUT_WARNINGS), ':now': Date.now(),
+      },
+    }));
+    return successResponse({ calculation_id: calculationId, status: 'REVIEW_REQUIRED', pricing_intake: artifact.summary });
+  } catch (error) {
+    console.error('[calculator-ai-format] failed:', error);
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: CALCULATOR_TABLE_NAME, Key: { calculation_id: calculationId },
+      UpdateExpression: 'SET #status = :status, progress_stage = :stage, progress_message = :message, error_message = :error, updated_at = :now',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':status': 'REVIEW_REQUIRED', ':stage': 'review', ':message': 'Prepared workbook ready with unresolved fields highlighted', ':error': `AI formatter failed: ${(error as Error).message}`, ':now': Date.now() },
+    }));
+    return errorResponse(500, 'AI_FORMATTER_FAILED', 'AI formatting failed; the prepared workbook retains highlighted material gaps.');
+  }
 }
 
 export async function listCalculations(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {

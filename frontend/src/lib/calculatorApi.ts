@@ -625,6 +625,18 @@ export const calculatorApi = {
     return handleResponse(res);
   },
 
+  async getCalculation(id: string): Promise<{
+    calculation_id: string;
+    status: CalculationStatus;
+    progress_stage?: string;
+    progress_message?: string;
+    error_message?: string;
+    pricing_intake?: PricingIntakeSummary;
+  }> {
+    const res = await authFetch(`${API_URL}/calculator/${id}`);
+    return handleResponse(res);
+  },
+
   async getMapEligibilityStatus(id: string): Promise<{ status: string; map_eligibility?: MapEligibilityReport | null; error_message?: string }> {
     const res = await authFetch(`${API_URL}/calculator/${encodeURIComponent(id)}/answer`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

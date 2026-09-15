@@ -56,15 +56,24 @@ export async function applyAiWorkbookFormatting(resources: CalculationResource[]
     notes: group.sample.notes,
     raw: String(group.sample.raw || '').slice(0, 500),
   }));
-  const prompt = `You are the workbook-formatting stage for an AWS estimate. Interpret these source-linked resource groups. Return JSON only: {"decisions":[{"groupId":"g1","awsService":"Amazon EC2","instanceSize":"m7i.large","availability":"Multi-AZ|Single-AZ","confidence":"high|medium|low","reason":"..."}]}. Resolve an AWS service from context. Choose an instance class only when vCPU, memory and OS support it; choose the smallest current general/compute/memory AWS class that meets both, preserving architecture when known. Production RDS/Aurora is Multi-AZ and non-production is Single-AZ unless source evidence overrides it. Omit fields you cannot support. Do not invent usage, quantity, storage, region, engine or traffic. Low confidence decisions are advisory and will not be applied.\n\n${JSON.stringify(payload)}`;
+  const prompt = `Interpret these source-linked resource groups for an AWS estimate. Resolve an AWS service from context. Choose an instance class only when vCPU, memory and OS support it; choose the smallest current general/compute/memory AWS class that meets both, preserving architecture when known. Production RDS/Aurora is Multi-AZ and non-production is Single-AZ unless source evidence overrides it. Omit fields you cannot support. Do not invent usage, quantity, storage, region, engine or traffic. Low confidence decisions are advisory and will not be applied.\n\n${JSON.stringify(payload)}`;
   const response = await bedrockClient.send(new InvokeModelCommand({
     modelId: MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 6000, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({
+      anthropic_version: 'bedrock-2023-05-31', max_tokens: 6000,
+      messages: [{ role: 'user', content: prompt }],
+      tools: [{
+        name: 'submit_formatter_decisions', description: 'Submit the structured workbook formatting decisions.',
+        input_schema: { type: 'object', properties: { decisions: { type: 'array', items: { type: 'object', properties: { groupId: { type: 'string' }, awsService: { type: 'string' }, instanceSize: { type: 'string' }, availability: { type: 'string', enum: ['Multi-AZ', 'Single-AZ'] }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] }, reason: { type: 'string' } }, required: ['groupId', 'confidence', 'reason'] } } }, required: ['decisions'] },
+      }],
+      tool_choice: { type: 'tool', name: 'submit_formatter_decisions' },
+    }),
   }));
-  const body = JSON.parse(new TextDecoder().decode(response.body)) as { content?: Array<{ text?: string }> };
-  const parsed = extractJson(body.content?.map((item) => item.text || '').join('') || '') as { decisions?: Decision[] };
+  const body = JSON.parse(new TextDecoder().decode(response.body)) as { content?: Array<{ type?: string; text?: string; input?: unknown }> };
+  const toolInput = body.content?.find((item) => item.type === 'tool_use')?.input;
+  const parsed = (toolInput || extractJson(body.content?.map((item) => item.text || '').join('') || '')) as { decisions?: Decision[] };
   const decisions = new Map((parsed.decisions || []).filter((item) => item && item.confidence !== 'low').map((item) => [item.groupId, item]));
   const enriched = resources.map((resource) => ({ ...resource }));
   let applied = 0;
