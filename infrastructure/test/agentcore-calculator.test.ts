@@ -464,7 +464,7 @@ describe('Agent system prompt', () => {
       created_at: Date.now(), updated_at: Date.now(),
     } as any, 'calc-ready');
     expect(message).toContain('Prepared pricing intake status: READY');
-    expect(message).toContain('Do not ask the customer for instance types');
+    expect(message).toContain('Do not ask the customer for technical workload values');
   });
 
   it('tells the agent to use get_workbook_evidence when evidence may be incomplete', () => {

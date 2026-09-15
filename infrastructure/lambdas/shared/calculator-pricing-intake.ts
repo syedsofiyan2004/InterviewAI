@@ -246,8 +246,8 @@ function technicalGaps(rows: IntakeRow[]): RowGap[] {
     if (!row.region && !GLOBAL_SERVICE.test(row.service)) {
       gap(gaps, row, index, 'resource.region', 'Region', 'Region materially changes AWS price and service availability.', 'All regional resources');
     }
-    if (INSTANCE_BACKED.test(row.service) && !row.size) {
-      gap(gaps, row, index, 'resource.instance_type', 'Instance / Size', 'Provide the AWS instance or node class. vCPU and memory describe the source workload but do not identify the AWS pricing family.', scope);
+    if (INSTANCE_BACKED.test(row.service) && !row.size && row.vcpu === '' && row.memoryGiB === '') {
+      gap(gaps, row, index, 'resource.instance_type', 'Instance / Size', 'Provide an instance class, or both vCPU and memory, so the workload can be sized.', scope);
     }
     if (TIME_BILLED.test(row.service) && row.monthlyHours === '' && !/requests|invocations|gb.?seconds/i.test(row.usageUnit)) {
       gap(gaps, row, index, 'resource.monthly_hours', 'Monthly Hours', 'Operating time materially changes compute cost.', row.environment || row.scenario || row.service);

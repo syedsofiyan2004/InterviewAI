@@ -482,14 +482,7 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   }
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
-  if (record.pricing_intake?.status === 'READY') {
-    lines.push('Prepared pricing intake status: READY. The converter has completed the technical-input review. Do not ask the customer for instance types, regions, environments, schedules, storage, availability, usage quantities, or any other technical workload value. Use the prepared workbook values and the MCP structural guidance, then ask only the commercial pricing strategy and scenario-link decisions described by the system prompt.');
-  } else if (record.pricing_intake?.status === 'NEEDS_INPUT') {
-    lines.push('Prepared pricing intake status: NEEDS_INPUT. Do not start Calculator calls or ask technical questions in this agent session. The customer must complete the highlighted cells in the prepared workbook and upload it again.');
-  } else {
-    lines.push('After reading the workbook, identify material customer decisions that affect price or architecture and are not already answered by the workbook or customer instructions.');
-    lines.push('Before calling create_estimate, add_service, build_estimate, export_estimate, or import_estimate, ask unresolved material decisions with request_user_input. Ask exactly one question per pause; after the customer answers, continue the same runtime session and ask the next independent decision if needed.');
-  }
+  lines.push(`Prepared pricing intake status: ${record.pricing_intake?.status || 'not supplied'}. Read and convert the complete workbook evidence yourself using the MCP guidance. Do not ask the customer for technical workload values such as instance type, region, environment, schedule, storage, availability, usage, or traffic. The only permitted request_user_input questions are (1) the pricing plan and (2) how many/separate scenario links to create; ask each at most once and continue the same session after the answer.`);
   lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
   lines.push('');
