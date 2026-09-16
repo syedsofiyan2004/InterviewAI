@@ -463,7 +463,8 @@ describe('Agent system prompt', () => {
       pricing_intake: { version: '2.0', status: 'READY', missing: [], scenarioSheets: ['Pricing Intake'], normalizedResourceCount: 1, safeAssumptions: [] },
       created_at: Date.now(), updated_at: Date.now(),
     } as any, 'calc-ready');
-    expect(message).toContain('Prepared pricing intake status: READY');
+    expect(message).toContain('MIMO Pricing Intake validation: READY');
+    expect(message).toContain('do not run another workbook-conversion');
     expect(message).toContain('Do not ask the customer for technical workload values');
   });
 
@@ -505,9 +506,9 @@ describe('Agent system prompt', () => {
 
   it('uses the prepared workbook as the technical-input gate', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
-    expect(prompt).toContain('PRICING_INTAKE_INCOMPLETE');
-    expect(prompt).toContain('fill the yellow cells');
-    expect(prompt).toContain('Do not reopen technical questions');
+    expect(prompt).toContain('latest MIMO Pricing Intake validation status');
+    expect(prompt).toContain('takes precedence over stale explanatory rows');
+    expect(prompt).toContain('do not reopen technical questions');
   });
 
   it('offers contextual options plus an Other/customInput path', () => {
@@ -520,7 +521,7 @@ describe('Agent system prompt', () => {
   it('applies a commercial pricing strategy only to eligible resources and never silently picks On-Demand', () => {
     const prompt = readSource('prompts/calculator-agent-system.txt');
     expect(prompt).toContain('Do not silently pick On-Demand');
-    expect(prompt).toContain('only to resources actually eligible for it');
+    expect(prompt).toContain('only to eligible Production baseline resources');
   });
 
   it('requires one final validate -> export -> import readback before COMPLETED', () => {

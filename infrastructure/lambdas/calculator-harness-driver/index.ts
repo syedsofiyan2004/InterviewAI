@@ -482,7 +482,13 @@ export async function buildInitialMessage(record: CalculationRecord, calculation
   }
   lines.push('');
   lines.push('Call get_workbook_evidence before creating any AWS Pricing Calculator estimate.');
-  lines.push(`Prepared pricing intake status: ${record.pricing_intake?.status || 'not supplied'}. Read and convert the complete workbook evidence yourself using the MCP guidance. Do not ask the customer for technical workload values such as instance type, region, environment, schedule, storage, availability, usage, or traffic. The only permitted request_user_input questions are (1) the pricing plan and (2) how many/separate scenario links to create; ask each at most once and continue the same session after the answer.`);
+  if (record.pricing_intake) {
+    lines.push(`MIMO Pricing Intake validation: ${record.pricing_intake.status}; normalized resources: ${record.pricing_intake.normalizedResourceCount}; scenario sheets: ${record.pricing_intake.scenarioSheets.join(', ') || 'Pricing Intake'}.`);
+    lines.push('This is the standard MIMO format. Pricing Intake and Scenario <name> are the primary normalized pricing manifest. Read those workload rows directly; do not run another workbook-conversion or source-discovery pass. Inputs Needed, Safe Assumptions, Source Context and Source Lineage are supporting audit sheets. The validation status in this message reflects the latest uploaded row values and takes precedence over stale explanatory rows left on Inputs Needed after the user filled highlighted cells.');
+  } else {
+    lines.push('No prepared MIMO pricing intake was supplied. Read the complete workbook evidence before pricing.');
+  }
+  lines.push('Do not ask the customer for technical workload values such as instance type, region, environment, schedule, storage, availability, usage, or traffic. The only permitted request_user_input questions are (1) the pricing plan and (2) how many/separate scenario links to create; ask each at most once and continue the same session after the answer.');
   lines.push('No rows have been discarded; the evidence tool returns the uploaded workbook content.');
 
   lines.push('');

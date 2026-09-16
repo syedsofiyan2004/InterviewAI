@@ -443,9 +443,9 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
   });
 
   it('C — an ambiguous frequency/runtime is returned to the prepared workbook, not silently assumed', () => {
-    expect(readPrompt()).toContain('do not start Calculator calls');
-    expect(readPrompt()).toContain('Do not use request_user_input for region, environment, schedules');
-    expect(readPrompt()).toContain('PRICING_INTAKE_INCOMPLETE');
+    expect(readPrompt()).toContain("prepared pricing/scenario sheets are the formatter's manifest");
+    expect(readPrompt()).toContain('Ask no other runtime question');
+    expect(readPrompt()).toContain('Do not repeat formatter analysis inside the Calculator run');
   });
 
   it('D — a known frequency produces no question and a completed estimate', async () => {
@@ -463,8 +463,8 @@ describe('Part 42 — REQUIRED TESTS A-J', () => {
   });
 
   it('E — a sizing contradiction is resolved in bulk before AgentCore pricing', () => {
-    expect(readPrompt()).toContain('Do not use request_user_input for region, environment, schedules, sizing');
-    expect(readPrompt()).toContain('fill the yellow cells');
+    expect(readPrompt()).toContain('prepared technical inputs');
+    expect(readPrompt()).toContain('Ask no other runtime question');
   });
 
   it('F — an OS conflict cannot become a runtime assumption or a third question category', () => {

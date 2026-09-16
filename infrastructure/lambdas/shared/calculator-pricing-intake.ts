@@ -3,6 +3,40 @@ import type { EstimatePlanV2, PlanQuestion } from '../../schema/estimate-plan';
 
 export const PRICING_INTAKE_VERSION = '2.1';
 
+/**
+ * The compact contract handed to the Calculator agent when the uploaded file is
+ * already a MIMO pricing intake. Keeping this in one place prevents the HTTP route,
+ * Harness prompt and workbook instructions from drifting into three different
+ * interpretations of the same file.
+ */
+export const PRICING_INTAKE_AGENT_CONTEXT = [
+  'This upload is a validated MIMO AWS Pricing Intake workbook.',
+  'Pricing Intake and Scenario <name> sheets are the primary normalized pricing manifest: one row is one independently billable workload and the column headings carry the customer values.',
+  'Inputs Needed records the formatter review, Safe Assumptions records authorized low-impact defaults, and Source Context/Source Lineage are audit evidence only.',
+  'Do not convert or semantically rediscover the original workbook. Price the normalized scenario rows directly and consult lineage only when a row is ambiguous or coverage does not reconcile.',
+].join(' ');
+
+/** A stable, human-readable download name that does not grow on every round trip. */
+export function pricingIntakeDownloadName(source?: string): string {
+  const withoutUploadId = (source || 'workload')
+    .replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
+    .replace(/\.(xlsx|xlsm|csv)$/i, '');
+  let base = withoutUploadId;
+  let previous = '';
+  while (base !== previous) {
+    previous = base;
+    base = base
+      .replace(/^(?:mimo-)?(?:aws-)?pricing-intake-/i, '')
+      .replace(/-aws-pricing-input$/i, '');
+  }
+  base = base
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/g, '') || 'workload';
+  return `${base}-aws-pricing-input.xlsx`;
+}
+
 export type PricingIntakeStatus = 'READY' | 'NEEDS_INPUT';
 
 export interface PricingIntakeGap {

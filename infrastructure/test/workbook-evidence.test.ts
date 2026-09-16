@@ -207,6 +207,36 @@ describe('chunkEvidence — Phase 2 chunking', () => {
 });
 
 describe('buildEvidenceIndex — Phase 2 index', () => {
+  it('counts only normalized scenario rows as billable in a MIMO pricing intake', () => {
+    const pricing = inventoryWorkbook(2, 'Pricing Intake');
+    const lineage = inventoryWorkbook(2, 'Source Lineage');
+    const metadata = ['Instructions', 'Inputs Needed', 'Safe Assumptions', 'Source Context']
+      .map((name, index) => ({
+        name,
+        index: index + 3,
+        rowCount: 1,
+        columnCount: 2,
+        cells: [cell(name, 1, 1, name), cell(name, 1, 2, 'MIMO Pricing Intake')],
+      }));
+    const ir: WorkbookIR = {
+      ...pricing,
+      sheets: [
+        { ...pricing.sheets[0], index: 1 },
+        { ...lineage.sheets[0], index: 2 },
+        ...metadata,
+      ],
+      nonEmptyCellCount: pricing.nonEmptyCellCount + lineage.nonEmptyCellCount + metadata.length * 2,
+    };
+
+    const evidence = buildWorkbookEvidence({ ir });
+    const chunked = chunkEvidence(evidence);
+    const index = buildEvidenceIndex(evidence, chunked, 'owner', 'calculation');
+
+    expect(costRelevantRowIds(evidence)).toEqual(['Pricing Intake!3', 'Pricing Intake!4']);
+    expect(index.accounting.costRelevantRows).toBe(2);
+    expect(index.chunks.find((chunk) => chunk.sheet === 'Source Lineage')?.costRelevantRowCount).toBe(0);
+  });
+
   it('records chunk refs with S3 keys, row ranges and routing hints', () => {
     const evidence = buildWorkbookEvidence({ ir: inventoryWorkbook(2000) });
     const chunked = chunkEvidence(evidence);

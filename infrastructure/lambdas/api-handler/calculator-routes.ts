@@ -22,6 +22,8 @@ import { buildWorkbookSemanticArtifacts } from '../shared/workbook-semantic-mode
 import { readWorkbookDocument } from '../shared/workbook';
 import {
   generatePricingIntakeWorkbook,
+  PRICING_INTAKE_AGENT_CONTEXT,
+  pricingIntakeDownloadName,
   type PricingIntakeSummary,
 } from '../shared/calculator-pricing-intake';
 import { analyseWorkbook } from './calculator-workbook';
@@ -409,9 +411,11 @@ async function createCalculationInternal(
       // The file NAME decides the reader (.xlsx vs .csv), so pass the original rather
       // than the key: the key's uuid prefix is noise, but its extension is not.
       const analysis = await analyseWorkbook(buffer, inputFileName || input.input_s3_key);
-      preparedWorkbookUpload = analysis.workbookIR.sheets.some((sheet) =>
-        /^(pricing intake|inputs needed|safe assumptions|source context)$/i.test(sheet.name),
-      );
+      const uploadedSheetNames = new Set(analysis.workbookIR.sheets.map((sheet) => sheet.name.toLowerCase()));
+      preparedWorkbookUpload = uploadedSheetNames.has('instructions')
+        && uploadedSheetNames.has('inputs needed')
+        && uploadedSheetNames.has('source lineage')
+        && analysis.workbookIR.sheets.some((sheet) => /^pricing intake$|^scenario\s+/i.test(sheet.name));
       resources = analysis.legacyResources;
       inputWarnings = analysis.warnings.slice(0, MAX_INPUT_WARNINGS);
       workbook = analysis.insights;
@@ -517,8 +521,34 @@ async function createCalculationInternal(
       console.warn('[createCalculation] calculator preflight skipped:', (error as Error).message);
     }
   }
-  const prepareRequested = Boolean(input.prepare_workbook || preparedWorkbookUpload);
-  if (input.input_s3_key && prepareRequested) {
+  // A completed MIMO intake is already the formatter's output. Running it through
+  // the formatter again duplicated filename prefixes, spent another model call and
+  // could reinterpret values the customer had just filled in. Validate its current
+  // normalized rows, then hand that exact workbook to the Calculator agent.
+  const prepareRequested = Boolean(input.prepare_workbook && !preparedWorkbookUpload);
+  if (input.input_s3_key && preparedWorkbookUpload) {
+    try {
+      const validation = await generatePricingIntakeWorkbook({
+        resources: planResources.length ? planResources : resources,
+        workbook,
+        plan: planV2,
+        sourceFileName: inputFileName,
+        defaultRegion: input.region,
+        environmentHours: resolveEnvironmentHours(input.environment_hours),
+      });
+      pricingIntake = validation.summary;
+      pricingIntakeWorkbookS3Key = input.input_s3_key;
+      pricingIntakeWorkbookIrS3Key = workbookIrS3Key;
+      planV2 = {
+        ...planV2,
+        status: pricingIntake.status === 'READY' ? 'READY' : 'NEEDS_INPUT',
+        unresolved: [],
+      };
+    } catch (error) {
+      console.error('[createCalculation] could not validate prepared pricing intake:', error);
+      return errorResponse(500, 'INTERNAL_ERROR', 'The prepared workbook was read but could not be validated. Please try again.');
+    }
+  } else if (input.input_s3_key && prepareRequested) {
     try {
       const intakeArtifact = await generatePricingIntakeWorkbook({
         resources: planResources.length ? planResources : resources,
@@ -652,12 +682,9 @@ async function createCalculationInternal(
       const evidence = await persistWorkbookEvidence({
         owner: userId,
         calculationId: record.calculation_id,
-        // Keep the original uploaded workbook as the agent's authoritative
-        // evidence. The prepared intake is a review aid and must never replace
-        // source sheets or prevent Claude from interpreting their headings,
-        // banners and notes losslessly.
-        workbookIrS3Key,
+        workbookIrS3Key: pricingIntakeWorkbookIrS3Key || workbookIrS3Key,
         userInstructions: [
+          ...(preparedWorkbookUpload ? [PRICING_INTAKE_AGENT_CONTEXT] : []),
           ...(prompt ? [prompt] : []),
           ...(input.region ? [`Primary region: ${input.region}`] : []),
         ],
@@ -1792,9 +1819,7 @@ export async function getCalculationWorkbook(
     if (!item.pricing_intake_workbook_s3_key) {
       return errorResponse(409, 'PRICING_INTAKE_UNAVAILABLE', 'No prepared pricing workbook exists for this estimate.');
     }
-    const preparedName = `mimo-pricing-intake-${(item.name || 'estimate')
-      .replace(/[^a-zA-Z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')}.xlsx`;
+    const preparedName = pricingIntakeDownloadName(item.input_file_name || item.name);
     const command = new GetObjectCommand({
       Bucket: BUCKET_NAME,
       Key: item.pricing_intake_workbook_s3_key,

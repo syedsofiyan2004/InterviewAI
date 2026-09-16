@@ -1,5 +1,8 @@
 import ExcelJS from 'exceljs';
-import { generatePricingIntakeWorkbook } from '../lambdas/shared/calculator-pricing-intake';
+import {
+  generatePricingIntakeWorkbook,
+  pricingIntakeDownloadName,
+} from '../lambdas/shared/calculator-pricing-intake';
 import { analyseWorkbook } from '../lambdas/api-handler/calculator-workbook';
 import type { CalculationResource, WorkbookInsights } from '../schema/calculator';
 
@@ -18,6 +21,13 @@ const workbookInsights = (overrides: Partial<WorkbookInsights> = {}): WorkbookIn
 });
 
 describe('prepared calculator pricing intake', () => {
+  it('keeps the prepared download name short and stable across repeated uploads', () => {
+    expect(pricingIntakeDownloadName('mimo-pricing-intake-mimo-pricing-intake-customer.xlsx'))
+      .toBe('customer-aws-pricing-input.xlsx');
+    expect(pricingIntakeDownloadName('b274d9ee-151d-43a4-86a4-7bc7c4d44108-customer-aws-pricing-input.xlsx'))
+      .toBe('customer-aws-pricing-input.xlsx');
+  });
+
   it('groups repeated missing technical fields instead of creating one web question per resource', async () => {
     const resources: CalculationResource[] = Array.from({ length: 250 }, (_, index) => ({
       sheet: 'VMs',

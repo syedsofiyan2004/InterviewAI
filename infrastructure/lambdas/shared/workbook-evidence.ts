@@ -395,6 +395,7 @@ export function chunkEvidence(evidence: WorkbookEvidence): ChunkedEvidence {
   const chunks: EvidenceChunk[] = [];
   const refs: Omit<EvidenceChunkRef, 's3Key'>[] = [];
   let sequence = 0;
+  const pricingSheets = preparedPricingSheets(evidence);
 
   for (const sheet of evidence.sheets) {
     let current: EvidenceRow[] = [];
@@ -422,7 +423,14 @@ export function chunkEvidence(evidence: WorkbookEvidence): ChunkedEvidence {
         environmentHints: [...new Set(matchAll(text, ENVIRONMENT_PATTERNS))],
         fiscalPeriodHints: [...new Set(FISCAL_PATTERNS.flatMap((p) => text.match(new RegExp(p, 'gi')) ?? []).map((s) => s.trim()))],
         serviceHints: [...new Set(matchAll(text, SERVICE_HINT_PATTERNS))],
-        costRelevantRowCount: current.filter((row) => classifyRow(row.cells) === 'cost-relevant').length,
+        // A prepared workbook deliberately repeats source text and row numbers in
+        // Source Lineage. Counting those audit rows as additional workloads makes a
+        // complete estimate look incomplete and forces Claude to read and reconcile
+        // the same inventory twice. The normalized scenario sheets are the pricing
+        // authority; all other sheets remain retrievable context.
+        costRelevantRowCount: pricingSheets && !pricingSheets.has(sheet.name)
+          ? 0
+          : current.filter((row) => classifyRow(row.cells) === 'cost-relevant').length,
       });
       current = [];
       currentBytes = 0;
@@ -591,6 +599,23 @@ export function reconcileEvidence(input: {
 
 /** Row ids classified cost-relevant across the whole workbook. */
 export function costRelevantRowIds(evidence: WorkbookEvidence): string[] {
+  const pricingSheets = preparedPricingSheets(evidence);
   return evidence.sheets.flatMap((sheet) =>
-    sheet.rows.filter((row) => classifyRow(row.cells) === 'cost-relevant').map((row) => row.rowId));
+    pricingSheets && !pricingSheets.has(sheet.name)
+      ? []
+      : sheet.rows.filter((row) => classifyRow(row.cells) === 'cost-relevant').map((row) => row.rowId));
+}
+
+/**
+ * Returns the normalized workload sheets only when the complete MIMO contract is
+ * present. A customer workbook that merely happens to contain a sheet called
+ * "Pricing Intake" still uses ordinary whole-workbook accounting.
+ */
+function preparedPricingSheets(evidence: WorkbookEvidence): Set<string> | undefined {
+  const names = new Set(evidence.sheets.map((sheet) => sheet.name.toLowerCase()));
+  if (!names.has('instructions') || !names.has('inputs needed') || !names.has('source lineage')) return undefined;
+  const selected = evidence.sheets
+    .map((sheet) => sheet.name)
+    .filter((name) => /^pricing intake$|^scenario\s+/i.test(name));
+  return selected.length ? new Set(selected) : undefined;
 }
