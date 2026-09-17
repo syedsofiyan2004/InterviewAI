@@ -164,6 +164,19 @@ describe('prepared calculator pricing intake', () => {
     });
   });
 
+  it('accepts the short EC2 service label used in prepared workbooks', async () => {
+    const artifact = await generatePricingIntakeWorkbook({
+      resources: [{
+        sheet: 'Pricing Intake', row: 2, name: 'web', service: 'EC2', size: 'm5.large',
+        region: 'ap-southeast-5', environment: 'Production', os: 'Windows', hoursPerMonth: 730,
+        disk_gb: 100, raw: 'web | EC2 | m5.large',
+      }],
+      workbook: workbookInsights(),
+    });
+    expect(artifact.summary.status).toBe('READY');
+    expect(artifact.summary.missing).toEqual([]);
+  });
+
   it('accepts material values filled into highlighted generic columns on re-upload', async () => {
     const first = await generatePricingIntakeWorkbook({
       resources: [{

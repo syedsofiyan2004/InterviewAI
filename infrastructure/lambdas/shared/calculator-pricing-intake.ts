@@ -130,7 +130,16 @@ const INSTANCE_BACKED = /\b(ec2|rds|aurora|sagemaker|opensearch|elasticache|memo
 const DATABASE = /\b(rds|aurora)\b/i;
 const EXPLICIT_STORAGE = /\b(ebs|elastic block store)\b/i;
 const GLOBAL_SERVICE = /\b(cloudfront|route\s*53|iam)\b/i;
-const RESOLVED_AWS_SERVICE = /\b(amazon|aws)\s*(ec2|rds|aurora|ecs|fargate|lambda|ebs|s3|opensearch|elasticache|memorydb|redshift|sagemaker|dynamodb|sns|sqs|cloudfront|route\s*53|iam|vpc|nat gateway|quicksight|bedrock)\b/i;
+const RESOLVED_AWS_SERVICE = /^(?:(?:amazon|aws)\s+)?(?:ec2|rds|aurora|ecs|fargate|lambda|ebs|s3|opensearch|elasticache|memorydb|redshift|sagemaker|dynamodb|sns|sqs|cloudfront|route\s*53|iam|vpc|nat gateway|quicksight|bedrock)\b/i;
+
+function isResolvedAwsService(value: string): boolean {
+  const service = clean(value);
+  // Inventory paths such as /ADL/ADLVMC01/Resources/EC2 contain a valid AWS
+  // token but are still unresolved source labels. They must remain visible as
+  // a service gap until the formatter maps them to a real service name.
+  if (!service || /[\\/]/.test(service)) return false;
+  return RESOLVED_AWS_SERVICE.test(service);
+}
 
 const clean = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
 
@@ -315,7 +324,7 @@ function technicalGaps(rows: IntakeRow[]): RowGap[] {
   const gaps: RowGap[] = [];
   rows.forEach((row, index) => {
     const scope = row.environment || row.scenario || row.service || 'All resources';
-    const serviceResolved = RESOLVED_AWS_SERVICE.test(row.service);
+    const serviceResolved = isResolvedAwsService(row.service);
     if (!row.service || !serviceResolved) gap(gaps, row, index, 'resource.service_family', 'AWS Service', 'Resolve the source inventory label to an AWS service before pricing.', scope);
     if (!row.environment && !GLOBAL_SERVICE.test(row.service)) {
       gap(gaps, row, index, 'resource.environment', 'Environment', 'Identify whether this workload is Production, Non-Production, Staging, Development, Test, UAT or DR.', scope);

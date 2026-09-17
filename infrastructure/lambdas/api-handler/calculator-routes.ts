@@ -537,8 +537,28 @@ async function createCalculationInternal(
         environmentHours: resolveEnvironmentHours(input.environment_hours),
       });
       pricingIntake = validation.summary;
-      pricingIntakeWorkbookS3Key = input.input_s3_key;
-      pricingIntakeWorkbookIrS3Key = workbookIrS3Key;
+      // Rebuild the prepared copy from the current values. This removes yellow
+      // highlighting from cells the customer has now filled while retaining it for
+      // genuinely unresolved fields. It is deterministic validation, not another
+      // AI formatting pass, and the generated workbook keeps Source Context and
+      // Source Lineage for audit.
+      pricingIntakeWorkbookS3Key = `users/${userId}/calculator/${calculationId}/pricing-intake-v2.xlsx`;
+      pricingIntakeWorkbookIrS3Key = `users/${userId}/calculator/${calculationId}/pricing-intake-v2-ir.json`;
+      const intakeDocument = await readWorkbookDocument(validation.workbook, 'pricing-intake-v2.xlsx');
+      await Promise.all([
+        saveFileContent(
+          BUCKET_NAME,
+          pricingIntakeWorkbookS3Key,
+          validation.workbook,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ),
+        saveFileContent(
+          BUCKET_NAME,
+          pricingIntakeWorkbookIrS3Key,
+          JSON.stringify(intakeDocument.ir),
+          'application/json',
+        ),
+      ]);
       planV2 = {
         ...planV2,
         status: pricingIntake.status === 'READY' ? 'READY' : 'NEEDS_INPUT',
